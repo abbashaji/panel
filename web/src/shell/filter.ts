@@ -10,3 +10,19 @@ export function matchesSearch(c: PanelCell, query: string): boolean {
 export function filterCells(cells: PanelCell[], search: string, statuses: PanelStatus[]): PanelCell[] {
   return cells.filter((c) => (statuses.length === 0 || statuses.includes(c.status)) && matchesSearch(c, search));
 }
+
+export interface CellFilters {
+  search: string;
+  statuses: PanelStatus[];
+  /** keep only critical cells */
+  criticalOnly: boolean;
+  /** drop merged (done) cells */
+  hideMerged: boolean;
+}
+
+/** All shared filters of usePanel(): search, status set, critical path only, hide merged. */
+export function visibleCells(cells: PanelCell[], f: CellFilters): PanelCell[] {
+  return filterCells(cells, f.search, f.statuses).filter(
+    (c) => (!f.criticalOnly || c.critical) && (!f.hideMerged || c.status !== "done"),
+  );
+}

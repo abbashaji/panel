@@ -65,6 +65,13 @@ export interface PanelContextValue {
   statusFilter: PanelStatus[];
   toggleStatusFilter(s: PanelStatus): void;
   clearFilters(): void;
+  /** sidebar filters: keep only critical cells / drop merged cells */
+  criticalOnly: boolean;
+  hideMerged: boolean;
+  toggleCriticalOnly(): void;
+  toggleHideMerged(): void;
+  /** ms timestamp of the last successful poll; null before the first load */
+  lastUpdated: number | null;
 
   theme: Theme;
   toggleTheme(): void;
@@ -99,7 +106,8 @@ function initialRepo(): string {
 function initialTheme(): Theme {
   const saved = readStore(THEME_KEY);
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  // dark is the default (approved mockup); the system setting is ignored
+  return "dark";
 }
 
 const isEditable = (t: EventTarget | null): boolean =>
@@ -111,6 +119,8 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<View>("graph");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PanelStatus[]>([]);
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [hideMerged, setHideMerged] = useState(false);
   const [selection, dispatch] = useReducer(selectionReducer, []);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -229,7 +239,14 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       clearFilters: () => {
         setSearch("");
         setStatusFilter([]);
+        setCriticalOnly(false);
+        setHideMerged(false);
       },
+      criticalOnly,
+      hideMerged,
+      toggleCriticalOnly: () => setCriticalOnly((v) => !v),
+      toggleHideMerged: () => setHideMerged((v) => !v),
+      lastUpdated: query.dataUpdatedAt > 0 ? query.dataUpdatedAt : null,
 
       theme,
       toggleTheme: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
@@ -243,7 +260,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       actions,
       registerActions,
     }),
-    [repo, state, query, needsLogin, qc, selection, view, search, statusFilter, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
+    [repo, state, query, needsLogin, qc, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
