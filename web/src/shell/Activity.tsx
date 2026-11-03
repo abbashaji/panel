@@ -1,33 +1,50 @@
+import { isMock } from "../core/api";
+import { Icon, type IconName } from "../core/Icon";
 import { usePanel } from "../core/store";
+import { deriveActivity, type ActivityKind } from "./activity";
 
-function ago(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "";
-  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
-}
+const ICON: Record<ActivityKind, { name: IconName; color: string }> = {
+  heartbeat: { name: "clock-running", color: "var(--st-running)" },
+  warning: { name: "warning", color: "var(--st-expired)" },
+  merged: { name: "check", color: "var(--st-done)" },
+};
 
-/** Bottom strip: the most recent lastCommit lines across all cells. */
+/** Live activity panel (172 px) under the main view; rows are derived from the state. */
 export default function Activity() {
   const { state, select } = usePanel();
-  const items = (state?.cells ?? [])
-    .filter((c) => c.lastCommit !== null)
-    .sort((a, b) => Date.parse(b.lastCommit?.at ?? "") - Date.parse(a.lastCommit?.at ?? ""))
-    .slice(0, 6);
+  const rows = deriveActivity(state?.cells ?? []);
   return (
-    <footer
-      aria-label="Recent activity"
-      className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t px-4 text-xs"
-      style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--muted)" }}
+    <section
+      aria-label="Live activity"
+      className="flex shrink-0 flex-col overflow-hidden"
+      style={{ height: 172, margin: "0 16px 16px", padding: "12px 16px", border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)" }}
     >
-      {items.length === 0 && <span>No activity yet</span>}
-      {items.map((c) => (
-        <button key={c.id} type="button" onClick={() => select(c.id)} className="whitespace-nowrap" title={c.lastCommit?.subject}>
-          <span className="mono">{c.id}</span> {c.lastCommit?.subject} <span>{ago(c.lastCommit?.at ?? "")}</span>
-        </button>
-      ))}
-    </footer>
+      <div style={{ font: "600 11px var(--font-sans)", letterSpacing: ".08em", color: "var(--muted-3)", paddingBottom: 6 }}>
+        LIVE ACTIVITY{isMock() ? " · SAMPLE DATA" : ""}
+      </div>
+      <ul className="min-h-0 flex-1 overflow-y-auto">
+        {rows.length === 0 && (
+          <li style={{ padding: "6px 0", font: "500 12px var(--font-sans)", color: "var(--muted)" }}>No activity yet</li>
+        )}
+        {rows.map((r) => (
+          <li key={r.key} style={{ borderTop: "1px solid var(--border)" }}>
+            <button
+              type="button"
+              onClick={() => select(r.cellId)}
+              className="flex w-full gap-3 text-left"
+              style={{ padding: "6px 0", font: "500 12px var(--font-sans)", color: "#c6cddd" }}
+            >
+              <span className="mono" style={{ color: "var(--muted-3)", width: 44, flexShrink: 0 }}>
+                {r.time}
+              </span>
+              <span className="flex items-center" style={{ width: 14, flexShrink: 0 }}>
+                <Icon name={ICON[r.kind].name} size={12} color={ICON[r.kind].color} />
+              </span>
+              <span className="truncate">{r.text}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

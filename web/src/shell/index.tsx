@@ -2,11 +2,16 @@ import { useEffect, useState, type ReactNode } from "react";
 import Activity from "./Activity";
 import Header from "./Header";
 import Palette from "./Palette";
+import Settings from "./Settings";
 import Sidebar from "./Sidebar";
 
-/** App frame: header (56 px), sidebar (196 px), main slot, activity strip, Ctrl+K palette. */
-export default function Shell({ children }: { children?: ReactNode }) {
+/**
+ * App frame: header (56 px), sidebar (196 px), center column (main view, then the 172 px activity panel),
+ * optional aside (the inspector, 320 px), Ctrl+K palette and the settings dialog.
+ */
+export default function Shell({ children, aside }: { children?: ReactNode; aside?: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -23,11 +28,15 @@ export default function Shell({ children }: { children?: ReactNode }) {
     <div className="flex h-full flex-col">
       <Header onSearch={() => setSearchOpen(true)} />
       <div className="flex min-h-0 flex-1">
-        <Sidebar />
-        {children}
+        <Sidebar onSettings={() => setSettingsOpen(true)} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">{children}</div>
+          <Activity />
+        </div>
+        {aside}
       </div>
-      <Activity />
       <Palette open={searchOpen} onOpenChange={setSearchOpen} />
+      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
