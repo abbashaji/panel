@@ -1,4 +1,4 @@
-import dagre from 'dagre';
+import * as dagre from '@dagrejs/dagre';
 import type { DependKind, PanelCell } from '../core/types';
 
 export const CARD_W = 152;
