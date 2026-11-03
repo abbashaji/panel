@@ -1,0 +1,10 @@
+project: example-app
+main_branch: main
+lease_minutes: 60
+max_ci_minutes: 45
+bottleneck_threshold: 4
+max_cell_files: 8
+acceptance_timeout_s: 600
+protected_paths: []
+owners:
+  pyproject.toml: C-000

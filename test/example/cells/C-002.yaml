@@ -1,0 +1,22 @@
+id: C-002
+title: User storage layer
+goal: |
+  SQLite-backed user storage with create and lookup.
+inputs:
+  - from: C-000
+    kind: implementation
+    contract: |
+      Package `app` lives in src/app/. pytest is configured with pythonpath=src.
+provides:
+  - "src/app/db/users.py: @dataclass User(id: int, email: str, password_hash: str)"
+  - "src/app/db/users.py: def get_user(conn, email: str) -> User | None"
+  - "src/app/db/users.py: def create_user(conn, email: str, password_hash: str) -> User  # raises ValueError if email exists"
+allowed_paths:
+  - src/app/db/**
+  - tests/db/**
+outputs:
+  - src/app/db/__init__.py
+  - src/app/db/users.py
+  - tests/db/test_users.py
+acceptance:
+  - cmd: "pytest tests/db -q"

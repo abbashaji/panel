@@ -1,0 +1,26 @@
+id: C-004
+title: HTTP API
+goal: |
+  Expose a /login endpoint and a protected /me endpoint.
+inputs:
+  - from: C-001
+    kind: implementation
+    contract: |
+      src/app/config.py: load_config(path) -> Config(db_url: str, secret: str).
+  - from: C-003
+    kind: contract
+    contract: |
+      src/app/auth/login.py: login(conn, email, password, secret) -> str | None
+      src/app/auth/token.py: verify_token(token, secret) -> int | None
+      Mock both in tests.
+provides:
+  - "src/app/api/app.py: def create_app(config) -> WSGI app"
+allowed_paths:
+  - src/app/api/**
+  - tests/api/**
+outputs:
+  - src/app/api/__init__.py
+  - src/app/api/app.py
+  - tests/api/test_app.py
+acceptance:
+  - cmd: "pytest tests/api -q"

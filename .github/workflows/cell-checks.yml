@@ -120,6 +120,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Project setup (runs inside the work checkout)
         # A project can own this step with .github/blueprint-setup.sh on the default branch (any language).
         # Without it, a Python default applies, so a brand-new repo needs no setup at all.

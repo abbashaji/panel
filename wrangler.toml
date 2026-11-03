@@ -1,0 +1,21 @@
+name = "blueprint-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Create once:  npx wrangler kv namespace create OAUTH_KV   -> paste the id below
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "2ad097325a8541e7b77de20d5f280471"
+
+# Secrets (wrangler secret put): GITHUB_TOKEN, MCP_AUTH_TOKEN, ADMIN_TOKEN
+#   ADMIN_TOKEN = owner key for takeover and publish_plan. Unset = those two tools are off.
+# Optional secret: EXT_TOKEN (wrangler secret put EXT_TOKEN), the bearer token of the browser extension.
+#   It can only call /ext/ping, /ext/release (one empty release commit on a cell branch it can prove it owns,
+#   never while a PR is open) and /ext/warn (an advisory flag in OAUTH_KV, no git write). Repos must be in ALLOWED_REPOS.
+#   Unset = every /ext/* path answers 404.
+[vars]
+# DEFAULT_REPO = "abbashaji/ocr2"   # optional; the chat can pass repo instead
+ALLOWED_REPOS = "abbashaji/*"     # every repo of this owner; or a list: "owner/a,owner/b"
+MAIN_BRANCH = "main"
+HISTORY_PAGES = "3"           # 3 x 100 merged-commit subjects per snapshot

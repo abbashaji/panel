@@ -1,0 +1,20 @@
+id: C-000
+title: Project skeleton
+type: skeleton
+goal: |
+  Create the Python package layout and pytest config so every later cell can run its tests.
+inputs: []
+provides:
+  - "package `app` importable from src/; pytest runs with pythonpath=src"
+allowed_paths:
+  - pyproject.toml
+  - src/app/__init__.py
+  - tests/__init__.py
+  - tests/conftest.py
+outputs:
+  - pyproject.toml
+  - src/app/__init__.py
+  - tests/__init__.py
+  - tests/conftest.py
+acceptance:
+  - cmd: "python -c \"import sys; sys.path.insert(0, 'src'); import app\""

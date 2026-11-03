@@ -1,0 +1,29 @@
+id: C-003
+title: Token auth
+goal: |
+  Issue and verify signed session tokens, and check passwords against stored hashes.
+inputs:
+  - from: C-001
+    kind: implementation
+    contract: |
+      src/app/config.py: load_config(path) -> Config(db_url: str, secret: str). `secret` signs tokens.
+  - from: C-002
+    kind: contract
+    contract: |
+      src/app/db/users.py: get_user(conn, email) -> User | None, User(id, email, password_hash).
+      Mock this in tests; do not wait for the real module.
+provides:
+  - "src/app/auth/token.py: def issue_token(user_id: int, secret: str) -> str"
+  - "src/app/auth/token.py: def verify_token(token: str, secret: str) -> int | None  # user id or None"
+  - "src/app/auth/login.py: def login(conn, email: str, password: str, secret: str) -> str | None"
+allowed_paths:
+  - src/app/auth/**
+  - tests/auth/**
+outputs:
+  - src/app/auth/__init__.py
+  - src/app/auth/token.py
+  - src/app/auth/login.py
+  - tests/auth/test_token.py
+  - tests/auth/test_login.py
+acceptance:
+  - cmd: "pytest tests/auth -q"

@@ -1,0 +1,21 @@
+id: C-005
+title: End-to-end integration test
+type: integration
+goal: |
+  Wire the real storage, auth and API together and test the login flow end to end.
+inputs:
+  - from: C-004
+    kind: implementation
+    contract: |
+      src/app/api/app.py: create_app(config) -> WSGI app with POST /login and GET /me.
+after:
+  - C-002
+  - C-003
+allowed_paths:
+  - tests/integration/**
+outputs:
+  - tests/integration/test_login_flow.py
+acceptance:
+  - cmd: "pytest tests/integration -q"
+notes: |
+  Only wiring and end-to-end checks here. If real modules disagree with their contracts, report FEEDBACK.
