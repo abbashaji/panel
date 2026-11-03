@@ -121,7 +121,7 @@ public static class ProtocolParser
             var c = s[i];
             if (c == '%')
             {
-                if (i + 2 >= s.Length + 0 && i + 2 > s.Length - 1) return null;
+                if (i + 2 >= s.Length) return null;
                 if (!Uri.IsHexDigit(s[i + 1]) || !Uri.IsHexDigit(s[i + 2])) return null;
                 bytes.Add((byte)((Uri.FromHex(s[i + 1]) << 4) | Uri.FromHex(s[i + 2])));
                 i += 2;
