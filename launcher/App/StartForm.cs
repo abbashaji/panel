@@ -8,102 +8,107 @@ namespace BlueprintLauncher.App;
 /// <summary>Confirm window for 'start'. Nothing runs until the person clicks the button; the prompt is never sent.</summary>
 internal sealed class StartForm : Form
 {
-    private sealed class Item
-    {
-        public Item(Profile profile) { Profile = profile; }
-        public Profile Profile { get; }
-        public override string ToString()
-            => Program.DisplayBrowser(Profile.Browser) + " - " + Profile.Name + " (" + Profile.Folder + ")";
-    }
+    private const int Pad = 32;
+    private const int ContentWidth = 716;
 
     private readonly ParseResult _req;
     private readonly CellRecords _records;
-    private readonly ComboBox _picker = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
-    private readonly Button _confirm = new() { Text = "Open claude.ai with this prompt", AutoSize = true };
-    private readonly Button _cancel = new() { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
+    private readonly Panel _cards = new() { BackColor = Theme.Window, AutoScroll = true };
+    private readonly AccentButton _confirm = new() { Text = "Open chat with this prompt" };
+    private readonly SecondaryButton _cancel = new() { Text = "Cancel", DialogResult = DialogResult.Cancel };
 
     public StartForm(ParseResult req, CellRecords records)
     {
         _req = req;
         _records = records;
 
-        Text = "Blueprint: start cell " + req.Cell;
+        Text = "Blueprint Launcher \u00B7 local window on your PC";
+        BackColor = Theme.Window;
+        ForeColor = Theme.Text;
+        DoubleBuffered = true;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(600, 420);
+        ClientSize = new Size(780, 626);
         CancelButton = _cancel;
 
-        var prompt = PromptBuilder.BuildPrompt(req.Repo, req.Cell).Replace("\n", "\r\n");
-        var promptBox = new TextBox
+        var idFont = Theme.Mono(13, FontStyle.Bold);
+        var idWidth = TextRenderer.MeasureText(req.Cell, idFont, Size.Empty, TextFormatFlags.NoPadding).Width + 14;
+        Controls.Add(Labels.Create(req.Cell, idFont, Theme.Ready, Pad, 32, idWidth, 20));
+        var pill = new PillLabel { Text = "Ready", Accent = Theme.Ready, Location = new Point(Pad + idWidth, 30) };
+        Controls.Add(pill);
+
+        Controls.Add(Labels.Create("Start " + req.Cell, Theme.Ui(22, FontStyle.Bold), Theme.Text, Pad, 64, ContentWidth, 32));
+        Controls.Add(Labels.Create(req.Repo + " \u00B7 reserved for you for 10 minutes", Theme.Ui(13), Theme.Muted, Pad, 100, ContentWidth, 20));
+
+        Controls.Add(new StepCaption { Number = 1, Text = "OPEN IN WHICH BROWSER PROFILE?", Location = new Point(Pad, 142) });
+        _cards.Bounds = new Rectangle(Pad, 176, ContentWidth, 172);
+        Controls.Add(_cards);
+
+        Controls.Add(new StepCaption { Number = 2, Text = "PROMPT THAT WILL BE PRE-FILLED (YOU REVIEW IT)", Location = new Point(Pad, 364) });
+        var promptBox = new MonoTextBox(true)
         {
-            Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, Text = prompt, ScrollBars = ScrollBars.Vertical,
+            Bounds = new Rectangle(Pad, 398, ContentWidth, 100),
+            ReadOnly = true,
+            Text = PromptBuilder.BuildPrompt(req.Repo, req.Cell).Replace("\r\n", "\n").Replace("\n", "\r\n"),
         };
+        Controls.Add(promptBox);
 
-        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 7, Padding = new Padding(12) };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var i = 0; i < 7; i++) grid.RowStyles.Add(new RowStyle(i == 5 ? SizeType.Percent : SizeType.AutoSize, i == 5 ? 100 : 0));
+        Controls.Add(Labels.Create(
+            "Works offline. Reads only profile names from Chrome. Sends nothing anywhere. You press Send in the chat.",
+            Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, 36));
 
-        AddRow(grid, 0, "Repo", Value(req.Repo));
-        AddRow(grid, 1, "Cell", Value(req.Cell));
-        AddRow(grid, 2, "Who", Value(req.Who));
-        AddRow(grid, 3, "Browser profile", _picker);
-        var promptLabel = new Label
-        {
-            Text = "This exact prompt will be pre-filled. It is not sent; you press Enter yourself.",
-            AutoSize = true, UseMnemonic = false, Margin = new Padding(0, 8, 0, 4),
-        };
-        grid.Controls.Add(promptLabel, 0, 4);
-        grid.SetColumnSpan(promptLabel, 2);
-        grid.Controls.Add(promptBox, 0, 5);
-        grid.SetColumnSpan(promptBox, 2);
-
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
-        buttons.Controls.Add(_cancel);
-        buttons.Controls.Add(_confirm);
-        grid.Controls.Add(buttons, 0, 6);
-        grid.SetColumnSpan(buttons, 2);
-        Controls.Add(grid);
+        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 566, 260, 44);
+        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, 566, 120, 44);
+        Controls.Add(_cancel);
+        Controls.Add(_confirm);
 
         LoadProfiles();
         _confirm.Click += (_, _) => Confirm();
     }
 
-    private static Label Value(string text)
-        => new() { Text = text, AutoSize = true, UseMnemonic = false, Anchor = AnchorStyles.Left };
-
-    private static void AddRow(TableLayoutPanel grid, int row, string label, Control control)
+    protected override void OnHandleCreated(EventArgs e)
     {
-        grid.Controls.Add(new Label { Text = label, AutoSize = true, UseMnemonic = false, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 12, 6) }, 0, row);
-        grid.Controls.Add(control, 1, row);
+        base.OnHandleCreated(e);
+        Theme.DarkTitleBar(Handle);
     }
 
     private void LoadProfiles()
     {
         var last = Program.LoadLastChoice();
-        var selected = -1;
-        foreach (var p in BrowserProfiles.List(Program.LocalAppData))
-        {
-            if (Program.FindBrowser(p.Browser) is null) continue;
-            var index = _picker.Items.Add(new Item(p));
-            if (last is { } l && l.Browser == p.Browser && l.Folder == p.Folder) selected = index;
-        }
-        if (_picker.Items.Count == 0)
+        var list = BrowserProfiles.List(Program.LocalAppData).Where(p => Program.FindBrowser(p.Browser) is not null).ToList();
+        if (list.Count == 0)
         {
             _confirm.Enabled = false;
-            _picker.Items.Add("No Chrome or Edge profile found");
-            _picker.SelectedIndex = 0;
+            _cards.Controls.Add(Labels.Create("No Chrome or Edge profile found on this PC.", Theme.Ui(13.5f), Theme.Muted, 0, 12, ContentWidth, 24));
             return;
         }
-        _picker.SelectedIndex = selected >= 0 ? selected : 0;
+
+        var width = list.Count > 3 ? ContentWidth - 18 : ContentWidth;
+        RadioCard? pick = null;
+        var y = 0;
+        foreach (var p in list)
+        {
+            var card = new RadioCard
+            {
+                Text = Program.DisplayBrowser(p.Browser) + " \u00B7 " + p.Name,
+                Detail = "Profile folder: " + p.Folder,
+                Tag = p,
+                Bounds = new Rectangle(0, y, width, 52),
+            };
+            _cards.Controls.Add(card);
+            y += 60;
+            if (last is { } l && l.Browser == p.Browser && l.Folder == p.Folder) pick = card;
+            pick ??= card;
+        }
+        if (pick is not null) pick.Selected = true;
     }
 
     private void Confirm()
     {
-        if (_picker.SelectedItem is not Item item) return;
-        var p = item.Profile;
+        var card = _cards.Controls.OfType<RadioCard>().FirstOrDefault(c => c.Selected);
+        if (card?.Tag is not Profile p) return;
         var exe = Program.FindBrowser(p.Browser);
         if (exe is null)
         {
