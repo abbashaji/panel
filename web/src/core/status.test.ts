@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STATUS_META, STATUS_ORDER } from "./status";
+import { SIDEBAR_ORDER, STATUS_META, STATUS_ORDER } from "./status";
 import { STATUS_ICON } from "./Icon";
 import { visibleCells } from "../shell/filter";
 import { buildMockState } from "./mock";
@@ -14,7 +14,10 @@ describe("status metadata", () => {
   });
 
   it("sidebar order is merged, running, ready, waiting, expired, needs human, needs split", () => {
-    expect(STATUS_ORDER).toEqual(["done", "running", "ready", "waiting", "expired", "needs_human", "needs_split"]);
+    expect(SIDEBAR_ORDER).toEqual(["done", "running", "ready", "waiting", "expired", "needs_human", "needs_split"]);
+    // the urgency order used by the table sort is unchanged
+    expect(STATUS_ORDER[0]).toBe("expired");
+    expect(STATUS_ORDER.at(-1)).toBe("done");
   });
 
   it("every status has a color, a label and a drawn icon", () => {

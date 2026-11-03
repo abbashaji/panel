@@ -19,8 +19,19 @@ export const STATUS_META: Record<PanelStatus, StatusMeta> = {
   needs_split: { label: "Needs split", color: "#FF8FB1", icon: "÷" },
 };
 
-/** Display order for the sidebar status list (as in the mockup). */
+/** Urgency order (what needs attention first). The table sort and legends use it. */
 export const STATUS_ORDER: PanelStatus[] = [
+  "expired",
+  "needs_human",
+  "needs_split",
+  "ready",
+  "running",
+  "waiting",
+  "done",
+];
+
+/** Order of the sidebar status list, as in the mockup. */
+export const SIDEBAR_ORDER: PanelStatus[] = [
   "done",
   "running",
   "ready",
