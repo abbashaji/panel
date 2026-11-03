@@ -19,3 +19,10 @@ id = "2ad097325a8541e7b77de20d5f280471"
 ALLOWED_REPOS = "abbashaji/*"     # every repo of this owner; or a list: "owner/a,owner/b"
 MAIN_BRANCH = "main"
 HISTORY_PAGES = "3"           # 3 x 100 merged-commit subjects per snapshot
+
+# Blueprint Panel (src/panel/*). Secret: PANEL_TOKEN (wrangler secret put PANEL_TOKEN) = the panel login password.
+# The SPA (web/dist) is served under /panel/; run_worker_first so the Worker answers /panel/api/* and all other routes.
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+run_worker_first = true
