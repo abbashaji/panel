@@ -22,7 +22,7 @@ function pick<P = object>(folder: string, exportName = "default"): ComponentType
 }
 
 type Wrapper = ComponentType<{ children?: ReactNode }>;
-const Shell = pick<{ children?: ReactNode }>("shell");
+const Shell = pick<{ children?: ReactNode; aside?: ReactNode }>("shell");
 const LaunchProvider = pick<{ children?: ReactNode }>("launch");
 const GraphView = pick("graph");
 const TableView = pick("table");
@@ -40,7 +40,7 @@ function Placeholder({ name }: { name: string }) {
 const VIEWS: View[] = ["graph", "table", "timeline"];
 
 /** Used until the shell slot exists: a minimal header so the app is usable. */
-const FallbackShell: Wrapper = ({ children }) => {
+const FallbackShell: ComponentType<{ children?: ReactNode; aside?: ReactNode }> = ({ children, aside }) => {
   const { state, view, setView, theme, toggleTheme } = usePanel();
   return (
     <div className="flex h-full flex-col">
@@ -68,7 +68,10 @@ const FallbackShell: Wrapper = ({ children }) => {
           {theme === "dark" ? "Light" : "Dark"}
         </button>
       </header>
-      <div className="flex min-h-0 flex-1">{children}</div>
+      <div className="flex min-h-0 flex-1">
+        {children}
+        {aside}
+      </div>
     </div>
   );
 };
@@ -82,8 +85,17 @@ function MainView() {
 function Body() {
   const { state, error, loading } = usePanel();
   const S = Shell ?? FallbackShell;
+  const aside = (
+    <aside
+      aria-label="Inspector"
+      className="hidden w-[320px] shrink-0 overflow-y-auto border-l p-5 lg:block"
+      style={{ background: "var(--surface)", borderColor: "var(--border)" }}
+    >
+      {Inspector ? <Inspector /> : <Placeholder name="inspector" />}
+    </aside>
+  );
   return (
-    <S>
+    <S aside={aside}>
       <main className="relative min-h-0 min-w-0 flex-1">
         {error && !state ? (
           <div role="alert" className="p-6" style={{ color: "var(--danger)" }}>
@@ -97,13 +109,6 @@ function Body() {
           <MainView />
         )}
       </main>
-      <aside
-        aria-label="Inspector"
-        className="hidden w-[320px] shrink-0 overflow-y-auto border-l lg:block"
-        style={{ background: "var(--surface)", borderColor: "var(--border)" }}
-      >
-        {Inspector ? <Inspector /> : <Placeholder name="inspector" />}
-      </aside>
     </S>
   );
 }

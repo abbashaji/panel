@@ -1,64 +1,110 @@
-import { STATUS_META, STATUS_ORDER, statusVar } from "../core/status";
-import { usePanel, type View } from "../core/store";
+import { useEffect, useState } from "react";
+import { isMock } from "../core/api";
+import { Icon } from "../core/Icon";
+import { readStore } from "../core/storage";
+import { usePanel } from "../core/store";
+import { initials, progress } from "./activity";
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: "graph", label: "Graph" },
-  { id: "table", label: "Table" },
-  { id: "timeline", label: "Timeline" },
-];
+/** localStorage key of the display name (written by the launch slot and the settings dialog). */
+export const WHO_KEY = "bp_who";
 
-const btn = "rounded border px-2 py-1 text-sm";
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
+const chip = { background: "var(--surface-2)", border: "1px solid var(--raised-border)", borderRadius: 8 } as const;
 
 export default function Header({ onSearch }: { onSearch: () => void }) {
-  const { state, view, setView, theme, toggleTheme, refresh } = usePanel();
+  const { state, lastUpdated } = usePanel();
+  const now = useNow();
+  const p = progress(state?.cells ?? []);
+  const who = (readStore(WHO_KEY) ?? "").trim();
+  const name = who || "You";
+  const secs = lastUpdated ? Math.max(0, Math.round((now - lastUpdated) / 1000)) : null;
+
   return (
     <header
-      className="flex h-14 shrink-0 items-center gap-4 border-b px-4"
+      className="flex h-14 shrink-0 items-center gap-4 border-b px-5"
       style={{ background: "var(--surface)", borderColor: "var(--border)" }}
     >
-      <strong className="truncate">{state?.project ?? "Blueprint Panel"}</strong>
+      <div className="flex items-center gap-2.5" style={{ font: "700 15px var(--font-sans)" }}>
+        <Icon name="logo" size={22} color="var(--accent)" />
+        Blueprint
+      </div>
+
       {state && (
-        <span className="mono text-xs" style={{ color: "var(--muted)" }}>
-          main {state.mainSha.slice(0, 7)}
+        <span className="mono truncate" style={{ ...chip, font: "500 12px var(--font-mono)", padding: "6px 10px", color: "#c6cddd" }}>
+          {state.repo} · main
         </span>
       )}
-      {state && (
-        <ul aria-label="Cell counts" className="flex gap-3 text-xs">
-          {STATUS_ORDER.filter((s) => state.counts[s] > 0).map((s) => (
-            <li key={s} className="whitespace-nowrap">
-              <span aria-hidden="true" style={{ color: statusVar(s) }}>
-                {STATUS_META[s].icon}
-              </span>{" "}
-              {state.counts[s]} {STATUS_META[s].label}
-            </li>
-          ))}
-        </ul>
-      )}
-      <span className="flex-1" />
-      <div role="tablist" aria-label="View" className="flex gap-1">
-        {VIEWS.map((v) => (
-          <button
-            key={v.id}
-            type="button"
-            role="tab"
-            aria-selected={view === v.id}
-            onClick={() => setView(v.id)}
-            className="rounded px-2 py-1 text-sm"
-            style={{ background: view === v.id ? "var(--surface-2)" : "transparent" }}
-          >
-            {v.label}
-          </button>
-        ))}
+
+      <div className="ml-2 flex items-center gap-2.5" aria-label="Progress">
+        <div
+          role="img"
+          aria-label={`${p.merged} of ${p.total} merged, ${p.running} running, ${p.expired} lease expired`}
+          className="flex overflow-hidden"
+          style={{ width: 180, height: 8, borderRadius: 99, background: "var(--border)" }}
+        >
+          <span style={{ width: `${p.pct.merged}%`, background: "var(--st-done)" }} />
+          <span style={{ width: `${p.pct.running}%`, background: "var(--st-running)" }} />
+          <span style={{ width: `${p.pct.expired}%`, background: "var(--st-expired)" }} />
+        </div>
+        <span style={{ font: "600 12.5px var(--font-sans)" }}>
+          {p.merged} / {p.total} merged
+        </span>
       </div>
-      <button type="button" onClick={onSearch} className={btn} style={{ borderColor: "var(--border)" }}>
-        Search <kbd className="mono text-xs">Ctrl+K</kbd>
+
+      <span className="flex-1" />
+
+      {isMock() && (
+        <span
+          className="flex items-center gap-2"
+          style={{ background: "#2a2312", border: "1px solid #6b5620", color: "#ffd98a", borderRadius: 8, padding: "7px 11px", font: "600 12px var(--font-sans)" }}
+        >
+          <Icon name="warning" size={12} color="var(--danger)" />
+          acct-a over 90% of 5h limit · resets 2:40 AM (sample)
+        </span>
+      )}
+
+      <button
+        type="button"
+        onClick={onSearch}
+        aria-label="Search cells"
+        className="flex items-center gap-2 text-left"
+        style={{ ...chip, height: 36, width: 200, padding: "0 10px", color: "var(--muted-2)", font: "500 12.5px var(--font-sans)" }}
+      >
+        <span>Search cells</span>
+        <span className="mono ml-auto" style={{ font: "500 11px var(--font-mono)", color: "var(--muted-3)" }}>
+          Ctrl K
+        </span>
       </button>
-      <button type="button" onClick={refresh} className={btn} style={{ borderColor: "var(--border)" }}>
-        Refresh
-      </button>
-      <button type="button" onClick={toggleTheme} aria-label="Toggle theme" className={btn} style={{ borderColor: "var(--border)" }}>
-        {theme === "dark" ? "Light" : "Dark"}
-      </button>
+
+      <span className="flex items-center gap-[7px]" style={{ font: "500 12px var(--font-sans)", color: "var(--muted)" }}>
+        <span
+          aria-hidden="true"
+          style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--st-done)", animation: "pulse 2s infinite" }}
+        />
+        {secs === null ? "Connecting…" : `Live · ${secs}s`}
+      </span>
+
+      <span
+        className="flex items-center gap-2"
+        style={{ border: "1px solid var(--raised-border)", borderRadius: 99, padding: "4px 12px 4px 4px", font: "600 12px var(--font-sans)" }}
+      >
+        <span
+          aria-hidden="true"
+          className="flex items-center justify-center"
+          style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--accent)", color: "#06142b", font: "700 11px var(--font-sans)" }}
+        >
+          {initials(name)}
+        </span>
+        {name}
+      </span>
     </header>
   );
 }

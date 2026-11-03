@@ -1,27 +1,51 @@
-import { STATUS_META, STATUS_ORDER, statusVar } from "../core/status";
-import { usePanel } from "../core/store";
+import { SIDEBAR_ORDER, STATUS_META, statusVar } from "../core/status";
+import { usePanel, type View } from "../core/store";
 
-export default function Sidebar() {
-  const { state, search, setSearch, statusFilter, toggleStatusFilter, clearFilters, select } = usePanel();
-  const active = search !== "" || statusFilter.length > 0;
-  const bottleneck = state?.bottleneck ?? null;
+const NAV: { id: View; label: string }[] = [
+  { id: "graph", label: "Graph" },
+  { id: "table", label: "Table" },
+  { id: "timeline", label: "Timeline" },
+];
+
+const caption = { font: "600 11px var(--font-sans)", letterSpacing: ".08em", color: "var(--muted-3)" } as const;
+
+export default function Sidebar({ onSettings }: { onSettings?: () => void }) {
+  const p = usePanel();
+  const { state, view, setView, statusFilter, toggleStatusFilter, clearFilters } = p;
+  const criticalOnly = !!p.criticalOnly;
+  const hideMerged = !!p.hideMerged;
+  const anyFilter = (p.search ?? "") !== "" || statusFilter.length > 0 || criticalOnly || hideMerged;
+
+  const navStyle = (on: boolean) => ({
+    height: 40,
+    padding: "0 12px",
+    borderRadius: 8,
+    textAlign: "left" as const,
+    background: on ? "var(--nav-active)" : "transparent",
+    color: on ? "#fff" : "var(--muted)",
+    font: `${on ? 600 : 500} 13px var(--font-sans)`,
+  });
+
   return (
     <nav
-      aria-label="Filters"
-      className="flex w-[196px] shrink-0 flex-col gap-3 overflow-y-auto border-r p-3"
+      aria-label="Sidebar"
+      className="flex w-[196px] shrink-0 flex-col overflow-y-auto border-r px-3 py-4"
       style={{ background: "var(--surface)", borderColor: "var(--border)" }}
     >
-      <input
-        type="search"
-        aria-label="Filter cells"
-        placeholder="Filter cells…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded border px-2 py-1 text-sm"
-        style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}
-      />
-      <ul className="flex flex-col gap-1">
-        {STATUS_ORDER.map((s) => {
+      <div className="mb-[22px] flex flex-col gap-1">
+        {NAV.map((n) => (
+          <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)} style={navStyle(view === n.id)}>
+            {n.label}
+          </button>
+        ))}
+        <button type="button" onClick={onSettings} style={navStyle(false)}>
+          Settings
+        </button>
+      </div>
+
+      <div style={{ ...caption, padding: "0 8px 6px" }}>STATUS</div>
+      <ul className="flex flex-col">
+        {SIDEBAR_ORDER.filter((s) => (state?.counts[s] ?? 0) > 0 || statusFilter.includes(s)).map((s) => {
           const on = statusFilter.includes(s);
           return (
             <li key={s}>
@@ -29,14 +53,12 @@ export default function Sidebar() {
                 type="button"
                 aria-pressed={on}
                 onClick={() => toggleStatusFilter(s)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm"
-                style={{ background: on ? "var(--surface-2)" : "transparent" }}
+                className="flex w-full items-center gap-2 text-left"
+                style={{ padding: "7px 8px", borderRadius: 8, font: "500 12.5px var(--font-sans)", color: "#d5dbe8", background: on ? "var(--nav-active)" : "transparent" }}
               >
-                <span aria-hidden="true" style={{ color: statusVar(s) }}>
-                  {STATUS_META[s].icon}
-                </span>
-                <span className="flex-1">{STATUS_META[s].label}</span>
-                <span className="mono text-xs" style={{ color: "var(--muted)" }}>
+                <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 3, background: statusVar(s), flexShrink: 0 }} />
+                <span>{STATUS_META[s].label}</span>
+                <span className="mono ml-auto" style={{ color: "var(--muted)" }}>
                   {state?.counts[s] ?? 0}
                 </span>
               </button>
@@ -44,19 +66,19 @@ export default function Sidebar() {
           );
         })}
       </ul>
-      {active && (
-        <button type="button" onClick={clearFilters} className="rounded border px-2 py-1 text-sm" style={{ borderColor: "var(--border)" }}>
+
+      <div style={{ ...caption, padding: "20px 8px 6px" }}>FILTERS</div>
+      <label className="flex items-center gap-2" style={{ padding: 8, font: "500 12.5px var(--font-sans)", color: "#d5dbe8" }}>
+        <input type="checkbox" checked={criticalOnly} onChange={() => p.toggleCriticalOnly?.()} style={{ accentColor: "var(--accent)" }} />
+        Critical path only
+      </label>
+      <label className="flex items-center gap-2" style={{ padding: 8, font: "500 12.5px var(--font-sans)", color: "#d5dbe8" }}>
+        <input type="checkbox" checked={hideMerged} onChange={() => p.toggleHideMerged?.()} style={{ accentColor: "var(--accent)" }} />
+        Hide merged
+      </label>
+      {anyFilter && (
+        <button type="button" onClick={clearFilters} className="mt-2 text-left" style={{ padding: "6px 8px", borderRadius: 8, font: "500 12px var(--font-sans)", color: "var(--accent)" }}>
           Clear filters
-        </button>
-      )}
-      {bottleneck && (
-        <button
-          type="button"
-          onClick={() => select(bottleneck.id)}
-          className="rounded border px-2 py-1 text-left text-sm"
-          style={{ borderColor: "var(--border)" }}
-        >
-          Bottleneck: <span className="mono">{bottleneck.id}</span> blocks {bottleneck.blocks}
         </button>
       )}
     </nav>
