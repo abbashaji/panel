@@ -1,0 +1,49 @@
+id: C-012
+title: Design tokens, fonts, status icons and filter state
+type: skeleton
+priority: 10
+lease_minutes: 15
+goal: |
+  Bring the web foundation to the approved mockup. Source of truth: docs/panel-design.md (sections 1, 2) and the screenshots docs/design/*.png. The panel is DARK by default.
+  1) web/index.html: load Google Fonts Inter (400,500,600,700) and JetBrains Mono (500,600) with preconnect; keep system-ui / ui-monospace fallbacks.
+  2) web/src/theme.css: replace the dark tokens with the mockup values while keeping the existing variable names working (--bg #0C101C, --surface #0F1424, --surface-2 #18213A, --border #1E2740, --text #E8ECF5, --muted #A9B2C6, --accent #5B9DFF, --danger #FF6B5E) and ADD new ones: --card #131A2A, --raised-border #2A3553, --edge #3A4560, --muted-2 #9AA3B8, --muted-3 #8A93A8, --nav-active #1B2745, --danger-bg #2B1512, --danger-border #7A2E27, --font-sans, --font-mono. Body font Inter 14px; .mono uses JetBrains Mono. Add @keyframes pulse (opacity .35 to .9). Keep the light theme variables working but dark is the default (store.tsx initialTheme returns dark unless the user saved light; ignore prefers-color-scheme).
+  3) web/src/core/status.ts: labels become done=Merged, expired=Lease expired (others unchanged); keep the existing exports and the glyph icon field so current components keep working; STATUS_ORDER for the sidebar becomes done, running, ready, waiting, expired, needs_human, needs_split.
+  4) web/src/core/Icon.tsx: export StatusIcon({status, size=12}) and Icon({name, size, color}) drawing the 14x14 viewBox stroke icons listed in docs/panel-design.md section 1 (check, warning triangle, clock running, clock waiting, circled exclamation, play filled, split), plus a logo icon (three rounded squares). Always aria-hidden.
+  5) web/src/core/store.tsx: add criticalOnly and hideMerged booleans with toggleCriticalOnly / toggleHideMerged; clearFilters resets them; add lastUpdated (ms timestamp of the last successful poll, from react-query dataUpdatedAt, null before the first load). Do not remove anything existing.
+  6) web/src/shell/filter.ts: add visibleCells(cells, {search, statuses, criticalOnly, hideMerged}) (criticalOnly keeps cells with critical=true; hideMerged drops status done). Keep filterCells working unchanged.
+  7) web/src/core/status.test.ts: tests for labels, order, and visibleCells. Existing tests must stay green; fix a test only when the new label or default theme makes it fail.
+inputs: []
+after: [C-004, C-005, C-006, C-007, C-010, C-011]
+provides:
+  - "web/src/core/Icon.tsx: StatusIcon({status, size?}), Icon({name, size?, color?})"
+  - "web/src/core/store.tsx: usePanel().criticalOnly, hideMerged, toggleCriticalOnly(), toggleHideMerged(), lastUpdated"
+  - "web/src/shell/filter.ts: visibleCells(cells, {search, statuses, criticalOnly, hideMerged})"
+  - "CSS variables in web/src/theme.css as listed"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+  - web/src/theme.css
+  - web/src/core/status.ts
+allowed_paths:
+  - web/index.html
+  - web/src/theme.css
+  - web/src/core/status.ts
+  - web/src/core/Icon.tsx
+  - web/src/core/store.tsx
+  - web/src/core/status.test.ts
+  - web/src/shell/filter.ts
+  - web/src/**/*.test.ts
+  - web/src/**/*.test.tsx
+outputs:
+  - web/index.html
+  - web/src/theme.css
+  - web/src/core/status.ts
+  - web/src/core/Icon.tsx
+  - web/src/core/store.tsx
+  - web/src/shell/filter.ts
+  - web/src/core/status.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Contrast: text on the dark surfaces must stay >= 4.5:1. Never color alone: icon + label stay. Do not touch graph, inspector or launch folders except to fix a test that breaks because of the label change.

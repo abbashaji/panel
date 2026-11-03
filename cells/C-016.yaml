@@ -1,0 +1,26 @@
+id: C-016
+title: Launcher windows restyle to the mockup
+type: normal
+priority: 4
+goal: |
+  Restyle launcher/App to docs/panel-design.md section 6 and the screenshots docs/design/2-launcher-start.png and 4-launcher-open.png. Dark WinForms look: add launcher/App/Theme.cs (colors from the design doc, fonts Inter with Segoe UI fallback and Consolas for mono, rounded-rectangle painting helpers) and a small owner-drawn control file launcher/App/Controls.cs (rounded panel, radio card, pill label, accent button, secondary button, mono text box). StartForm: id + status pill, 22px bold title 'Start <title>', subline, step 1 'OPEN IN WHICH BROWSER PROFILE?' with radio cards (selected = accent border), step 2 prompt box showing the exact prompt, green lock note, Cancel and 'Open chat with this prompt' buttons. OpenForm: id + 'Running · yours' pill, title, 'Started N minutes ago in <browser> · <profile>', full-width accent button 'Open claude.ai in <browser> · <profile>', optional chat link box validated by the existing chatUrl rule with a Save button, lock note. Do not change launcher/Core behaviour. NO network usage anywhere (no System.Net, HttpClient, Socket, WebClient); the existing no-network test must still pass. Keep the confirm window always shown and the prompt never auto-sent. Say in the PR summary that the visual result is NOT verified on a real Windows screen.
+inputs: []
+after: [C-009]
+provides:
+  - "launcher/App/Theme.cs and Controls.cs; restyled StartForm and OpenForm"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+allowed_paths:
+  - launcher/App/**
+outputs:
+  - launcher/App/Theme.cs
+  - launcher/App/Controls.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/OpenForm.cs
+  - launcher/App/Program.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Use only System.Windows.Forms and System.Drawing. Keep an error window for rejected URLs.

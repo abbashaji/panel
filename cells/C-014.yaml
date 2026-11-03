@@ -1,0 +1,38 @@
+id: C-014
+title: Graph view cards, edges, badges and banner at 1 to 1 scale
+type: normal
+priority: 6
+goal: |
+  Restyle the graph to docs/panel-design.md section 3 and docs/design/1-graph-view.png.
+  - Open at zoom 1 (no fitView shrink): 152x72 cards, column pitch 186, row pitch 96 (update layout.ts constants and tests); pan and zoom stay, add a 'Fit' control; minimap small, bottom right.
+  - CellCard.tsx: card bg var(--card) with status-colored 10% overlay and border <status color>88, radius 12; row 1 id (mono 600 11, status color) + icon + status label; row 2 title 600 13; row 3 sha7 (mono) + meta (merged 3h ago / 34m left / expired 22m ago / ← C-004, C-006 / feedback sent / start now). Badges above the card (top -22), never overlapping: START (ready), owner chip '<initials> · Open chat' for your own running cell and '<initials> · <name>' (not clickable) for others, BLOCKS n on the bottleneck. Selected = white 2px outline offset 2; bottleneck also box-shadow 0 0 0 6px rgba(255,107,94,.28). Keep the context menu and double-click behaviour.
+  - Edges: solid implementation, dashed 5 4 contract, color var(--edge) width 1.5; edges leaving the bottleneck #FF6B5E width 2 opacity .85.
+  - Banner.tsx: shown when the bottleneck is expired: '<id> <title> is holding up N cells. Its lease expired M min ago (attempt a of b).' with the 'Release now' button calling actions.requestRelease(id).
+  - WAVE n · k cells labels above columns.
+  - Use visibleCells from web/src/shell/filter.ts (search, status filter, criticalOnly, hideMerged); hidden cells and their edges disappear.
+  Update web/src/graph/layout.test.ts and add tests for meta lines, badge rules and the banner text.
+inputs:
+  - from: C-012
+    kind: implementation
+    contract: |
+      Tokens in web/src/theme.css, STATUS_META labels, web/src/core/Icon.tsx StatusIcon, usePanel().criticalOnly / hideMerged, visibleCells in web/src/shell/filter.ts.
+after: [C-005]
+provides:
+  - "web/src/graph/index.tsx default GraphView at 1:1 scale"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+allowed_paths:
+  - web/src/graph/**
+outputs:
+  - web/src/graph/index.tsx
+  - web/src/graph/CellCard.tsx
+  - web/src/graph/Banner.tsx
+  - web/src/graph/layout.ts
+  - web/src/graph/layout.test.ts
+  - web/src/graph/graph.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Compare against docs/design/1-graph-view.png. Badges must not cover text. Keep reduced-motion support.

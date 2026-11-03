@@ -1,0 +1,42 @@
+id: C-013
+title: Shell header, sidebar, activity panel and settings dialog
+type: normal
+priority: 6
+goal: |
+  Rebuild the shell to match docs/panel-design.md sections 2 and 7 and docs/design/1-graph-view.png.
+  - Header.tsx: logo + Blueprint, repo chip (state.repo + main), progress bar with merged/running/expired segments and 'N / total merged', usage chip ONLY in mock mode (api.ts isMock()), search box that opens the existing Ctrl+K palette, 'Live · Ns' with pulsing dot (seconds since usePanel().lastUpdated, updating each second), user chip with initials and name from the display name that the launch slot stores in localStorage (read web/src/launch/index.tsx for the key; fall back to 'You').
+  - Sidebar.tsx: nav buttons Graph / Table / Timeline (set the view) and Settings (opens the settings dialog); STATUS list with colored squares, labels from STATUS_META, counts, click toggles the status filter; FILTERS checkboxes 'Critical path only' and 'Hide merged' bound to the store (criticalOnly, hideMerged).
+  - Activity.tsx + activity.ts: pure function deriving rows (HH:MM, icon kind, text) from state cells (lastCommit, expired leases, merged cells), newest first; panel 172px high with border, radius 12, scrolls inside; title 'LIVE ACTIVITY' ('LIVE ACTIVITY · SAMPLE DATA' in mock mode).
+  - Settings.tsx: Radix dialog with the display name field and the 'How Start works' explainer text from section 7.
+  - index.tsx: Shell({children, aside}) lays out header, then [sidebar | center column (children, then the activity panel) | aside]. Edit web/src/App.tsx so Body passes the inspector as the aside prop and the FallbackShell supports the same props; keep the slot convention.
+  - Table and Timeline views keep working with the relabeled statuses; the filters (search, status, criticalOnly, hideMerged) must use visibleCells from filter.ts.
+  Fix tests in web/src/shell/shell.test.tsx and web/src/integration.test.tsx that the new labels or layout break; add tests for activity.ts, the progress segments and the filter checkboxes.
+inputs:
+  - from: C-012
+    kind: implementation
+    contract: |
+      Dark tokens and fonts in web/src/theme.css; STATUS_META labels (Merged, Lease expired); web/src/core/Icon.tsx StatusIcon/Icon; usePanel().criticalOnly, hideMerged, toggleCriticalOnly, toggleHideMerged, lastUpdated; visibleCells in web/src/shell/filter.ts.
+after: [C-004, C-007, C-011]
+provides:
+  - "web/src/shell/index.tsx default Shell({children, aside}) with activity panel in the center column"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+allowed_paths:
+  - web/src/shell/**
+  - web/src/App.tsx
+  - web/src/integration.test.tsx
+outputs:
+  - web/src/shell/index.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/Sidebar.tsx
+  - web/src/shell/Activity.tsx
+  - web/src/shell/activity.ts
+  - web/src/shell/Settings.tsx
+  - web/src/shell/shell.test.tsx
+  - web/src/App.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Measurements, colors and copy are in docs/panel-design.md; compare against docs/design/1-graph-view.png and 3-launch-flow.png. Never color alone.

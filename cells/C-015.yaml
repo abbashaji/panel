@@ -1,0 +1,30 @@
+id: C-015
+title: Inspector restyle to the mockup
+type: normal
+priority: 6
+goal: |
+  Restyle web/src/inspector/** to docs/panel-design.md section 5 and docs/design/1-graph-view.png (right column): id + status pill, 22px bold title, 'Critical cell · N direct, M total dependents', lease bar and caption (expired: 'Lease expired 22 min ago · attempt 2 of 3'; running: '34 min left · attempt 1 of 3'), key/value rows (Branch cell/<id>, Lock sha, Tip sha, Last commit 'subject · 52m ago', Next step, Holder = reservedBy or an em dash, Files 'N allowed paths'), three full-width 44px buttons (Continue in my chat, Release cell, Open branch on GitHub) shown only when they apply (Start for ready cells), and the help text. Colors and spacing exactly as in the design doc. Empty selection shows a quiet hint; multi-selection shows a short summary. The release / clear-feedback confirm dialog keeps its behaviour (typed admin key, exact git write stated, key never stored) but gets the dark styling. Update web/src/inspector/inspector.test.tsx for the new texts and keep all behaviour tests.
+inputs:
+  - from: C-012
+    kind: implementation
+    contract: |
+      Tokens in web/src/theme.css, STATUS_META labels, web/src/core/Icon.tsx StatusIcon.
+after: [C-006]
+provides:
+  - "web/src/inspector/index.tsx default Inspector (320px column content)"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+allowed_paths:
+  - web/src/inspector/**
+outputs:
+  - web/src/inspector/index.tsx
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/parts.tsx
+  - web/src/inspector/ReleaseDialog.tsx
+  - web/src/inspector/inspector.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Compare against docs/design/1-graph-view.png. The aside container (320px, border, padding) is provided by App.tsx; this cell styles the content only.
