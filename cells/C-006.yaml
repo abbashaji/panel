@@ -1,0 +1,34 @@
+id: C-006
+title: Inspector, admin actions, confirm dialogs and toasts
+type: normal
+priority: 3
+goal: |
+  web/src/inspector/index.tsx default export Inspector (320 px right panel, reads usePanel()). Shows for the selected cell: status chip, lease bar, attempts n/max, branch cell/C-NNN, lock/tip sha, last commit subject + next step, holder (reservedBy), allowed files, PR link. Buttons: Continue in my chat (launcher.open), Start (launcher.start when ready), Release, Open branch on GitHub. Release and clear feedback use a Radix confirm dialog that states EXACTLY the git write (one empty commit / branch state change), asks the user to type the admin key per action (never stored in the page, cookie or storage; cleared after use), calls api.release / api.clearFeedback and shows the passed-through result (<= 200 chars) as a toast. Multi-selection shows a short summary. Provide the usePanel `requestRelease(id)` hook by registering it through the store's registerActions if present (otherwise export a helper ReleaseDialog from web/src/inspector/ReleaseDialog.tsx that C-005 banner can open).
+inputs:
+  - from: C-004
+    kind: implementation
+    contract: |
+      web/src/core/store.tsx usePanel(), api.ts release/clearFeedback, status.ts.
+  - from: C-005
+    kind: implementation
+    contract: |
+      Graph selection is stored in usePanel().selection; graph banner calls requestRelease(id).
+  - from: C-003
+    kind: contract
+    contract: |
+      POST /panel/api/release and /clear-feedback {repo, cell_id, admin_key} -> text result; 403 on bad key.
+provides:
+  - "web/src/inspector/index.tsx default Inspector; ReleaseDialog.tsx"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - web/src/inspector/**
+outputs:
+  - web/src/inspector/index.tsx
+  - web/src/inspector/ReleaseDialog.tsx
+  - web/src/inspector/inspector.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Tests: confirm dialog text names the git write, admin key not persisted (localStorage/sessionStorage untouched), Release disabled on done/waiting cells.

@@ -1,0 +1,29 @@
+id: C-009
+title: Launcher windows, protocol registration and install script
+type: normal
+priority: 3
+goal: |
+  launcher/App: .NET 8 WinForms exe (net8.0-windows, EnableWindowsTargeting=true so it builds on Linux CI) referencing ../Core/Core.csproj. Entry: receives the blueprint:// URL as args[0]; ProtocolParser rejects bad input with a small error window and no launch. start: confirm window showing repo, cell, who, a browser+profile picker (Chrome/Edge from BrowserProfiles, remembered last choice) and the exact prompt that will be pre-filled; on confirm save a CellRecord and run the browser with LaunchCommand (never a shell string). open: 'my cell' window (open claude.ai in the saved profile; optional chat link box validated by the chatUrl regex). sync: silent, calls CellRecords.Sync. Always shows the confirm window; never auto-sends; opens NO network connection (no System.Net). launcher/install.ps1: readable text script that registers HKCU\Software\Classes\blueprint (URL Protocol, shell\open\command pointing to the exe, no admin rights) and an uninstall switch. launcher/App/App.csproj publish settings for self-contained single-file win-x64.
+inputs:
+  - from: C-008
+    kind: implementation
+    contract: |
+      launcher/Core: ProtocolParser.Parse, PromptBuilder.BuildUrl, BrowserProfiles.List, CellRecords, LaunchCommand.Build (see launcher/Core sources).
+provides:
+  - "launcher/App/App.csproj (blueprint-launcher.exe) and launcher/install.ps1"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - launcher/App/**
+  - launcher/install.ps1
+outputs:
+  - launcher/App/App.csproj
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/OpenForm.cs
+  - launcher/install.ps1
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  UI cannot be tested here; keep logic in Core. Say in the PR summary that the blueprint:// permission prompt and --profile-directory behaviour are NOT verified on real Windows.

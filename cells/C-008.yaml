@@ -1,0 +1,31 @@
+id: C-008
+title: Launcher core library and tests
+type: normal
+priority: 3
+goal: |
+  C# .NET 8 class library launcher/Core (no UI, NO network usage: no System.Net, no HttpClient, no sockets anywhere) with xUnit tests in launcher/Core.Tests. Implement: (1) ProtocolParser: parse blueprint://start?repo=&cell=&who=, blueprint://open?repo=&cell=, blueprint://sync?repo=&merged=C-001,C-002; max URL length 400; repo ^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$; cell ^C-\d{3,5}$; who ^[\w .-]{1,40}$; reject everything else, unknown host/command, duplicate or extra keys, control chars, percent-encoded tricks; return a typed result or a rejection reason. (2) PromptBuilder: fixed template 'Repo: {repo}\nFollow BLUEPRINT.md.\nCall next_cell with repo and cell_id={cell} (reserved for me).\nDo only that cell. Begin your next message with the CLAIMED line.' built only from validated values, strip < and >, URL-encode, final URL https://claude.ai/new?q=<encoded> with a fixed host. (3) BrowserProfiles: read Chrome and Edge 'Local State' JSON key profile.info_cache -> {folder:{name}}, return only folder and name (never email/cookies/history); locate Local State under %LOCALAPPDATA% via injectable paths so tests use temp dirs; browser exe lookup (registry App Paths or standard install dirs) behind an interface. (4) CellRecords: %LOCALAPPDATA%\BlueprintLauncher\cells.json {"<repo> <cell>": {browser, profileFolder, profileName, startedAt, chatUrl?}}, chatUrl accepted only if ^https://claude\.ai/chat/[0-9a-f-]{36}$, delete records of merged cells on sync, delete records older than 14 days; atomic write; injectable clock and directory. Also a LaunchCommand builder returning exe + argument list (--profile-directory=<folder>, url) as an array (never a shell string).
+inputs:
+  - from: C-000
+    kind: implementation
+    contract: |
+      docs/panel-contracts.md section 'Launcher protocol' is the source of truth.
+provides:
+  - "launcher/Core: ProtocolParser.Parse(string): ParseResult; PromptBuilder.BuildUrl(repo, cell): string; BrowserProfiles.List(...): IReadOnlyList<Profile>; CellRecords (Load, Save, Upsert, SetChatUrl, Sync(repo, mergedIds), Cleanup(now)); LaunchCommand.Build(exe, folder, url)"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - launcher/Core/**
+  - launcher/Core.Tests/**
+outputs:
+  - launcher/Core/Core.csproj
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/BrowserProfiles.cs
+  - launcher/Core/CellRecords.cs
+  - launcher/Core.Tests/Core.Tests.csproj
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/Core.Tests/NoNetworkTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Tests: validation fuzz for every URL field (injection chars, unicode, overlong, encoded, duplicate keys), prompt template never contains URL-supplied text beyond validated fields, profile reader returns only folder+name and tolerates missing/corrupt files, record cleanup on merge and after 14 days, chatUrl regex, NoNetworkTests scans launcher/**/*.cs for System.Net, HttpClient, Socket, WebClient.

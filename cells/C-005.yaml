@@ -1,0 +1,28 @@
+id: C-005
+title: Graph view with React Flow, dagre, cards and bottleneck
+type: normal
+priority: 4
+goal: |
+  web/src/graph/index.tsx default export GraphView (no props, reads usePanel()). Left-to-right dependency graph: @xyflow/react + dagre (rankdir LR). Card 152x72: id (mono), status chip (color + icon + text), title, sha7, one meta line (lease left / blocked by / merged ago). Badges START, owner and BLOCKS n sit fully OUTSIDE the card, above it, covering nothing. Edges: solid = implementation, dashed = contract; edges from the bottleneck are red. Wave labels on top. Pan, zoom, minimap. Bottleneck: ring on the card, 'BLOCKS n' tag, top banner with a one-click Release button (calls launcher-independent usePanel action `requestRelease(id)` if present, else toast). Interaction: click selects, shift-click multi-select, Esc clears, double-click = primary action (Start if ready via launcher.start, Open chat if mine and running via launcher.open, else select), arrow keys move selection, right-click context menu (Radix). Respect reduced motion. Layout logic in a pure function web/src/graph/layout.ts with unit tests.
+inputs:
+  - from: C-004
+    kind: implementation
+    contract: |
+      web/src/core/store.tsx usePanel(), web/src/core/status.ts STATUS_META, slot convention in web/src/App.tsx.
+provides:
+  - "web/src/graph/index.tsx default GraphView"
+  - "web/src/graph/layout.ts: layoutCells(cells): {nodes, edges, waves}"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - web/src/graph/**
+outputs:
+  - web/src/graph/index.tsx
+  - web/src/graph/layout.ts
+  - web/src/graph/CellCard.tsx
+  - web/src/graph/layout.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Tests: layout puts dependencies left of dependents, bottleneck edges flagged, contract vs implementation edge kinds, wave labels. Card badges must not overlap the card box.

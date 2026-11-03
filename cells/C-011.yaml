@@ -1,0 +1,40 @@
+id: C-011
+title: Integration tests, README and unverified checklist
+type: integration
+priority: 1
+goal: |
+  Final integration: README.md section 'Blueprint Panel' (what it is, how to deploy: wrangler secrets PANEL_TOKEN new, ADMIN_TOKEN, GITHUB_TOKEN, MCP_AUTH_TOKEN stay separate; build web with npm --prefix web run build before wrangler deploy; install the launcher with launcher/install.ps1), docs/panel-integration.md with the NOT VERIFIED checklist (/panel/* routing next to OAuthProvider; GraphQL fields for merged PRs / merge sha, github.ts never run against real GitHub; blueprint:// permission prompt and --profile-directory on real Windows + Chrome/Edge; claude.ai/new?q= prefill on the user's account; long-poll limits and the reservation race, KV eventually consistent so the git branch lock is the arbiter), and an integration test test/panel_integration.test.ts: login -> state -> reserve -> pinned next_cell claims exactly that cell, plain next_cell skips a reserved cell, release needs admin key, using test/fakegh.ts. Also verify the web build contains every slot (graph, inspector, shell, table, launch) via a vitest in web/src/integration.test.tsx rendering App with mock data.
+inputs:
+  - from: C-010
+    kind: implementation
+    contract: |
+      Panel web app complete.
+  - from: C-003
+    kind: implementation
+    contract: |
+      Worker routes complete.
+  - from: C-009
+    kind: implementation
+    contract: |
+      Launcher complete.
+provides:
+  - "README.md, docs/panel-integration.md"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - docs/panel-integration.md
+  - README.md
+  - test/panel_integration.test.ts
+  - web/src/integration.test.tsx
+outputs:
+  - README.md
+  - docs/panel-integration.md
+  - test/panel_integration.test.ts
+  - web/src/integration.test.tsx
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Be honest in docs: list exactly what was not verified.

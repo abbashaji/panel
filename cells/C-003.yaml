@@ -1,0 +1,31 @@
+id: C-003
+title: Panel reserve, release and clear-feedback routes
+type: normal
+priority: 4
+goal: |
+  Replace the stub in src/panel/actions.ts. handlePanelAction(req, env, ctx, path) handles POST /panel/api/reserve {repo, cell_id, who} -> {status: 'reserved'|'not_ready'|'taken', detail}; POST /panel/api/release {repo, cell_id, admin_key} -> existing takeover logic with handoff:true, result text passed through (<= 200 chars); POST /panel/api/clear-feedback {repo, cell_id, admin_key} -> takeover with clear_feedback. admin_key must equal ADMIN_TOKEN (timing-safe), is never stored or echoed; missing/wrong -> 403. Panel cookie auth is already enforced by the router before the call (use requirePanelAuth defensively too). Validate repo (ALLOWED_REPOS), cell_id ^C-\d{3,5}$, who ^[\w .-]{1,40}$. Reserve: cell must be ready or expired and not reserved by someone else (use setReservation/getReservation from src/claim.ts); a reservation by the same who refreshes. Return null for paths it does not own.
+inputs:
+  - from: C-001
+    kind: implementation
+    contract: |
+      src/claim.ts exports reserveKey, getReservation, setReservation, clearReservation (KV key reserve:<repo>:<cell>, TTL 600 s).
+  - from: C-002
+    kind: implementation
+    contract: |
+      src/panel/auth.ts requirePanelAuth(req, env); src/panel/router.ts already dispatches other /panel/api/* paths to handlePanelAction.
+provides:
+  - "POST /panel/api/reserve, /panel/api/release, /panel/api/clear-feedback as in docs/panel-contracts.md"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - src/panel/actions.ts
+  - test/panel_actions.test.ts
+outputs:
+  - src/panel/actions.ts
+  - test/panel_actions.test.ts
+acceptance:
+  - cmd: "node --test test/panel_actions.test.ts"
+  - cmd: "npm test"
+  - cmd: "npx tsc --noEmit"
+notes: |
+  Look at src/takeover.ts and src/tools.ts for how takeover is invoked. Never log admin_key.

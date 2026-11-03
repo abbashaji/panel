@@ -1,0 +1,30 @@
+id: C-000
+title: Panel contracts doc and shared TS types
+type: skeleton
+priority: 10
+lease_minutes: 15
+goal: |
+  Write docs/panel-contracts.md: the confirmed Blueprint Panel contracts, self-contained so every later cell can code against it without the original plan. Sections: (1) what we build and decisions already made, (2) facts about the existing engine (computeState in src/plan.ts returns {status, ready[], locked[], waiting[], needs_split?, needs_human?}; status is computed from git), (3) Worker contracts: auth (POST /panel/api/login, cookie bp_panel HttpOnly Secure SameSite=Strict 12h, 401 otherwise, body <= 4 KB, no CORS, admin_key typed per admin action), GET /panel/api/state JSON shape, pinned next_cell cell_id + KV reservation reserve:<repo>:<cell> TTL 600s + POST /panel/api/reserve, POST /panel/api/release and /panel/api/clear-feedback, (4) launcher protocol (blueprint://start|open|sync, validation regexes, prompt template, profile reading, cells.json record, registry registration, no network), (5) UI spec (layout, status colors, card 152x72, edges, bottleneck, interaction, inspector, views, polling 5s).
+  Write src/panel/types.ts: PanelStatus, PanelCell, PanelState, ReserveResult, PanelEnv (extends Env from ../tools.ts with PANEL_TOKEN?: string, ADMIN_TOKEN?: string, ASSETS?: Fetcher), all exactly matching the state JSON in the doc.
+  Write src/panel/actions.ts: a STUB exporting `async function handlePanelAction(req: Request, env: PanelEnv, ctx: ExecutionContext, path: string): Promise<Response | null>` that returns null (C-003 replaces it).
+  Report in the doc, under 'Open points', these gaps found in the plan: (a) a pinned next_cell call carries no caller identity, so add optional `who` to next_cell; RESERVED only when both reservation.who and who are present and differ; (b) sha.merged is null (snapshot has no main commit sha); (c) wrangler.toml [assets] is added by C-002.
+inputs: []
+provides:
+  - "src/panel/types.ts: PanelStatus, PanelCell, PanelState, ReserveResult, PanelEnv"
+  - "src/panel/actions.ts: handlePanelAction(req, env, ctx, path): Promise<Response | null>"
+  - "docs/panel-contracts.md"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - docs/panel-contracts.md
+  - src/panel/types.ts
+  - src/panel/actions.ts
+outputs:
+  - docs/panel-contracts.md
+  - src/panel/types.ts
+  - src/panel/actions.ts
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "grep -q 'blueprint://start' docs/panel-contracts.md && grep -q 'reserve:' docs/panel-contracts.md && grep -q 'bp_panel' docs/panel-contracts.md"
+notes: |
+  Source of truth: the Blueprint Panel build plan quoted in the cell goal and docs/decisions.md. Keep contract wording exact (regexes, JSON field names, colors).

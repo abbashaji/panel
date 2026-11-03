@@ -1,0 +1,34 @@
+id: C-010
+title: Panel and launcher integration - start dialog, badges, sync
+type: normal
+priority: 2
+goal: |
+  web/src/launch/index.tsx default LaunchProvider({children}): registers the launcher hooks with usePanel().registerLauncher. start(id): POST /panel/api/reserve {repo, cell_id, who}; on 'reserved' show a Radix dialog (explains the browser will open claude.ai with a pre-filled prompt that the user must send, and that the launcher shows its own confirm window) then navigate window.location to blueprint://start?repo=<repo>&cell=<id>&who=<who> (values encodeURIComponent; panel sends ONLY repo and cell id plus who); 'not_ready'/'taken' -> toast. open(id): blueprint://open?repo=&cell=, only for the user's own cells. who is a display name kept in localStorage (try/catch). Own cells = cells reserved/started by this who, remembered in localStorage; others' cells show a name with no link. On every Start/Open and when state changes, send blueprint://sync?repo=&merged=<ids of merged cells> (silent, throttled, ids validated ^C-\d{3,5}$). Merged cells show no Open chat badge. Show launcher-not-installed hint with the install.ps1 pointer if the page stays visible 2 s after navigation.
+inputs:
+  - from: C-006
+    kind: implementation
+    contract: |
+      Inspector buttons call usePanel().launcher.start/open.
+  - from: C-007
+    kind: implementation
+    contract: |
+      Shell renders the slots; LaunchProvider wraps children.
+  - from: C-009
+    kind: contract
+    contract: |
+      blueprint:// protocol exactly as in docs/panel-contracts.md.
+provides:
+  - "web/src/launch/index.tsx LaunchProvider; web/src/launch/protocol.ts: startUrl, openUrl, syncUrl"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - web/src/launch/**
+outputs:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/launch/launch.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Tests: URL builders produce only valid regex-matching values and refuse bad input, sync lists only merged ids, reserve 'taken' shows toast and does not navigate.

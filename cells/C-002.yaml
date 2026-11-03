@@ -1,0 +1,38 @@
+id: C-002
+title: Panel state API, login and Worker routing
+type: normal
+priority: 5
+goal: |
+  Add GET /panel/api/state?repo=owner/name and POST /panel/api/login to the Worker, same origin, no CORS headers. Login compares the password timing-safe to secret PANEL_TOKEN, sets cookie bp_panel (HttpOnly, Secure, SameSite=Strict, Max-Age 12h), rate-limits failures (KV or in-memory). All /panel/api/* need the cookie else 401; bodies <= 4 KB. State JSON exactly as in docs/panel-contracts.md, built by REUSING computeState and the snapshot (no duplicated cell logic): status mapping done/running/ready/expired(ready with reclaim)/waiting/needs_human/needs_split, critical, wave, blockedBy, directDependents, transitiveDependents, sha.lock/tip (7 chars), sha.merged null, lease, attempts, lastCommit, bottleneck = not-done cell with most transitive dependents. Cache 60 s keyed by mainSha plus branch tips. src/panel/router.ts exports handlePanelRequest(req, env, ctx): Promise<Response | null> (null = not a /panel path); it calls handlePanelAction from src/panel/actions.ts for other /panel/api/* paths and serves non-api /panel/* from env.ASSETS (SPA fallback to index.html). src/index.ts: call handlePanelRequest first, else the existing OAuthProvider. wrangler.toml: add [assets] directory="./web/dist" binding="ASSETS" run_worker_first=true.
+inputs:
+  - from: C-000
+    kind: implementation
+    contract: |
+      docs/panel-contracts.md and src/panel/types.ts (PanelState, PanelCell, PanelEnv); stub handlePanelAction in src/panel/actions.ts.
+provides:
+  - "src/panel/auth.ts: requirePanelAuth(req, env): Promise<Response | null> (null = ok, else the 401); makeSession(...)"
+  - "src/panel/state.ts: buildPanelState(env, repo): Promise<PanelState>"
+  - "src/panel/router.ts: handlePanelRequest(req, env, ctx): Promise<Response | null>"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/auth.ts
+  - src/panel/router.ts
+  - src/index.ts
+  - wrangler.toml
+  - test/panel_state.test.ts
+  - test/panel_auth.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/auth.ts
+  - src/panel/router.ts
+  - src/index.ts
+  - test/panel_state.test.ts
+  - test/panel_auth.test.ts
+acceptance:
+  - cmd: "node --test test/panel_state.test.ts test/panel_auth.test.ts"
+  - cmd: "npm test"
+  - cmd: "npx tsc --noEmit"
+notes: |
+  Tests: 401 without cookie, cookie flags, wrong password rejected, rate limit, JSON parity with computeState on a fixture, bottleneck ranking, no CORS headers, body > 4 KB rejected, repo must match ALLOWED_REPOS. /panel routing next to OAuthProvider is NOT verified live; say so in the PR summary.

@@ -1,0 +1,32 @@
+id: C-001
+title: next_cell cell_id pinned claim and reservation
+type: normal
+priority: 5
+goal: |
+  Extend the existing next_cell tool: optional `cell_id` and optional `who`. With cell_id: if that cell is ready (or reclaimable/expired) and not reserved for someone else, claim or resume exactly that cell using the same CLAIMED/RESUME reply format (the C1 echo line must still work). Otherwise reply `NOT_READY <id> <reason>` or `RESERVED <id> by <name>`. Never fall back to another cell. Reservation: KV (OAUTH_KV) key `reserve:<repo>:<cell>` = {who, at}, TTL 600 s. next_cell WITHOUT cell_id skips reserved cells. The key is deleted on CLAIMED/RESUME of that cell. RESERVED only when reservation.who and the call's who are both present and differ. Export helpers from src/claim.ts: reserveKey(repo, cell), getReservation, setReservation(kv, repo, cell, who), clearReservation. The KV is eventually consistent; the git branch lock stays the arbiter.
+inputs:
+  - from: C-000
+    kind: implementation
+    contract: |
+      docs/panel-contracts.md section 'pinned claim and reservation'; PanelEnv in src/panel/types.ts.
+provides:
+  - "src/claim.ts: reserveKey(repo: string, cell: string): string; getReservation(kv, repo, cell): Promise<{who:string; at:string}|null>; setReservation(kv, repo, cell, who): Promise<void>; clearReservation(kv, repo, cell): Promise<void>"
+  - "tool next_cell({repo?, wait_seconds?, cell_id?, who?}) replies CLAIMED/RESUME/NOT_READY <id> <reason>/RESERVED <id> by <name>"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - src/claim.ts
+  - src/engine.ts
+  - src/tools.ts
+  - test/pinned_claim.test.ts
+outputs:
+  - src/claim.ts
+  - src/engine.ts
+  - src/tools.ts
+  - test/pinned_claim.test.ts
+acceptance:
+  - cmd: "node --test test/pinned_claim.test.ts"
+  - cmd: "npm test"
+  - cmd: "npx tsc --noEmit"
+notes: |
+  Tests required: pinned claim of a ready cell, not ready, reserved by other, expired reservation (TTL), reservation skipped by plain next_cell, expired-lease cell reclaimed when pinned. Use test/fakegh.ts and existing engine tests as models. Existing tests must stay green.

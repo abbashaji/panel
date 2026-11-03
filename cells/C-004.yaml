@@ -1,0 +1,42 @@
+id: C-004
+title: Panel SPA scaffold, theme, API client and mock data
+type: skeleton
+priority: 5
+lease_minutes: 15
+goal: |
+  Create the web/ app: React 18 + TypeScript + Vite, Tailwind (v4 via @tailwindcss/vite), Radix UI, @xyflow/react, dagre, TanStack Query, Vitest + jsdom + @testing-library/react. Dark and light themes via CSS variables (status colors done #3DD6A3, running #5B9DFF, ready #FFC857, waiting #9AA3B8, expired #FF6B5E, needs_human #C792FF, needs_split #FF8FB1). Typed API client in web/src/core (login, getState, reserve, release, clearFeedback) plus a mock mode with sample data (about 14 cells, one expired bottleneck) when VITE_MOCK=1 or the API is unreachable in dev. store.tsx: PanelContext/usePanel() with state, selection, view ('graph'|'table'|'timeline'), search, theme, polling 5 s, toast queue, and launcher hooks registerLauncher({start(id), open(id), sync(mergedIds), owner(id)}) that default to a toast 'launcher not installed'. App.tsx composes slots found by import.meta.glob('./{graph,inspector,shell,table,launch}/index.tsx', {eager:true}): shell default export = Shell({children}), graph default = GraphView, table default = TableView and named TimelineView, inspector default = Inspector, launch default = LaunchProvider({children}); each slot component takes no props and reads usePanel(); a missing slot renders a labelled placeholder. Login screen when the API answers 401. web/package.json scripts: dev, build (tsc -b && vite build), test (vitest run). No lockfile (CI runs npm install).
+inputs:
+  - from: C-000
+    kind: implementation
+    contract: |
+      PanelState / PanelCell / PanelStatus in src/panel/types.ts and docs/panel-contracts.md (UI spec section). Import the types with a relative path from web/src.
+provides:
+  - "web/src/core/store.tsx: usePanel(): {state, selection, setSelection, view, setView, search, setSearch, theme, toggleTheme, toast(msg, kind?), registerLauncher, launcher}"
+  - "web/src/core/api.ts: login, getState, reserve, release, clearFeedback (typed against src/panel/types.ts)"
+  - "web/src/core/status.ts: STATUS_META[status] = {label, color, icon}"
+  - "slots: shell/index.tsx, graph/index.tsx, table/index.tsx, inspector/index.tsx, launch/index.tsx default exports as described"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - web/package.json
+  - web/index.html
+  - web/vite.config.ts
+  - web/tsconfig.json
+  - web/src/main.tsx
+  - web/src/App.tsx
+  - web/src/theme.css
+  - web/src/core/**
+outputs:
+  - web/package.json
+  - web/index.html
+  - web/vite.config.ts
+  - web/tsconfig.json
+  - web/src/main.tsx
+  - web/src/App.tsx
+  - web/src/theme.css
+  - web/src/core/store.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Every status needs an icon and text label (never color alone), contrast >= 4.5:1, respect prefers-reduced-motion. Add at least one vitest test for the store (selection, polling reducer) and one for the API client mock. Pin dependency versions that exist (check names carefully: @xyflow/react, @dagrejs/dagre, @tanstack/react-query, radix-ui packages).

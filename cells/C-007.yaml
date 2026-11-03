@@ -1,0 +1,34 @@
+id: C-007
+title: Shell, filters, search, activity strip and Table view
+type: normal
+priority: 3
+goal: |
+  web/src/shell/index.tsx default Shell({children}): header 56 px (project, mainSha, counts, view switch Graph/Table/Timeline, theme toggle, refresh), sidebar 196 px (status filters with counts, bottleneck shortcut), main slot for children, activity strip at bottom (recent lastCommit lines), Ctrl+K search palette (Radix dialog) that selects a cell. Dark/light via CSS variables. web/src/table/index.tsx default TableView (sortable, filterable by status/search, keyboard friendly, click selects, columns id, title, status, wave, blocked by, lease, attempts) and named export TimelineView (cells grouped by wave with status colors). Shared filter state lives in usePanel (search, status filter set).
+inputs:
+  - from: C-004
+    kind: implementation
+    contract: |
+      web/src/core/store.tsx usePanel(), status.ts, slot convention in App.tsx.
+  - from: C-005
+    kind: implementation
+    contract: |
+      Graph view exists and reads the same usePanel() selection and filters.
+provides:
+  - "web/src/shell/index.tsx Shell; web/src/table/index.tsx TableView, TimelineView"
+read:
+  - docs/decisions.md
+allowed_paths:
+  - web/src/shell/**
+  - web/src/table/**
+outputs:
+  - web/src/shell/index.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/Sidebar.tsx
+  - web/src/shell/Activity.tsx
+  - web/src/table/index.tsx
+  - web/src/shell/shell.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Never color alone: use STATUS_META icon and label. Tests: filter counts, search selects cell, table sort.
