@@ -4,7 +4,7 @@ using BlueprintLauncher.Core;
 
 namespace BlueprintLauncher.App;
 
-/// <summary>Entry point and small helpers. Opens no network connection (no System.Net).</summary>
+/// <summary>Entry point and small helpers. Opens no network connection.</summary>
 internal static class Program
 {
     private const string LastChoiceFile = "last-choice.txt";
