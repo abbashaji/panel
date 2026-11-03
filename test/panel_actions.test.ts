@@ -18,7 +18,7 @@ function fakeKv() {
 function mkEnv(kv = fakeKv()): any {
   return { PANEL_TOKEN: "pw", ADMIN_TOKEN: "adm", ALLOWED_REPOS: REPO, GITHUB_TOKEN: "x", OAUTH_KV: kv };
 }
-async function post(env: any, path: string, body: unknown, deps: ActionDeps, auth = true): Promise<Response | null> {
+async function post(env: any, path: string, body: unknown, deps: ActionDeps, auth = true): Promise<any> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (auth) headers.cookie = `${COOKIE}=${await makeSession(env)}`;
   const req = new Request(`https://x.test${path}`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
