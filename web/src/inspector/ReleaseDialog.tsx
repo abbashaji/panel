@@ -21,8 +21,13 @@ export interface ReleaseDialogProps {
 }
 
 const field =
-  "w-full rounded border border-white/20 bg-transparent px-2 py-1 text-sm text-inherit";
-const btn = "rounded border border-white/20 px-3 py-1 text-sm disabled:opacity-40";
+  "h-9 w-full rounded-lg border border-[#2A3553] bg-[#18213A] px-3 text-[13px] text-[#E8ECF5] outline-none focus:border-[#5B9DFF]";
+const btn =
+  "h-9 cursor-pointer rounded-lg border border-[#33405E] bg-[#18213A] px-4 text-[13px] font-semibold text-[#E8ECF5] disabled:cursor-default disabled:opacity-40";
+const primary =
+  "h-9 cursor-pointer rounded-lg border border-[#5B9DFF] bg-[#5B9DFF] px-4 text-[13px] font-bold text-[#06142B] disabled:cursor-default disabled:opacity-40";
+const danger =
+  "h-9 cursor-pointer rounded-lg border border-[#FF6B5E] bg-[#FF6B5E] px-4 text-[13px] font-semibold text-[#1A0B09] disabled:cursor-default disabled:opacity-40";
 
 /** Confirm dialog for Release / Clear feedback. The admin key lives only in this component's state and is cleared on use and on close. */
 export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
@@ -69,12 +74,12 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/15 bg-[var(--bg-elev,#1a2030)] p-4 text-[var(--fg,#e6e9f2)] shadow-xl">
-          <Dialog.Title className="m-0 mb-2 text-base font-semibold">{`${label} ${cellId}?`}</Dialog.Title>
-          <Dialog.Description className="mb-3 text-sm">{cellId ? gitWriteText(action, cellId) : ""}</Dialog.Description>
+        <Dialog.Overlay className="fixed inset-0 bg-black/60" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-[#1E2740] bg-[#0F1424] p-5 text-[#E8ECF5] shadow-xl">
+          <Dialog.Title className="m-0 mb-2 text-[17px] font-bold text-[#E8ECF5]">{`${label} ${cellId}?`}</Dialog.Title>
+          <Dialog.Description className="mb-4 text-[12.5px] font-medium leading-[1.5] text-[#A9B2C6]">{cellId ? gitWriteText(action, cellId) : ""}</Dialog.Description>
           <form onSubmit={submit}>
-            <label htmlFor="bp-admin-key" className="mb-1 block text-sm">
+            <label htmlFor="bp-admin-key" className="mb-1.5 block text-[12.5px] font-medium text-[#C6CDDD]">
               Admin key (typed for this action only, never stored)
             </label>
             <input
@@ -92,7 +97,7 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
                   Cancel
                 </button>
               </Dialog.Close>
-              <button type="submit" disabled={!key || busy} className={btn}>
+              <button type="submit" disabled={!key || busy} className={action === "release" ? danger : primary}>
                 {busy ? "Working…" : `${label} ${cellId}`}
               </button>
             </div>
