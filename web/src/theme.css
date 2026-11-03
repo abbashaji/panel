@@ -1,16 +1,25 @@
 @import "tailwindcss";
 
-/* Dark is the default theme; light is selected with <html data-theme="light">. */
+/* Dark is the default theme (approved mockup, docs/panel-design.md); light is selected with <html data-theme="light">. */
 :root {
-  --bg: #0e1117;
-  --surface: #161b24;
-  --surface-2: #1d2430;
-  --border: #2b3445;
-  --text: #e6e9f0;
-  --muted: #9aa3b8;
+  --bg: #0c101c;
+  --surface: #0f1424;
+  --surface-2: #18213a;
+  --border: #1e2740;
+  --text: #e8ecf5;
+  --muted: #a9b2c6;
   --accent: #5b9dff;
   --danger: #ff6b5e;
   --focus: #8ab8ff;
+
+  --card: #131a2a;
+  --raised-border: #2a3553;
+  --edge: #3a4560;
+  --muted-2: #9aa3b8;
+  --muted-3: #8a93a8;
+  --nav-active: #1b2745;
+  --danger-bg: #2b1512;
+  --danger-border: #7a2e27;
 
   --st-done: #3dd6a3;
   --st-running: #5b9dff;
@@ -19,6 +28,9 @@
   --st-expired: #ff6b5e;
   --st-needs_human: #c792ff;
   --st-needs_split: #ff8fb1;
+
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
   color-scheme: dark;
 }
@@ -33,6 +45,15 @@
   --accent: #1d5fd1;
   --danger: #b42318;
   --focus: #1d5fd1;
+
+  --card: #ffffff;
+  --raised-border: #b8c0d4;
+  --edge: #8892a8;
+  --muted-2: #4a5568;
+  --muted-3: #5a6478;
+  --nav-active: #dfe7fb;
+  --danger-bg: #fdecea;
+  --danger-border: #f1b0a8;
   color-scheme: light;
 }
 
@@ -46,17 +67,27 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
 }
 
 .mono {
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 /* Status chip: tinted background + colored border; the text keeps the normal text color for contrast.

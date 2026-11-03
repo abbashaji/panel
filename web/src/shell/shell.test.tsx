@@ -106,7 +106,7 @@ describe("filters", () => {
     const ready = screen.getByRole("button", { name: /^Ready/ });
     expect(ready.textContent).toMatch(/Ready\s*1$/);
     expect(ready.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /^Expired/ }).textContent).toMatch(/Expired\s*0$/);
+    expect(screen.getByRole("button", { name: /Lease expired/ }).textContent).toMatch(/Lease expired\s*0$/);
     fireEvent.click(screen.getByRole("button", { name: /^Running/ }));
     expect(fns.toggleStatusFilter).toHaveBeenCalledWith("running");
     fireEvent.click(screen.getByRole("button", { name: /Bottleneck/ }));
