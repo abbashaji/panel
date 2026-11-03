@@ -20,6 +20,8 @@ const fns = {
   setView: vi.fn(),
   toggleTheme: vi.fn(),
   refresh: vi.fn(),
+  toggleCriticalOnly: vi.fn(),
+  toggleHideMerged: vi.fn(),
 };
 
 function cell(id: string, title: string, status: PanelCell["status"], wave: number, attempts: number, over: Partial<PanelCell> = {}): PanelCell {
@@ -75,6 +77,9 @@ function makePanel(over: Partial<PanelContextValue> = {}): PanelContextValue {
     selection: [],
     view: "table",
     theme: "dark",
+    criticalOnly: false,
+    hideMerged: false,
+    lastUpdated: null,
     ...fns,
     ...over,
   } as unknown as PanelContextValue;
@@ -106,11 +111,35 @@ describe("filters", () => {
     const ready = screen.getByRole("button", { name: /^Ready/ });
     expect(ready.textContent).toMatch(/Ready\s*1$/);
     expect(ready.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /Lease expired/ }).textContent).toMatch(/Lease expired\s*0$/);
+    // statuses with no cells are not listed (the mockup lists only what exists)
+    expect(screen.queryByRole("button", { name: /Lease expired/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Merged/ }).textContent).toMatch(/Merged\s*1$/);
     fireEvent.click(screen.getByRole("button", { name: /^Running/ }));
     expect(fns.toggleStatusFilter).toHaveBeenCalledWith("running");
-    fireEvent.click(screen.getByRole("button", { name: /Bottleneck/ }));
-    expect(fns.select).toHaveBeenCalledWith("C-002");
+  });
+
+  it("sidebar nav switches the view and opens settings", () => {
+    const onSettings = vi.fn();
+    render(<Sidebar onSettings={onSettings} />);
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    expect(fns.setView).toHaveBeenCalledWith("table");
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    expect(fns.setView).toHaveBeenCalledWith("timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onSettings).toHaveBeenCalled();
+  });
+
+  it("sidebar filter checkboxes are bound to the store", () => {
+    h.panel = makePanel({ criticalOnly: true });
+    render(<Sidebar />);
+    const crit = screen.getByRole("checkbox", { name: "Critical path only" }) as HTMLInputElement;
+    const merged = screen.getByRole("checkbox", { name: "Hide merged" }) as HTMLInputElement;
+    expect(crit.checked).toBe(true);
+    expect(merged.checked).toBe(false);
+    fireEvent.click(crit);
+    expect(fns.toggleCriticalOnly).toHaveBeenCalled();
+    fireEvent.click(merged);
+    expect(fns.toggleHideMerged).toHaveBeenCalled();
   });
 });
 
