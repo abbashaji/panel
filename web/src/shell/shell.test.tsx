@@ -121,9 +121,9 @@ describe("search palette", () => {
         <div />
       </Shell>,
     );
-    expect(screen.queryByLabelText("Search cells")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = screen.getByLabelText("Search cells");
+    const input = screen.getByRole("combobox");
     fireEvent.change(input, { target: { value: "errors" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(fns.select).toHaveBeenCalledWith("C-002");
