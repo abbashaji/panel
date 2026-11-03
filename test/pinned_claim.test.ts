@@ -123,3 +123,52 @@ test("a cell reserved for someone else answers RESERVED; the reserver and a call
   assert.match(await pinned(fx, kv, "C-001"), /^CLAIMED C-001 /);
   assert.equal(await getReservation(kv, REPO, "C-001"), null);
 });
+
+test("a reservation expires after 600 s", async () => {
+  const fx = await afterSkeleton();
+  const kv = new FakeKv(() => fx.clock);
+  await setReservation(kv, REPO, "C-002", "Ann");
+  fx.tick(599_000);
+  assert.equal(await pinned(fx, kv, "C-002", "Bob"), "RESERVED C-002 by Ann");
+  fx.tick(2_000);
+  assert.equal(await getReservation(kv, REPO, "C-002"), null);
+  assert.match(await pinned(fx, kv, "C-002", "Bob"), /^CLAIMED C-002 /);
+});
+
+test("a plain next_cell skips reserved cells and says so when nothing else is left", async () => {
+  const fx = await afterSkeleton();
+  const kv = new FakeKv(() => fx.clock);
+  await setReservation(kv, REPO, "C-001", "Ann");
+  assert.match(await plain(fx, kv), /^CLAIMED C-002 /); // C-001 is first in line but reserved
+  const none = await plain(fx, kv, "Bob");
+  assert.match(none, /^NONE_READY: ready cells are reserved for other chats: C-001/);
+  assert.deepEqual(branches(fx), ["cell/C-002"]);
+  assert.match(await pinned(fx, kv, "C-001", "Ann"), /^CLAIMED C-001 /); // the reserver still gets it
+});
+
+test("a pinned call reclaims a cell whose lease expired", async () => {
+  const fx = seed();
+  const kv = new FakeKv(() => fx.clock);
+  const first = await pinned(fx, kv, "C-000");
+  assert.match(first, /^CLAIMED C-000 /);
+  fx.tick(14 * 60000);
+  assert.match(await pinned(fx, kv, "C-000"), /^NOT_READY C-000 running/); // lease still alive
+  fx.tick(2 * 60000);
+  await setReservation(kv, REPO, "C-000", "Ann");
+  assert.equal(await pinned(fx, kv, "C-000", "Bob"), "RESERVED C-000 by Ann");
+  const resumed = await pinned(fx, kv, "C-000", "Ann");
+  assert.match(resumed, /^RESUME C-000 base=[0-9a-f]{7} repo=o\/r on cell\/C-000/);
+  assert.notEqual(base7(resumed), base7(first));
+  assert.equal(await getReservation(kv, REPO, "C-000"), null);
+});
+
+test("the next_cell tool passes cell_id and who through to the engine", async () => {
+  const fx = await afterSkeleton();
+  const kv = new FakeKv(() => fx.clock);
+  const env = { OAUTH_KV: kv, OAUTH_PROVIDER: {}, MCP_AUTH_TOKEN: "m", GITHUB_TOKEN: "t", ALLOWED_REPOS: REPO } as unknown as Env;
+  const h = toolHandlers(env, opts(fx), () => fx);
+  await setReservation(kv, REPO, "C-002", "Ann");
+  assert.equal(await h.next_cell({ repo: REPO, cell_id: "C-002", who: "Bob" }), "RESERVED C-002 by Ann");
+  assert.match(await h.next_cell({ repo: REPO, cell_id: "C-002", who: "Ann" }), /^CLAIMED C-002 /);
+  assert.match(await h.next_cell({ repo: REPO }), /^CLAIMED C-001 /); // no cell_id: the old behaviour
+});
