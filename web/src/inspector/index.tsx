@@ -17,7 +17,7 @@ export default function Inspector() {
 
   let body;
   if (!state || picked.length === 0) {
-    body = <p className="m-0 text-sm opacity-70">Select a cell to see its details.</p>;
+    body = <p className="m-0 text-[12.5px] font-medium text-[#8A93A8]">Select a cell to see its details.</p>;
   } else if (picked.length > 1) {
     body = <MultiSummary cells={picked} />;
   } else {
@@ -25,9 +25,9 @@ export default function Inspector() {
   }
 
   return (
-    <aside aria-label="Inspector" className="h-full w-80 shrink-0 overflow-y-auto border-l border-white/10 p-3">
+    <section aria-label="Inspector" className="h-full overflow-y-auto text-[#E8ECF5]">
       {body}
       <ReleaseDialog action={dialog?.action ?? "release"} cellId={dialog?.id ?? null} onClose={() => setDialog(null)} />
-    </aside>
+    </section>
   );
 }

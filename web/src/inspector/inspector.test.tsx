@@ -72,9 +72,13 @@ describe("Inspector", () => {
     render(<Inspector />);
     expect(screen.getByText("Title C-006")).toBeTruthy();
     expect(screen.getByTestId("status-chip").textContent).toContain("Running");
-    expect(screen.getByText("1/3")).toBeTruthy();
+    expect(screen.getByText("42 min left · attempt 1 of 3")).toBeTruthy();
+    expect(screen.getByText("7d3e1b0")).toBeTruthy();
+    expect(screen.getByText("9b20c4e")).toBeTruthy();
+    expect(screen.getByText("1 allowed path")).toBeTruthy();
+    expect(screen.getByText("0 direct, 0 total dependents")).toBeTruthy();
     expect(screen.getByText("cell/C-006")).toBeTruthy();
-    expect(screen.getByText("wip subject")).toBeTruthy();
+    expect(screen.getByText(/wip subject · \d+(m|h|d) ago/)).toBeTruthy();
     expect(screen.getByText("do the next thing")).toBeTruthy();
     expect(screen.getByText("Sam")).toBeTruthy();
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
@@ -103,22 +107,22 @@ describe("Inspector", () => {
     expect(fns.launcher.start).toHaveBeenCalledWith("C-007");
   });
 
-  it("disables Release on done and waiting cells", () => {
+  it("hides Release cell on done and waiting cells", () => {
     for (const status of ["done", "waiting"] as PanelStatus[]) {
       setup([cell("C-006", status)], ["C-006"]);
       render(<Inspector />);
-      expect(btn("Release").disabled).toBe(true);
+      expect(screen.queryByRole("button", { name: "Release cell" })).toBeNull();
       cleanup();
     }
     setup([cell("C-006", "running")], ["C-006"]);
     render(<Inspector />);
-    expect(btn("Release").disabled).toBe(false);
+    expect(btn("Release cell").disabled).toBe(false);
   });
 
   it("confirm dialog names the exact git write", () => {
     setup([cell("C-006", "running")], ["C-006"]);
     render(<Inspector />);
-    fireEvent.click(btn("Release"));
+    fireEvent.click(btn("Release cell"));
     const dlg = screen.getByRole("dialog");
     expect(dlg.textContent).toMatch(/ONE empty commit/);
     expect(dlg.textContent).toContain("cell/C-006");
@@ -138,7 +142,7 @@ describe("Inspector", () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const fns = setup([cell("C-006", "running")], ["C-006"]);
     render(<Inspector />);
-    fireEvent.click(btn("Release"));
+    fireEvent.click(btn("Release cell"));
     fireEvent.change(screen.getByLabelText(/admin key/i), { target: { value: "topsecret" } });
     fireEvent.click(btn("Release C-006"));
     await waitFor(() => expect(release).toHaveBeenCalledWith("o/r", "C-006", "topsecret"));
@@ -150,7 +154,7 @@ describe("Inspector", () => {
     expect(document.cookie).not.toContain("topsecret");
     // reopen: the field is empty again
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(btn("Release"));
+    fireEvent.click(btn("Release cell"));
     expect((screen.getByLabelText(/admin key/i) as HTMLInputElement).value).toBe("");
     setItem.mockRestore();
   });
@@ -159,7 +163,7 @@ describe("Inspector", () => {
     vi.mocked(release).mockRejectedValue(new ApiError(403, "forbidden"));
     const fns = setup([cell("C-006", "running")], ["C-006"]);
     render(<Inspector />);
-    fireEvent.click(btn("Release"));
+    fireEvent.click(btn("Release cell"));
     fireEvent.change(screen.getByLabelText(/admin key/i), { target: { value: "nope" } });
     fireEvent.click(btn("Release C-006"));
     await waitFor(() => expect(fns.toast).toHaveBeenCalledWith("Wrong admin key.", "error"));
@@ -179,5 +183,33 @@ describe("Inspector", () => {
     expect(part).toBeDefined();
     act(() => part!.requestRelease("C-006"));
     expect(screen.getByRole("dialog").textContent).toContain("Release C-006?");
+  });
+
+  it("shows the expired lease caption, the critical subline and a full bar", () => {
+    setup(
+      [cell("C-004", "expired", { lease: { minutesLeft: 0, expiredMinutesAgo: 22, ci: false }, attempts: 2, critical: true, directDependents: 5, transitiveDependents: 8 })],
+      ["C-004"],
+    );
+    render(<Inspector />);
+    expect(screen.getByText("Lease expired 22 min ago · attempt 2 of 3")).toBeTruthy();
+    expect(screen.getByText("Critical cell · 5 direct, 8 total dependents")).toBeTruthy();
+    expect(screen.getByTestId("status-chip").textContent).toContain("Lease expired");
+    expect(btn("Continue in my chat")).toBeTruthy();
+    expect(btn("Release cell").disabled).toBe(false);
+  });
+
+  it("shows an em dash when nobody holds the cell and hides buttons that do not apply", () => {
+    const launcher = { start: vi.fn(), open: vi.fn(), sync: vi.fn(), owner: vi.fn(() => null) };
+    setup([cell("C-007", "ready")], ["C-007"], { launcher });
+    render(<Inspector />);
+    expect(screen.getByText("\u2014")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue in my chat" })).toBeNull();
+    expect(btn("Start")).toBeTruthy();
+  });
+
+  it("shows a quiet hint when nothing is selected", () => {
+    setup([cell("C-006", "running")], []);
+    render(<Inspector />);
+    expect(screen.getByText("Select a cell to see its details.")).toBeTruthy();
   });
 });
