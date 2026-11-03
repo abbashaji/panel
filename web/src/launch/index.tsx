@@ -210,3 +210,68 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     transport.go(url);
     transport.watch(() => live.current.toast(HINT, "info"));
   };
+
+  const box =
+    "fixed left-1/2 top-1/2 z-50 w-[min(92vw,28rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[color:var(--border,#8884)] " +
+    "bg-[color:var(--surface,#fff)] p-5 text-[color:var(--text,#111)] shadow-xl";
+  const btn = "rounded-md border border-[color:var(--border,#8884)] px-3 py-1.5 text-sm";
+  const primary = "rounded-md bg-[#5B9DFF] px-3 py-1.5 text-sm font-medium text-[#0b1020]";
+
+  return (
+    <>
+      {children}
+      <Dialog.Root open={dlg !== null} onOpenChange={(o) => !o && setDlg(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+          {dlg?.phase === "name" && (
+            <Dialog.Content className={box}>
+              <Dialog.Title className="text-base font-semibold">Who are you?</Dialog.Title>
+              <Dialog.Description className="mt-2 text-sm">
+                Your display name is shown next to the cells you start. It is kept in this browser only.
+              </Dialog.Description>
+              <form onSubmit={submitName} className="mt-4 flex flex-col gap-3">
+                <label className="flex flex-col gap-1 text-sm">
+                  Display name
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={40}
+                    autoFocus
+                    className="rounded-md border border-[color:var(--border,#8884)] bg-transparent px-2 py-1.5"
+                  />
+                </label>
+                {nameErr && (
+                  <p role="alert" className="text-sm text-[#FF6B5E]">
+                    {nameErr}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Dialog.Close className={btn}>Cancel</Dialog.Close>
+                  <button type="submit" className={primary}>
+                    Continue
+                  </button>
+                </div>
+              </form>
+            </Dialog.Content>
+          )}
+          {dlg?.phase === "confirm" && (
+            <Dialog.Content className={box}>
+              <Dialog.Title className="text-base font-semibold">Start {dlg.id}</Dialog.Title>
+              <Dialog.Description className="mt-2 text-sm">
+                {dlg.id} is reserved for {dlg.who}. Next, your browser opens claude.ai with a pre-filled prompt. You must press
+                Send yourself; nothing is sent for you. The launcher shows its own confirm window first, where you choose the
+                browser profile.
+              </Dialog.Description>
+              <div className="mt-4 flex justify-end gap-2">
+                <Dialog.Close className={btn}>Cancel</Dialog.Close>
+                <button type="button" onClick={confirm} className={primary}>
+                  Open claude.ai
+                </button>
+              </div>
+            </Dialog.Content>
+          )}
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
+  );
+}
