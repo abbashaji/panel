@@ -1,6 +1,6 @@
 import type { DependKind, PanelCell, PanelCounts, PanelState, PanelStatus, ReserveResult } from "./types";
 
-// Sample data: 14 cells, one expired bottleneck (C-004 blocks 6). Used when VITE_MOCK=1 or the API is unreachable in dev.
+// Sample data: 14 cells, one expired bottleneck (C-004 blocks 5). Used when VITE_MOCK=1 or the API is unreachable in dev.
 
 interface Spec {
   id: string;
