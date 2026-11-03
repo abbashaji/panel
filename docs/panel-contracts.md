@@ -85,3 +85,79 @@ All types are in `src/panel/types.ts` and must match the JSON below exactly.
 - `POST /panel/api/release` `{repo, cell_id, admin_key}` -> `takeover(... handoff:true)`. Result text passed through (<= 200 chars).
 - `POST /panel/api/clear-feedback` `{repo, cell_id, admin_key}` -> takeover with `clear_feedback`.
 - The confirm step in the UI states exactly the git write (one empty commit, or branch state change) before sending.
+
+## 4. Launcher protocol
+
+The only input is a URL; treat it as hostile.
+
+- `blueprint://start?repo=<owner/name>&cell=<C-NNN>&who=<name>`: confirm window, then launch.
+- `blueprint://open?repo=&cell=`: "my cell" window (open claude.ai in the saved profile; optional chat link box).
+- `blueprint://sync?repo=<owner/name>&merged=C-001,C-002`: silent; deletes local records of merged cells.
+
+### 4.1 Validation (reject otherwise)
+
+| Field | Rule |
+|---|---|
+| URL length | max 400 |
+| repo | `^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$` |
+| cell | `^C-\d{3,5}$` |
+| who | `^[\w .-]{1,40}$` |
+| merged | comma list of valid cells |
+
+Also reject: unknown command, duplicate or extra keys, control characters.
+
+### 4.2 Prompt template (built in the launcher, never taken from the URL)
+
+```
+Repo: {repo}
+Follow BLUEPRINT.md.
+Call next_cell with repo and cell_id={cell} (reserved for me).
+Do only that cell. Begin your next message with the CLAIMED line.
+```
+
+Strip `<` and `>`; URL-encode; final URL `https://claude.ai/new?q=<encoded>`; the host is fixed, never from input.
+
+### 4.3 Browsers and profiles
+
+- Chrome and Edge. Profiles from `%LOCALAPPDATA%\Google\Chrome\User Data\Local State` and `...\Microsoft\Edge\User Data\Local State`, key `profile.info_cache` -> `{folder: {name}}`. Read only folder and name (never email, cookies, history).
+- Launch: `chrome.exe --profile-directory="<folder>" "<url>"` as an argument list (never a shell string); exe path from the registry App Paths or standard install dirs.
+
+### 4.4 Local record file
+
+`%LOCALAPPDATA%\BlueprintLauncher\cells.json`:
+
+```json
+{ "<repo> <cell>": { "browser": "chrome", "profileFolder": "Profile 1", "profileName": "Work", "startedAt": "ISO", "chatUrl": "optional" } }
+```
+
+Chat link accepted only if it matches `^https://claude\.ai/chat/[0-9a-f-]{36}$`. Deleted on sync (merged) and after 14 days.
+
+### 4.5 Registration and network
+
+`HKCU\Software\Classes\blueprint` (no admin rights). The installer script is readable text. The launcher opens **no network connection** (test: no `System.Net` usage; firewall-block test).
+
+## 5. UI spec
+
+- Layout 1440 wide: header 56, sidebar 196, graph area, inspector 320, activity strip at bottom. Dark and light themes via CSS variables.
+- Status colors: done `#3DD6A3`, running `#5B9DFF`, ready `#FFC857`, waiting `#9AA3B8`, expired `#FF6B5E`, needs_human `#C792FF`, needs_split `#FF8FB1`. Every status also has an icon and a text label (never color alone). Text contrast >= 4.5:1.
+- Card 152x72: id (mono), status chip, title, sha7, one meta line (lease left, blocked by, merged ago). Badges (START, owner, BLOCKS n) sit fully **outside** the card, above it, covering nothing.
+- Edges: solid = implementation, dashed = contract; edges from the bottleneck are red. Wave labels on top. Pan, zoom, minimap.
+- Bottleneck: ring on the card, "BLOCKS n" tag, top banner with one-click Release, red downstream edges.
+- Interaction: click = select, double-click = primary action (Start if ready, Open chat if mine and running, else details), shift-click = multi-select, Esc clears, Ctrl+K search, arrow keys move selection, right-click menu.
+- Inspector: lease bar, attempts, branch, lock/tip sha, last commit, next step, holder, files; buttons Continue in my chat / Release / Open branch on GitHub.
+- Merged cells: no Open chat badge; the panel asks the launcher to `sync` merged ids on every Start/Open.
+- Views: Graph (first), Table, Timeline. Live updates by polling every 5 s (SSE later). Respect reduced motion.
+
+## 6. Secrets
+
+`PANEL_TOKEN` (new), `ADMIN_TOKEN` (existing), `GITHUB_TOKEN`, `MCP_AUTH_TOKEN` stay separate. `[assets]` for `web/dist` is added to `wrangler.toml` by C-002.
+
+## 7. Open points
+
+Gaps found in the plan while writing these contracts (to be confirmed by the owner):
+
+- (a) A pinned `next_cell` call carries no caller identity, so the reservation cannot say whose call it is. Contract here: `next_cell` gets an optional `who`; `RESERVED <id> by <name>` is returned only when both `reservation.who` and the call's `who` are present and differ. The launcher prompt template has no `who`, so in practice a pinned call without `who` claims a reserved cell; the git branch lock remains the real arbiter.
+- (b) `sha.merged` is `null`: the snapshot has no main commit sha. Either extend the GraphQL query in `github.ts` (verify live) or show "merged" without a sha.
+- (c) `wrangler.toml` `[assets]` (directory `./web/dist`, binding `ASSETS`, `run_worker_first = true`) is added by C-002, which also owns `src/index.ts`. `/panel/*` routing next to `OAuthProvider` is not verified live.
+- (d) The Worker `Env` interface lives in `src/tools.ts`; `PanelEnv` in `src/panel/types.ts` extends it, so new secrets need no change to `tools.ts`.
+- (e) `src/panel/actions.ts` is a stub created here so that `src/panel/router.ts` (C-002) can import it before C-003 exists.
