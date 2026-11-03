@@ -1,29 +1,34 @@
 import '@xyflow/react/dist/style.css';
 import {
   Background,
+  BaseEdge,
+  ControlButton,
   Controls,
-  MarkerType,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { STATUS_META } from '../core/status';
 import { usePanel } from '../core/store';
-import type { PanelCell } from '../core/types';
+import { readOwn, readWho } from '../launch';
+import { visibleCells } from '../shell/filter';
+import { Banner, showBanner } from './Banner';
 import { CellCard, type CardAction, type CardData } from './CellCard';
-import { NODE_H, NODE_W, layoutCells, primaryAction, type LayoutEdge } from './layout';
+import { NODE_H, NODE_W, cellsLabel, layoutCells, primaryAction, type LayoutEdge } from './layout';
 
-type WaveNode = Node<{ label: string }, 'wave'>;
+type WaveNode = Node<{ label: string; count: number }, 'wave'>;
 
 function WaveLabel({ data }: NodeProps<WaveNode>) {
   return (
-    <div className='mono whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider' style={{ color: 'var(--muted)' }}>
-      {data.label}
+    <div className='whitespace-nowrap' style={{ fontSize: 11 }}>
+      <span style={{ color: 'var(--muted-2)', fontWeight: 600, letterSpacing: '.08em' }}>{data.label}</span>
+      <span style={{ color: '#6F7890', fontWeight: 500 }}> · {cellsLabel(data.count)}</span>
     </div>
   );
 }
@@ -32,86 +37,89 @@ const nodeTypes = { cell: CellCard, wave: WaveLabel };
 
 const reducedMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
-// SVG markers need a concrete color (CSS variables do not resolve in marker attributes)
-const EDGE_COLOR = STATUS_META.waiting.color;
 const BOTTLENECK_COLOR = STATUS_META.expired.color;
+
+/** bezier from the right middle of the source to the left middle of the target; solid = implementation, dashed = contract, red = leaves the bottleneck */
+function BpEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps) {
+  const bottleneck = data?.bottleneck === true;
+  const off = Math.max(40, Math.abs(targetX - sourceX) * 0.35);
+  const path = `M ${sourceX} ${sourceY} C ${sourceX + off} ${sourceY}, ${targetX - off} ${targetY}, ${targetX} ${targetY}`;
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      style={{
+        stroke: bottleneck ? BOTTLENECK_COLOR : 'var(--edge)',
+        strokeWidth: bottleneck ? 2 : 1.5,
+        opacity: bottleneck ? 0.85 : 1,
+        strokeDasharray: data?.kind === 'contract' ? '5 4' : undefined,
+      }}
+    />
+  );
+}
+
+const edgeTypes = { bp: BpEdge };
 
 /** solid = implementation, dashed = contract, red = leaves the bottleneck */
 function toEdge(e: LayoutEdge): Edge {
-  const color = e.bottleneck ? BOTTLENECK_COLOR : EDGE_COLOR;
   return {
     id: e.id,
     source: e.source,
     target: e.target,
-    type: 'smoothstep',
+    type: 'bp',
     selectable: false,
     focusable: false,
     zIndex: e.bottleneck ? 1 : 0,
-    style: {
-      stroke: color,
-      strokeWidth: e.bottleneck ? 2.5 : 1.5,
-      strokeDasharray: e.kind === 'contract' ? '6 4' : undefined,
-    },
-    markerEnd: { type: MarkerType.ArrowClosed, color },
+    data: { kind: e.kind, bottleneck: e.bottleneck },
   };
 }
 
-function Banner({ id, blocks, onRelease }: { id: string; blocks: number; onRelease: () => void }) {
-  return (
-    <div
-      role='status'
-      className='flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs'
-      style={{ background: 'var(--surface)', borderColor: BOTTLENECK_COLOR }}
-    >
-      <span aria-hidden style={{ color: BOTTLENECK_COLOR }}>
-        !
-      </span>
-      <span>
-        <strong className='mono'>{id}</strong> is the bottleneck and blocks {blocks} {blocks === 1 ? 'cell' : 'cells'}.
-      </span>
-      <span className='flex-1' />
-      <button
-        type='button'
-        onClick={onRelease}
-        className='rounded border px-2 py-1 font-semibold'
-        style={{ borderColor: BOTTLENECK_COLOR, color: BOTTLENECK_COLOR }}
-      >
-        Release
-      </button>
-    </div>
-  );
-}
-
 function Graph() {
-  const { state, selection, search, statusFilter, theme, launcher, actions, select, clearSelection, moveSelection } = usePanel();
+  const { state, repo, selection, search, statusFilter, criticalOnly, hideMerged, theme, launcher, actions, select, clearSelection, moveSelection } =
+    usePanel();
   const rf = useReactFlow();
   const byKeyboard = useRef(false);
-  const cells = useMemo(() => state?.cells ?? [], [state]);
+  const fit = useCallback(() => {
+    void rf.fitView({ padding: 0.15, duration: reducedMotion() ? 0 : 200 });
+  }, [rf]);  const allCells = useMemo(() => state?.cells ?? [], [state]);
+  // search, status filter, critical path only and hide merged remove cells (and their edges) from the graph
+  const cells = useMemo(
+    () => visibleCells(allCells, { search, statuses: statusFilter, criticalOnly, hideMerged }),
+    [allCells, search, statusFilter, criticalOnly, hideMerged],
+  );
   const bottleneck = state?.bottleneck ?? null;
+  const bottleneckCell = bottleneck ? allCells.find((c) => c.id === bottleneck.id) : undefined;
   const layout = useMemo(() => layoutCells(cells, bottleneck?.id ?? null), [cells, bottleneck?.id]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+
+  /** the cell's owner is you (reserved or started it here, or your saved display name) */
+  const isMine = useCallback(
+    (id: string): boolean => {
+      const o = launcher.owner(id);
+      if (o === null) return false;
+      const w = readWho();
+      return readOwn(repo).includes(id) || (w !== '' && o === w);
+    },
+    [launcher, repo],
+  );
 
   const onAct = useCallback(
     (id: string, action: CardAction) => {
       byKeyboard.current = false;
       const cell = cells.find((c) => c.id === id);
       if (!cell) return;
-      const act = action === 'primary' ? primaryAction(cell.status, launcher.owner(id) !== null) : action;
+      const act = action === 'primary' ? primaryAction(cell.status, isMine(id)) : action;
       if (act === 'multi') select(id, true);
       else if (act === 'start') launcher.start(id);
       else if (act === 'open') launcher.open(id);
       else if (act === 'release') actions.requestRelease(id);
       else select(id);
     },
-    [cells, launcher, actions, select],
+    [cells, launcher, actions, select, isMine],
   );
 
   const nodes = useMemo<Node[]>(() => {
-    const q = search.trim().toLowerCase();
-    const matches = (c: PanelCell) =>
-      (q === '' || c.id.toLowerCase().includes(q) || c.title.toLowerCase().includes(q)) &&
-      (statusFilter.length === 0 || statusFilter.includes(c.status));
     const byId = new Map(cells.map((c) => [c.id, c]));
     const cards = layout.nodes.flatMap((n): Node[] => {
       const cell = byId.get(n.id);
@@ -119,10 +127,10 @@ function Graph() {
       const data: CardData = {
         cell,
         owner: launcher.owner(n.id),
+        mine: isMine(n.id),
         bottleneck: n.bottleneck,
         blocks: n.bottleneck ? (bottleneck?.blocks ?? 0) : 0,
         selected: selection.includes(n.id),
-        dim: !matches(cell),
         onAct,
       };
       return [
@@ -148,11 +156,11 @@ function Graph() {
         selectable: false,
         focusable: false,
         connectable: false,
-        data: { label: w.label },
+        data: { label: w.label, count: w.count },
       }),
     );
     return [...waves, ...cards];
-  }, [layout, cells, bottleneck, selection, search, statusFilter, launcher, onAct]);
+  }, [layout, cells, bottleneck, selection, launcher, isMine, onAct]);
 
   const edges = useMemo(() => layout.edges.map(toEdge), [layout.edges]);
 
@@ -178,15 +186,17 @@ function Graph() {
 
   return (
     <div className='flex h-full flex-col' tabIndex={0} aria-label='Dependency graph' style={{ outline: 'none' }} onKeyDown={onKeyDown}>
-      {bottleneck && <Banner id={bottleneck.id} blocks={bottleneck.blocks} onRelease={() => actions.requestRelease(bottleneck.id)} />}
+      {bottleneck && showBanner(bottleneckCell) && (
+        <Banner cell={bottleneckCell} blocks={bottleneck.blocks} onRelease={() => actions.requestRelease(bottleneck.id)} />
+      )}
       <div className='min-h-0 flex-1'>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           colorMode={theme}
-          fitView
-          fitViewOptions={{ padding: 0.15, duration: 0 }}
+          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
           minZoom={0.2}
           maxZoom={1.5}
           nodesDraggable={false}
@@ -200,8 +210,14 @@ function Graph() {
           onPaneClick={clearSelection}
         >
           <Background />
-          <Controls showInteractive={false} />
+          <Controls showInteractive={false} showFitView={false} position='bottom-left'>
+            <ControlButton onClick={fit} title='Fit graph to view' aria-label='Fit graph to view'>
+              <span style={{ fontSize: 10, fontWeight: 700 }}>Fit</span>
+            </ControlButton>
+          </Controls>
           <MiniMap
+            position='bottom-right'
+            style={{ width: 120, height: 80 }}
             pannable
             zoomable
             nodeColor={(n) => (n.type === 'cell' ? STATUS_META[(n.data as CardData).cell.status].color : 'transparent')}

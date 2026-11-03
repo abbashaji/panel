@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PanelCell, PanelDepend } from '../core/types';
-import { BADGE_H, CARD_H, layoutCells, metaLine, primaryAction, type Layout } from './layout';
+import { BADGE_H, CARD_H, CARD_W, COL_PITCH, ROW_PITCH, layoutCells, metaLine, primaryAction, type Layout } from './layout';
 
 const impl = (id: string): PanelDepend => ({ id, kind: 'implementation' });
 const contract = (id: string): PanelDepend => ({ id, kind: 'contract' });
@@ -79,11 +79,22 @@ describe('layoutCells', () => {
 
   it('labels each wave above its nodes', () => {
     const l = layoutCells(cells);
-    expect(l.waves.map((w) => w.label)).toEqual(['Wave 1', 'Wave 2', 'Wave 3']);
+    expect(l.waves.map((w) => w.label)).toEqual(['WAVE 1', 'WAVE 2', 'WAVE 3']);
+    expect(l.waves.map((w) => w.count)).toEqual([1, 2, 1]);
     const top = Math.min(...l.nodes.map((n) => n.y));
     for (const w of l.waves) expect(w.y).toBeLessThan(top);
     const w2 = l.waves[1];
     expect(w2?.x).toBe(Math.min(at(l, 'B').x, at(l, 'C').x));
+  });
+
+  it('uses a 186px column pitch and a 96px row pitch, centered on the parent', () => {
+    const l = layoutCells(cells);
+    expect(COL_PITCH).toBe(CARD_W + 34);
+    expect(ROW_PITCH).toBe(CARD_H + 24);
+    expect(at(l, 'B').x - at(l, 'A').x).toBe(COL_PITCH);
+    expect(at(l, 'D').x - at(l, 'B').x).toBe(COL_PITCH);
+    expect(at(l, 'C').y - at(l, 'B').y).toBeCloseTo(ROW_PITCH, 5);
+    expect((at(l, 'B').y + at(l, 'C').y) / 2).toBeCloseTo(at(l, 'A').y, 5);
   });
 
   it('keeps the badge row outside the card box and nodes apart', () => {
@@ -117,9 +128,9 @@ describe('card helpers', () => {
     const merged = cell('M', 1, [], { status: 'done', lastCommit: { subject: 's', next: null, at: '2026-11-04T10:00:00Z' } });
     expect(metaLine(merged, now)).toBe('merged 2h ago');
     const running = cell('R', 1, [], { status: 'running', lease: { minutesLeft: 12, expiredMinutesAgo: null, ci: false } });
-    expect(metaLine(running, now)).toBe('12m lease left');
+    expect(metaLine(running, now)).toBe('12m left');
     const blocked = cell('W', 2, [impl('A')], { blockedBy: ['A', 'B'] });
-    expect(metaLine(blocked, now)).toBe('blocked by A, B');
+    expect(metaLine(blocked, now)).toBe('← A, B');
     expect(metaLine(cell('Z', 1), now)).toBe('');
   });
 });

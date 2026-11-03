@@ -1,19 +1,21 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import type { CSSProperties, ReactNode } from 'react';
+import { Icon, StatusIcon } from '../core/Icon';
 import { STATUS_META } from '../core/status';
 import type { PanelCell } from '../core/types';
-import { BADGE_H, CARD_H, CARD_W, metaLine } from './layout';
+import { BADGE_H, CARD_H, CARD_W, badgeRules, metaLine, shaLabel } from './layout';
 
 export type CardAction = 'select' | 'multi' | 'primary' | 'start' | 'open' | 'release';
 
 export interface CardData extends Record<string, unknown> {
   cell: PanelCell;
   owner: string | null;
+  /** the owner is you: the chip offers Open chat */
+  mine: boolean;
   bottleneck: boolean;
   blocks: number;
   selected: boolean;
-  dim: boolean;
   onAct: (id: string, action: CardAction) => void;
 }
 
@@ -22,8 +24,8 @@ export type CardNode = Node<CardData, 'cell'>;
 const badge = (bg: string, fg: string): CSSProperties => ({
   background: bg,
   color: fg,
-  borderRadius: 4,
-  padding: '0 5px',
+  borderRadius: 8,
+  padding: '3px 8px',
   lineHeight: '14px',
   fontSize: 10,
   fontWeight: 700,
@@ -43,82 +45,106 @@ function Item({ onSelect, children }: { onSelect: () => void; children: ReactNod
 
 /** 152x72 card. The badge row sits above it (BADGE_H) and never overlaps it. */
 export function CellCard({ data }: NodeProps<CardNode>) {
-  const { cell, owner, bottleneck, blocks, selected, dim, onAct } = data;
+  const { cell, owner, mine, bottleneck, blocks, selected, onAct } = data;
   const meta = STATUS_META[cell.status];
-  const sha7 = (cell.sha.merged ?? cell.sha.tip ?? cell.sha.lock ?? '').slice(0, 7) || '–';
+  const rules = badgeRules(cell, owner, mine, bottleneck, blocks);
+  const sha7 = shaLabel(cell);
   const line = metaLine(cell);
-  const canStart = cell.status === 'ready';
-  const canOpen = cell.status === 'running' && owner !== null;
+  const canStart = rules.start;
+  const canOpen = rules.owner?.clickable === true;
   const canRelease = cell.status === 'running' || cell.status === 'expired' || bottleneck;
   const handleTop = BADGE_H + CARD_H / 2;
 
   return (
     <ContextMenu.Root>
-      <div style={{ width: CARD_W, opacity: dim ? 0.35 : 1 }}>
-        <div className='flex items-end gap-1 overflow-hidden pb-1.5' style={{ height: BADGE_H }}>
+      <div style={{ width: CARD_W }}>
+        <div className='flex items-end justify-between gap-1 overflow-hidden pb-0.5' style={{ height: BADGE_H }}>
+          <div className='flex min-w-0 items-end gap-1'>
           {canStart && (
             <button
               type='button'
               className='nodrag'
-              style={{ ...badge(meta.color, '#10131A'), cursor: 'pointer' }}
+              style={{ ...badge(meta.color, '#261A00'), letterSpacing: '.03em', cursor: 'pointer' }}
               onClick={(e) => {
                 e.stopPropagation();
                 onAct(cell.id, 'start');
               }}
             >
-              START
+              <span className='inline-flex items-center gap-1'>
+                <Icon name='play' size={9} />
+                START
+              </span>
             </button>
           )}
-          {owner && (
-            <span className='min-w-0 truncate' title={owner} style={badge('var(--surface-2)', 'var(--muted)')}>
-              {owner}
+          {rules.owner &&
+            (rules.owner.clickable ? (
+              <button
+                type='button'
+                className='nodrag min-w-0 truncate'
+                title={rules.owner.label}
+                style={{ ...badge('var(--nav-active)', '#DDE6FF'), padding: '2px 8px', border: '1px solid #4A5F94', cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAct(cell.id, 'open');
+                }}
+              >
+                {rules.owner.label}
+              </button>
+            ) : (
+              <span
+                className='min-w-0 truncate'
+                title={rules.owner.label}
+                style={{ ...badge('var(--surface-2)', 'var(--muted)'), padding: '2px 8px', border: '1px solid var(--raised-border)' }}
+              >
+                {rules.owner.label}
+              </span>
+            ))}
+          </div>
+          {rules.blocks !== null && (
+            <span className='shrink-0' style={badge(STATUS_META.expired.color, '#1A0B09')}>
+              BLOCKS {rules.blocks}
             </span>
           )}
-          {bottleneck && <span style={badge(STATUS_META.expired.color, '#10131A')}>BLOCKS {blocks}</span>}
         </div>
 
         <ContextMenu.Trigger asChild>
           <div className='relative' style={{ width: CARD_W, height: CARD_H }} onContextMenu={() => onAct(cell.id, 'select')}>
-            {bottleneck && (
-              <span
-                aria-hidden
-                className='pointer-events-none absolute rounded-[10px] border-[3px] motion-safe:animate-pulse'
-                style={{ inset: -4, borderColor: STATUS_META.expired.color }}
-              />
-            )}
             <div
               role='button'
               tabIndex={-1}
               aria-pressed={selected}
               aria-label={`${cell.id}, ${meta.label}: ${cell.title}`}
-              className='box-border flex h-full w-full cursor-pointer flex-col justify-between overflow-hidden rounded-lg border px-2 py-1 text-left'
+              className='relative box-border flex h-full w-full cursor-pointer flex-col justify-between overflow-hidden border text-left'
               style={{
-                background: 'var(--surface)',
-                borderColor: meta.color,
-                borderLeftWidth: 4,
-                outline: selected ? '2px solid var(--accent, #5B9DFF)' : 'none',
-                outlineOffset: bottleneck ? 5 : 2,
+                background: 'var(--card)',
+                borderColor: `${meta.color}88`,
+                borderRadius: 12,
+                padding: '8px 11px',
+                outline: selected ? '2px solid var(--text)' : 'none',
+                outlineOffset: 2,
+                boxShadow: bottleneck ? '0 0 0 6px rgba(255,107,94,.28)' : undefined,
               }}
               onClick={(e) => onAct(cell.id, e.shiftKey ? 'multi' : 'select')}
               onDoubleClick={() => onAct(cell.id, 'primary')}
             >
-              <div className='flex items-center justify-between gap-1'>
-                <span className='mono text-[11px] font-semibold'>{cell.id}</span>
-                <span
-                  className='whitespace-nowrap rounded px-1 text-[9px] font-semibold'
-                  style={{ color: meta.color, border: `1px solid ${meta.color}` }}
-                >
-                  {meta.icon} {meta.label}
+              <span aria-hidden className='pointer-events-none absolute inset-0' style={{ background: meta.color, opacity: 0.1, borderRadius: 11 }} />
+              <div className='relative flex items-center justify-between gap-1'>
+                <span className='mono shrink-0' style={{ color: meta.color, fontSize: 11, fontWeight: 600 }}>
+                  {cell.id}
+                </span>
+                <span className='inline-flex min-w-0 items-center gap-1 whitespace-nowrap' style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>
+                  <StatusIcon status={cell.status} size={12} />
+                  <span className='truncate'>{meta.label}</span>
                 </span>
               </div>
-              <div className='truncate text-[11px]' title={cell.title}>
+              <div className='relative truncate' style={{ fontSize: 13, fontWeight: 600 }} title={cell.title}>
                 {cell.title}
               </div>
-              <div className='mono text-[9px]' style={{ color: 'var(--muted)' }}>
-                {sha7}
-              </div>
-              <div className='truncate text-[9px]' style={{ color: 'var(--muted)' }} title={line}>
-                {line || '–'}
+              <div className='relative flex items-center justify-between gap-1' style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--muted)' }}>
+                <span className='mono shrink-0'>{sha7}</span>
+                <span className='truncate' title={line}>
+                  {line}
+                </span>
               </div>
             </div>
           </div>
