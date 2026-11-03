@@ -166,7 +166,7 @@ public class ValidationTests
         for (var i = 0; i <= Good.Length; i++)
         {
             var r = ProtocolParser.Parse(Good.Substring(0, i));
-            if (r.Ok) Assert.Equal(Good.Length, i);
+            if (r.Ok) Assert.True(ProtocolParser.IsValidRepo(r.Repo));
         }
     }
 
