@@ -10,6 +10,7 @@ import { ID_RE } from "./plan.ts";
 import { nextCellWait } from "./longpoll.ts";
 import { SERVER_INSTRUCTIONS } from "./protocol.ts";
 import { cellSignal } from "./signal.ts";
+import type { ClaimOptions, ReserveKv } from "./claim.ts";
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -51,7 +52,17 @@ export function toolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: A
     }
   };
   const raw = {
-    next_cell: run((api, r, a) => nextCellWait(api, r, opts, a.wait_seconds ?? 0)),
+    next_cell: run((api, r, a) => {
+      const kv = env.OAUTH_KV as unknown as ReserveKv | undefined;
+      const who = typeof a.who === "string" && a.who.trim() ? a.who.trim().slice(0, 40) : undefined;
+      if (a.cell_id !== undefined && a.cell_id !== null) {
+        // Pinned: exactly this cell or NOT_READY / RESERVED. Never falls back to another cell, never waits.
+        const pinned: ClaimOptions = { ...opts, claim: { kv, who, pin: String(a.cell_id) } };
+        return engine.nextCell(api, r, pinned, "claim");
+      }
+      const plain: ClaimOptions = { ...opts, claim: { kv, who } };
+      return nextCellWait(api, r, plain, a.wait_seconds ?? 0);
+    }),
     ready_cells: run((api, r) => engine.nextCell(api, r, opts, "peek")),
     read_files: run((api, r, a) => engine.readFiles(api, r, opts, a)),
     apply_changes: run((api, r, a) => engine.applyChanges(api, r, opts, a)),
@@ -116,8 +127,8 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   const repo = z.string().optional().describe("owner/name; omit to use the default repository");
 
   server.registerTool("next_cell", {
-    description: "Claim the next ready cell (or resume an abandoned one). Always your first call.",
-    inputSchema: { repo, wait_seconds: z.number().int().optional() },
+    description: "Claim the next ready cell (or resume an abandoned one). Always your first call. With cell_id: claim exactly that cell, or reply NOT_READY / RESERVED (never another cell).",
+    inputSchema: { repo, wait_seconds: z.number().int().optional(), cell_id: z.string().optional(), who: z.string().optional() },
   }, async (a) => text(await h.next_cell(a)));
 
   server.registerTool("ready_cells", {

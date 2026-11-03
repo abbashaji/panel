@@ -11,7 +11,7 @@ import { NOT_INIT, branchOf, cleanPath, errText, freshSnapshot, invalidText, loa
 
 // Public facade: tests and index.ts import these names from engine.ts.
 export { clearPlanCache, cleanPath, loadPlan, type EngineOptions, type Loaded } from "./common.ts";
-export { nextCell } from "./claim.ts";
+export { nextCell, reserveKey, getReservation, setReservation, clearReservation, type ClaimOptions, type ReserveKv } from "./claim.ts";
 export { takeoverCell } from "./takeover.ts";
 export { applyChanges, type Op } from "./apply.ts";
 import { bytes } from "./apply.ts";

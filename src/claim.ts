@@ -3,7 +3,7 @@
 // Claiming and taking over cells, and next_cell / ready_cells.
 
 import type { GitHubApi, Snapshot } from "./api.ts";
-import { claimsFromBranches, computeState, leaseOf, parseRuns, render, type State } from "./plan.ts";
+import { ID_RE, claimsFromBranches, computeState, leaseOf, parseRuns, render, type State } from "./plan.ts";
 import { RULES } from "./protocol.ts";
 import { NOT_INIT, branchOf, cellYaml, errText, freshSnapshot, invalidText, loadPlan, mergedOf, short, type EngineOptions, type Loaded } from "./common.ts";
 import { resumeText } from "./resume.ts";
@@ -36,8 +36,87 @@ export function claimedText(plan: Loaded, repo: string, id: string, tip: string,
   return `CLAIMED ${id} base=${short(tip)} repo=${repo} (lease ${lease} min, renewed by every apply_changes)\n\n${cellYaml(plan.cells[id])}\n\n${RULES}`;
 }
 
+// ---------------------------------------------------------------- reservation (pinned claim, used by the panel)
+// A reservation is advisory: KV is eventually consistent, the git branch lock stays the arbiter.
+export const RESERVE_TTL_SECONDS = 600;
+
+export interface ReserveKv {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+export interface Reservation {
+  who: string;
+  at: string;
+}
+/** Context of one next_cell call: the KV, the caller's display name, and the pinned cell (if any). */
+export interface ClaimContext {
+  kv?: ReserveKv;
+  who?: string;
+  pin?: string;
+}
+export type ClaimOptions = EngineOptions & { claim?: ClaimContext };
+
+export function reserveKey(repo: string, cell: string): string {
+  return `reserve:${repo}:${cell}`;
+}
+
+export async function getReservation(kv: ReserveKv, repo: string, cell: string): Promise<Reservation | null> {
+  const raw = await kv.get(reserveKey(repo, cell));
+  if (raw === null || raw === undefined) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v.who === "string" && typeof v.at === "string" ? { who: v.who, at: v.at } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setReservation(kv: ReserveKv, repo: string, cell: string, who: string): Promise<void> {
+  await kv.put(reserveKey(repo, cell), JSON.stringify({ who, at: new Date().toISOString() }), { expirationTtl: RESERVE_TTL_SECONDS });
+}
+
+export async function clearReservation(kv: ReserveKv, repo: string, cell: string): Promise<void> {
+  await kv.delete(reserveKey(repo, cell));
+}
+
+// KV problems never break a claim: the reservation is advisory.
+async function peekReservation(kv: ReserveKv | undefined, repo: string, cell: string): Promise<Reservation | null> {
+  if (!kv) return null;
+  try {
+    return await getReservation(kv, repo, cell);
+  } catch {
+    return null;
+  }
+}
+
+async function dropReservation(kv: ReserveKv | undefined, repo: string, cell: string): Promise<void> {
+  if (!kv) return;
+  try {
+    await clearReservation(kv, repo, cell);
+  } catch {
+    // advisory only
+  }
+}
+
+const nameOf = (who: string): string => who.replace(/[^\w .-]/g, "").slice(0, 40);
+
+/** Why a pinned cell is not ready, in a few words. */
+function notReadyReason(state: State, merged: { has(id: string): boolean }, id: string): string {
+  if (merged.has(id)) return "done (already merged)";
+  const s = state as any;
+  const has = (l: any) => Array.isArray(l) && l.some((x: any) => x === id || x?.id === id);
+  const lk = Array.isArray(s.locked) ? s.locked.find((x: any) => x?.id === id) : undefined;
+  if (lk) return typeof lk.minutes_left === "number" ? `running (lease ${lk.minutes_left} min left)` : "running";
+  const w = Array.isArray(s.waiting) ? s.waiting.find((x: any) => x?.id === id) : undefined;
+  if (w) return Array.isArray(w.blocked_by) && w.blocked_by.length ? `waiting for ${w.blocked_by.join(", ")}` : "waiting for other cells";
+  if (has(s.needs_human)) return "needs a human";
+  if (has(s.needs_split)) return "needs to be split";
+  return "not ready";
+}
+
 // ---------------------------------------------------------------- next_cell / ready_cells
-export async function nextCell(api: GitHubApi, repo: string, opts: EngineOptions, mode: "claim" | "peek"): Promise<string> {
+export async function nextCell(api: GitHubApi, repo: string, opts: ClaimOptions, mode: "claim" | "peek"): Promise<string> {
   let snap: Snapshot;
   if (mode === "claim") {
     const f = await freshSnapshot(api, repo, opts, opts.historyPages);
@@ -92,6 +171,33 @@ export async function nextCell(api: GitHubApi, repo: string, opts: EngineOptions
     }
   }
 
+  // Pinned claim: exactly this cell, or NOT_READY / RESERVED. Never falls back to another cell.
+  const pin = opts.claim?.pin;
+  if (mode === "claim" && pin !== undefined) {
+    if (!ID_RE.test(pin)) return "NOT_READY ? invalid cell id (expected C-NNN)";
+    if (!plan.cells[pin]) return `NOT_READY ${pin} unknown cell`;
+    const ready = state.ready.find((x) => x.id === pin);
+    if (!ready) return `NOT_READY ${pin} ${notReadyReason(state, merged, pin)}${warn}`;
+    if (!snap.historyComplete && snap.mergedIds === undefined) {
+      const pr = await api.findPr(repo, branchOf(pin));
+      if (pr?.merged) return `NOT_READY ${pin} done (already merged)`;
+    }
+    const res = await peekReservation(opts.claim?.kv, repo, pin);
+    if (res && res.who && opts.claim?.who && res.who !== opts.claim.who) return `RESERVED ${pin} by ${nameOf(res.who)}`;
+    if (ready.reclaim) {
+      const old = snap.branches[branchOf(pin)];
+      const kind = old && isRelease(old.message) ? "adopt" : "takeover";
+      const tip = await tryTakeover(api, repo, snap, pin, opts, kind);
+      if (!tip) return `NOT_READY ${pin} taken by someone else just now`;
+      await dropReservation(opts.claim?.kv, repo, pin);
+      return (await resumeText(api, repo, snap, plan, pin, tip, (old ? parseTrailers(old.message).attempt : 0) + (kind === "takeover" ? 1 : 0))) + warn;
+    }
+    const tip = await tryClaim(api, repo, snap, pin, opts);
+    if (!tip) return `NOT_READY ${pin} taken by someone else just now`;
+    await dropReservation(opts.claim?.kv, repo, pin);
+    return claimedText(plan, repo, pin, tip, ready.critical) + warn;
+  }
+
   if (mode === "peek" || state.status !== "ready") {
     const note = !snap.historyComplete && state.status === "ready"
       ? `\nNOTE: merge history is longer than ${opts.historyPages * 100} commits; next_cell double-checks before it claims.`
@@ -100,10 +206,16 @@ export async function nextCell(api: GitHubApi, repo: string, opts: EngineOptions
   }
 
   const tried = new Set<string>();
+  const skippedReserved: string[] = [];
   for (let guard = 0; guard < 100; guard++) {
     const r = state.ready.find((x) => !tried.has(x.id));
     if (!r) break;
     tried.add(r.id);
+    // A plain next_cell never takes a cell that someone has reserved (the panel's Start button).
+    if (opts.claim?.kv && (await peekReservation(opts.claim.kv, repo, r.id))) {
+      skippedReserved.push(r.id);
+      continue;
+    }
     if (!snap.historyComplete && snap.mergedIds === undefined) {
       // An old merge may be beyond the history window: confirm through the cell's PR before handing it out.
       const pr = await api.findPr(repo, branchOf(r.id));
@@ -117,11 +229,20 @@ export async function nextCell(api: GitHubApi, repo: string, opts: EngineOptions
       const old = snap.branches[branchOf(r.id)];
       const kind = old && isRelease(old.message) ? "adopt" : "takeover";
       const tip = await tryTakeover(api, repo, snap, r.id, opts, kind);
-      if (tip) return (await resumeText(api, repo, snap, plan, r.id, tip, (old ? parseTrailers(old.message).attempt : 0) + (kind === "takeover" ? 1 : 0))) + warn;
+      if (tip) {
+        await dropReservation(opts.claim?.kv, repo, r.id);
+        return (await resumeText(api, repo, snap, plan, r.id, tip, (old ? parseTrailers(old.message).attempt : 0) + (kind === "takeover" ? 1 : 0))) + warn;
+      }
       continue;
     }
     const tip = await tryClaim(api, repo, snap, r.id, opts);
-    if (tip) return claimedText(plan, repo, r.id, tip, r.critical) + warn;
+    if (tip) {
+      await dropReservation(opts.claim?.kv, repo, r.id);
+      return claimedText(plan, repo, r.id, tip, r.critical) + warn;
+    }
+  }
+  if (skippedReserved.length > 0 && skippedReserved.length === tried.size) {
+    return `NONE_READY: ready cells are reserved for other chats: ${skippedReserved.join(", ")} (a reservation lasts at most ${RESERVE_TTL_SECONDS / 60} min)${warn}`;
   }
   return state.ready.length
     ? "CLAIM_FAILED: every ready cell was taken by someone else just now. Ask again."
