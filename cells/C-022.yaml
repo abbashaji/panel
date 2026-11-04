@@ -1,0 +1,23 @@
+id: C-022
+title: Launcher accepts the single trailing slash Windows adds after the command
+type: normal
+priority: 5
+goal: |
+  Windows (Win+R and some browsers) rewrites blueprint://start?x into blueprint://start/?x before calling the launcher, so ProtocolParser rejects it with "unknown command". In launcher/Core/ProtocolParser.cs, after reading the command (text before the first ?), drop exactly one trailing slash. Every other rule stays as strict as before: a double slash or any path after the command is still rejected. In launcher/Core.Tests/ValidationTests.cs remove the reject case for blueprint://start/?... and add theory tests that accept one slash (start and open) and still reject blueprint://start//? and blueprint://start/x?.
+inputs: []
+after: [C-008, C-016]
+provides:
+  - "ProtocolParser.Parse tolerates one trailing slash after the command"
+read:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+allowed_paths:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+outputs:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Reported by a user: running the exe directly worked, Win+R failed with "unknown command". Covered by CI only; not yet confirmed on a real Windows machine.
