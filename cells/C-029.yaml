@@ -1,0 +1,44 @@
+id: C-029
+title: Panel Run ready cells dialog starts several cells at once
+type: normal
+priority: 5
+goal: |
+  Add a way to run many ready cells in one go.
+  - web/src/launch/protocol.ts: startManyUrl(repo, who, cells) building blueprint://startmany?repo=&who=&cells=C-001,C-002 with the same validation as startUrl (1 to 12 valid unique ids, whole URL max 400 characters, throws otherwise).
+  - New web/src/launch/RunReadyDialog.tsx (Radix dialog, dark tokens from docs/panel-design.md): lists every cell with status ready as a row with checkbox, id (mono) and title, all ticked by default up to 12, buttons 'Select all' and 'None', a counter 'K selected', and a primary button 'Run K cells'. The text under the list says the next window lets you pick the browser profiles.
+  - web/src/launch/index.tsx: add startMany(ids). It reads the name like doStart does (ask if missing), reserves each cell with the existing reserve API one after another, drops the ones that fail (conflict or error) and says which in a toast, then fires startManyUrl for the cells that were reserved with transport.go, then shows the same launcher missing hint as the single start when the launcher is not installed. Register it in registerLauncher as startMany.
+  - web/src/core/store.tsx: add optional startMany?: (ids: string[]) => void to the Launcher interface (default no-op) so other slots can call it without importing launch.
+  - web/src/shell/Header.tsx: add a button 'Run ready (N)' with N = count of ready cells, hidden when N is 0, which opens RunReadyDialog (mounted by launch or by the header, whichever keeps the slot rules); it is also reachable on narrow widths.
+  - Tests in web/src/launch/launch.test.tsx and web/src/shell/header.test.tsx: URL builder valid and invalid cases, dialog lists only ready cells, select all and none, Run reserves only the selected cells, a failed reserve is dropped and reported, the URL contains only the reserved cells, button hidden at 0 ready.
+inputs: []
+after: [C-010, C-012, C-019, C-020, C-021, C-023, C-026]
+provides:
+  - "launcher.startMany(ids) and the Run ready button in the header"
+read:
+  - docs/panel-design.md
+  - docs/panel-contracts.md
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+allowed_paths:
+  - web/src/launch/protocol.ts
+  - web/src/launch/RunReadyDialog.tsx
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/header.test.tsx
+outputs:
+  - web/src/launch/protocol.ts
+  - web/src/launch/RunReadyDialog.tsx
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/header.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Reservations last 10 minutes and only the panel can create them, so the dialog (not the launcher) decides how many cells run. Worker and its API are unchanged. Not tested with a real launcher; the URL contract is covered by C-026.

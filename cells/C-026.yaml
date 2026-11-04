@@ -1,0 +1,31 @@
+id: C-026
+title: Launcher accepts blueprint://startmany for several cells
+type: normal
+priority: 5
+goal: |
+  Add a fourth command, blueprint://startmany?repo=<owner/name>&who=<name>&cells=C-001,C-002,... to launcher/Core/ProtocolParser.cs.
+  - New CommandKind.StartMany; ParseResult gets Cells (IReadOnlyList<string>, empty for other commands).
+  - Same strictness as start: exact key set (repo, who, cells), no duplicate keys, same repo and who regexes, ASCII only, max URL length 400, one trailing slash tolerated after the command.
+  - cells: 1 to 12 ids, each matching the cell id regex, no duplicates, comma separated, nothing else. Anything else is rejected with a clear reason.
+  - Tests in launcher/Core.Tests/ValidationTests.cs: accepts 1 and 12 ids and the trailing slash; rejects 0, 13, duplicates, bad id, spaces, encoded commas tricks, extra keys, missing who, overlong.
+  - docs/panel-contracts.md section 4: add the startmany line next to start, open and sync, saying who the launcher shows a profile picker for the cells and starts one cell per chosen profile.
+inputs: []
+after: [C-022, C-024]
+provides:
+  - "ProtocolParser.Parse returns Kind=StartMany with Repo, Who, Cells"
+read:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - docs/panel-contracts.md
+allowed_paths:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - docs/panel-contracts.md
+outputs:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - docs/panel-contracts.md
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Adding an enum member must not break the switch in launcher/App/Program.cs: that file is changed later by C-027 and C-028 and is not allowed here, so CI builds only Core.Tests in this cell.

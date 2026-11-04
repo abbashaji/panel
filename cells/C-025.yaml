@@ -1,0 +1,46 @@
+id: C-025
+title: Launcher core knows Brave Yandex Opera Firefox and Firefox Developer Edition
+type: normal
+priority: 5
+goal: |
+  Add a browser catalog and extend discovery, exe lookup, launch arguments and records. No UI here (C-027 does it). Browser ids: chrome, edge, brave, yandex, opera, firefox, firefox-dev.
+  - New launcher/Core/BrowserCatalog.cs: static catalog with Id, display name ('Google Chrome', 'Microsoft Edge', 'Brave', 'Yandex Browser', 'Opera', 'Firefox', 'Firefox Developer Edition'), family (Chromium, Opera, Firefox), exe relative paths, user-data location. Include IsKnown(id) and All in a fixed order.
+  - BrowserExeLocator: registry App Paths then standard dirs (Program Files, Program Files (x86), LocalAppData). Brave BraveSoftware\Brave-Browser\Application\brave.exe; Yandex Yandex\YandexBrowser\Application\browser.exe; Opera Programs\Opera\opera.exe (LocalAppData) or Program Files\Opera; Firefox Mozilla Firefox\firefox.exe; Firefox Developer Edition Firefox Developer Edition\firefox.exe.
+  - BrowserProfiles: List(localAppData, appData = null) keeps working for existing callers. Chromium family (chrome, edge, brave, yandex) reads Local State profile.info_cache: name, default_avatar_fill_color / profile_highlight_color (to a ThemeColor ARGB, null when absent), and whether the folder has 'Google Profile Picture.png' (AvatarFile path, null otherwise). NEVER read user_name, gaia_name or any email. Brave User Data is under BraveSoftware\Brave-Browser, Yandex under Yandex\YandexBrowser, both in LocalAppData. Opera has a single entry named 'Opera' (Opera Stable folder under appData, no profile argument). Firefox and Firefox Developer Edition read appData Mozilla\Firefox\profiles.ini, keep only profile Name (Developer Edition lists names starting 'dev-edition'; Firefox lists the others), and validate the name with the existing safe-name rule.
+  - Profile record gains ThemeColor (uint?) and AvatarFile (string?) as optional trailing members so old tests compile.
+  - LaunchCommand.Build(exe, browser, profile, url): chromium and brave and yandex and edge get --profile-directory=<folder> then url; Opera gets only the url; Firefox gets -P then the profile name as separate arguments then the url. Same validation as today (url must start with PromptBuilder.BaseUrl, folder or name regex), arguments are always a list, never a shell string. Keep the old Build(exe, folder, url) overload for chromium.
+  - CellRecords: accept every id in BrowserCatalog instead of only chrome and edge (both the load filter and Upsert validation).
+  - Tests (new BrowserCatalogTests.cs plus additions in BrowserProfilesTests.cs and CellRecordsTests.cs) with temp dirs: each family parsed, colors parsed, email never present in any returned value, corrupt or missing files tolerated, Firefox profile name injection like '-profile x' rejected, args per family, unknown browser id rejected in records.
+inputs: []
+after: [C-008, C-022]
+provides:
+  - "BrowserCatalog.All / IsKnown / Get(id).Display"
+  - "BrowserProfiles.List(localAppData, appData) -> Profile(Browser, Folder, Name, ThemeColor, AvatarFile)"
+  - "LaunchCommand.Build(exe, browser, profile, url)"
+read:
+  - launcher/Core/BrowserProfiles.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/LaunchCommand.cs
+  - launcher/Core/CellRecords.cs
+allowed_paths:
+  - launcher/Core/BrowserCatalog.cs
+  - launcher/Core/BrowserProfiles.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/LaunchCommand.cs
+  - launcher/Core/CellRecords.cs
+  - launcher/Core.Tests/BrowserProfilesTests.cs
+  - launcher/Core.Tests/CellRecordsTests.cs
+  - launcher/Core.Tests/BrowserCatalogTests.cs
+outputs:
+  - launcher/Core/BrowserCatalog.cs
+  - launcher/Core/BrowserProfiles.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/LaunchCommand.cs
+  - launcher/Core/CellRecords.cs
+  - launcher/Core.Tests/BrowserProfilesTests.cs
+  - launcher/Core.Tests/CellRecordsTests.cs
+  - launcher/Core.Tests/BrowserCatalogTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Core must stay free of System.Net, HttpClient, Socket, WebClient (NoNetworkTests scans it) and must not use System.Drawing. Paths and flags for Yandex, Opera and Firefox are from knowledge of default Windows installs and are NOT verified on a real PC; say so in the PR text.

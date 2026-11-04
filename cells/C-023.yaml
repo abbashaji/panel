@@ -1,0 +1,40 @@
+id: C-023
+title: Anyone can open any running cell chat (remove the owner-only rule)
+type: normal
+priority: 5
+goal: |
+  Remove completely the rule 'Only the person who started a cell can reopen its chat'. After this cell, every teammate sees and can use Open chat on every cell whose status is running or lease expired, exactly like the person who started it.
+  - web/src/launch/index.tsx: delete the isMine gate and the toast 'Only the person who started a cell can reopen its chat.' from open(); keep the early toast for merged cells. Keep readOwn/rememberOwn/owner() only if still used to show a name; owner(id) keeps returning reservedBy or my name. Remove OWN_KEY logic that only existed for the gate if nothing else uses it (do not break existing stored data, ignore it).
+  - web/src/graph/layout.ts: primaryAction no longer depends on ownership (running and expired cells always give 'Open chat'); badgeRules makes the owner chip '<ini> · Open chat' clickable for ANY owner whenever the cell is running or expired, otherwise the plain non-clickable '<ini> · <owner>' chip. Drop the mine parameter.
+  - web/src/graph/CellCard.tsx and web/src/graph/index.tsx: stop passing or reading mine/isMine; the context menu item 'Open chat' appears for every running or expired cell.
+  - Update web/src/launch/launch.test.tsx, web/src/graph/graph.test.tsx and web/src/graph/layout.test.ts: delete tests that assert the restriction, add tests that a teammate who did not start the cell gets a clickable owner chip, the Open chat context item and a launcher.open call, and no 'Only the person' toast anywhere.
+inputs: []
+after: [C-005, C-006, C-010, C-012, C-014, C-015, C-018, C-019, C-020, C-021]
+provides:
+  - "launcher.open(id) works for every teammate on running or expired cells"
+read:
+  - web/src/launch/index.tsx
+  - web/src/graph/layout.ts
+  - web/src/graph/CellCard.tsx
+  - web/src/graph/index.tsx
+allowed_paths:
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+  - web/src/graph/layout.ts
+  - web/src/graph/layout.test.ts
+  - web/src/graph/CellCard.tsx
+  - web/src/graph/index.tsx
+  - web/src/graph/graph.test.tsx
+outputs:
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+  - web/src/graph/layout.ts
+  - web/src/graph/layout.test.ts
+  - web/src/graph/CellCard.tsx
+  - web/src/graph/index.tsx
+  - web/src/graph/graph.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  The launcher can only open a chat it has a local record for on that PC (cells.json). Do not invent a shared chat link and do not add network calls. Leave the launcher's existing message for a cell with no local record unchanged. docs and inspector are handled by C-024.

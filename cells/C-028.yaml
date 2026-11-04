@@ -1,0 +1,32 @@
+id: C-028
+title: Launcher starts one cell per chosen profile from blueprint://startmany
+type: normal
+priority: 5
+goal: |
+  Handle CommandKind.StartMany in the launcher.
+  - New launcher/App/StartManyForm.cs: header 'Start N cells', the cell ids as small chips, then the same icon tile grid as the single window but with MULTI select (click toggles, a counter 'K of N selected'). Button 'Open K chats' is enabled when 1 to N profiles are selected. If K is less than N the window says which cells will not start ('C-005, C-006 stay reserved for 10 minutes').
+  - Confirm: cell i (in the order of the URL) goes to the i-th selected tile (tile order = reading order in the grid). For each pair build the URL with PromptBuilder.BuildUrl(repo, cell), the command with LaunchCommand.Build, write a CellRecords.Upsert, then launch. Launch them one after another with about 1500 ms between them (async, UI stays responsive) so browsers that share a user data folder do not collide. Per pair errors are collected and shown at the end; one failure never stops the others.
+  - launcher/App/Program.cs: replace the 'not supported yet' case from C-027 with StartManyForm.
+  - Controls.cs: add whatever the multi select needs (reuse ProfileTile with a Multi mode).
+  - Nothing is sent anywhere, no prompt is sent, the person presses Send in each chat.
+inputs: []
+after: [C-026, C-027]
+provides:
+  - "blueprint://startmany opens K browser chats, one cell each"
+read:
+  - launcher/App/StartForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Program.cs
+  - launcher/App/Controls.cs
+outputs:
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Program.cs
+  - launcher/App/Controls.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text. Keep the code testable by putting any pairing and ordering logic in a small static method inside StartManyForm.cs.

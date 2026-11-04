@@ -1,0 +1,33 @@
+id: C-024
+title: Inspector and docs drop the owner-only reopen rule
+type: normal
+priority: 5
+goal: |
+  Finish removing the rule 'Only the person who started a cell can reopen its chat'.
+  - web/src/inspector/CellDetails.tsx: Open chat is offered for every running or lease expired cell whoever started it; the holder line still shows the name. Remove any leftover ownership check or text.
+  - web/src/inspector/inspector.test.tsx: add a test that a cell reserved by another person shows an enabled 'Open chat' button that calls launcher.open.
+  - docs/panel-contracts.md: delete decision 6 text 'A teammate can only reopen their own cells. Others' cells show a name, no link.' and replace it with 'Any teammate can use Open chat on a running or lease expired cell; the launcher opens it when this PC has a local record of the chat.'
+  - docs/panel-design.md: update the owner chip rules (others' chip is clickable too).
+inputs: []
+after: [C-015, C-023]
+provides:
+  - "docs and inspector match the open-for-everyone rule"
+read:
+  - web/src/inspector/CellDetails.tsx
+  - docs/panel-contracts.md
+  - docs/panel-design.md
+allowed_paths:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/inspector.test.tsx
+  - docs/panel-contracts.md
+  - docs/panel-design.md
+outputs:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/inspector.test.tsx
+  - docs/panel-contracts.md
+  - docs/panel-design.md
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  docs/decisions.md is protected and must not be edited here; it still lists the old decision 6, tell the owner in the PR text so they update it by a normal PR.

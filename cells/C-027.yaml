@@ -1,0 +1,39 @@
+id: C-027
+title: Launcher window shows every browser profile as a small icon tile
+type: normal
+priority: 5
+goal: |
+  In the start window (launcher/App/StartForm.cs) replace the list of radio cards with a grid of small icon tiles, one per installed browser profile, using BrowserProfiles.List(localAppData, appData) and BrowserCatalog from C-025.
+  - New launcher/App/BrowserIcons.cs: returns the real icon of each browser from its exe (Icon.ExtractAssociatedIcon), cached, falls back to a neutral square when extraction fails.
+  - Each tile is about 72x84: the browser icon (32px) on top of a circle in the profile theme color (Profile.ThemeColor; neutral grey when null); if Profile.AvatarFile exists show that picture in the circle instead (load a copy, never lock the file); under it the profile name in small text (ellipsis), the browser name as tooltip, a selected tile has the accent border from Theme. Tiles wrap in rows inside the scroll panel; keyboard arrows and Space select; last choice is preselected.
+  - Controls.cs gets the ProfileTile control; Theme.cs any missing color.
+  - Program.cs: FindBrowser, DisplayBrowser, LoadLastChoice and SaveLastChoice work for all seven browser ids from BrowserCatalog (use BrowserExeLocator, drop the hard coded chrome and edge lists); the launch uses LaunchCommand.Build(exe, browser, profile, url) so Firefox and Opera get the right arguments.
+  - StartForm.cs and OpenForm.cs text says 'browser profile' instead of 'Chrome profile'; the footer line says it reads only profile names and colors.
+inputs: []
+after: [C-009, C-016, C-025, C-026]
+provides:
+  - "Single start and open windows list all browsers as icon tiles"
+read:
+  - launcher/App/StartForm.cs
+  - launcher/App/OpenForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/App/StartForm.cs
+  - launcher/App/OpenForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Theme.cs
+  - launcher/App/Program.cs
+  - launcher/App/BrowserIcons.cs
+outputs:
+  - launcher/App/StartForm.cs
+  - launcher/App/OpenForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Theme.cs
+  - launcher/App/Program.cs
+  - launcher/App/BrowserIcons.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Use only System.Windows.Forms and System.Drawing, no network. The build only proves it compiles; layout and icons are NOT checked on a real Windows desktop, say so in the PR text. Program.cs must also handle CommandKind.StartMany so it compiles: show the error window 'not supported yet' for now, C-028 replaces that.
