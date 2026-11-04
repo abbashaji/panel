@@ -15,7 +15,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { STATUS_META } from '../core/status';
 import { usePanel } from '../core/store';
-import { readOwn, readWho } from '../launch';
 import { visibleCells } from '../shell/filter';
 import { Banner, showBanner } from './Banner';
 import { CellCard, type CardAction, type CardData } from './CellCard';
@@ -77,7 +76,7 @@ function toEdge(e: LayoutEdge): Edge {
 }
 
 function Graph() {
-  const { state, repo, selection, search, statusFilter, criticalOnly, hideMerged, theme, launcher, actions, select, clearSelection, moveSelection } =
+  const { state, selection, search, statusFilter, criticalOnly, hideMerged, theme, launcher, actions, select, clearSelection, moveSelection } =
     usePanel();
   const rf = useReactFlow();
   const byKeyboard = useRef(false);
@@ -95,30 +94,19 @@ function Graph() {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
 
-  /** the cell's owner is you (reserved or started it here, or your saved display name) */
-  const isMine = useCallback(
-    (id: string): boolean => {
-      const o = launcher.owner(id);
-      if (o === null) return false;
-      const w = readWho();
-      return readOwn(repo).includes(id) || (w !== '' && o === w);
-    },
-    [launcher, repo],
-  );
-
   const onAct = useCallback(
     (id: string, action: CardAction) => {
       byKeyboard.current = false;
       const cell = cells.find((c) => c.id === id);
       if (!cell) return;
-      const act = action === 'primary' ? primaryAction(cell.status, isMine(id)) : action;
+      const act = action === 'primary' ? primaryAction(cell.status) : action;
       if (act === 'multi') select(id, true);
       else if (act === 'start') launcher.start(id);
       else if (act === 'open') launcher.open(id);
       else if (act === 'release') actions.requestRelease(id);
       else select(id);
     },
-    [cells, launcher, actions, select, isMine],
+    [cells, launcher, actions, select],
   );
 
   /** one click path: React Flow reports the click on the node; the card body has no click handler of its own */
@@ -146,7 +134,6 @@ function Graph() {
       const data: CardData = {
         cell,
         owner: launcher.owner(n.id),
-        mine: isMine(n.id),
         bottleneck: n.bottleneck,
         blocks: n.bottleneck ? (bottleneck?.blocks ?? 0) : 0,
         selected: selection.includes(n.id),
@@ -179,7 +166,7 @@ function Graph() {
       }),
     );
     return [...waves, ...cards];
-  }, [layout, cells, bottleneck, selection, launcher, isMine, onAct]);
+  }, [layout, cells, bottleneck, selection, launcher, onAct]);
 
   const edges = useMemo(() => layout.edges.map(toEdge), [layout.edges]);
 
