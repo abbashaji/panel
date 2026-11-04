@@ -226,6 +226,7 @@ function Graph() {
           selectionKeyCode={null}
           multiSelectionKeyCode={null}
           deleteKeyCode={null}
+          zoomOnDoubleClick={false}
           onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
           onPaneClick={clearSelection}
