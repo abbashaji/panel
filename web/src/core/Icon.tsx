@@ -14,7 +14,11 @@ export type IconName =
   | "play"
   | "split"
   | "logo"
-  | "lock";
+  | "lock"
+  | "chevron-left"
+  | "chevron-right"
+  | "chevron-up"
+  | "chevron-down";
 
 export const STATUS_ICON: Record<PanelStatus, IconName> = {
   done: "check",
@@ -53,6 +57,10 @@ const SHAPES: Record<Exclude<IconName, "logo">, ReactNode> = {
     </>
   ),
   play: <path d="M3 1.5l9 5.5-9 5.5z" />,
+  "chevron-left": <path d="M8.5 3.5L5 7l3.5 3.5" />,
+  "chevron-right": <path d="M5.5 3.5L9 7l-3.5 3.5" />,
+  "chevron-up": <path d="M3.5 8.5L7 5l3.5 3.5" />,
+  "chevron-down": <path d="M3.5 5.5L7 9l3.5-3.5" />,
   split: (
     <>
       <path d="M3 7h8" />
