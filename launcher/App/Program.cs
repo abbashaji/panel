@@ -40,6 +40,9 @@ internal static class Program
             case CommandKind.Open:
                 Application.Run(new OpenForm(parsed, records));
                 return 0;
+            case CommandKind.StartMany:
+                MessageBox.Show("Starting several cells at once is not supported yet.", "Blueprint launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 1;
             default:
                 Application.Run(new StartForm(parsed, records));
                 return 0;
@@ -48,31 +51,21 @@ internal static class Program
 
     internal static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
+    internal static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
     internal static string DataDirectory => CellRecords.DefaultDirectory(LocalAppData);
 
     /// <summary>Full path of the browser exe, or null when it is not installed.</summary>
     internal static string? FindBrowser(string browser)
     {
-        var relative = browser switch
-        {
-            "chrome" => Path.Combine("Google", "Chrome", "Application", "chrome.exe"),
-            "edge" => Path.Combine("Microsoft", "Edge", "Application", "msedge.exe"),
-            _ => null,
-        };
-        if (relative is null) return null;
+        if (!BrowserCatalog.IsKnown(browser)) return null;
         var roots = new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
             LocalAppData,
-        };
-        foreach (var root in roots)
-        {
-            if (string.IsNullOrEmpty(root)) continue;
-            var path = Path.Combine(root, relative);
-            if (File.Exists(path)) return path;
-        }
-        return null;
+        }.Where(r => !string.IsNullOrEmpty(r));
+        return new BrowserExeLocator(roots).Find(browser);
     }
 
     /// <summary>Starts the browser with an argument list. Never a shell string.</summary>
@@ -83,7 +76,8 @@ internal static class Program
         Process.Start(psi)?.Dispose();
     }
 
-    internal static string DisplayBrowser(string browser) => browser == "edge" ? "Edge" : "Chrome";
+    internal static string DisplayBrowser(string browser)
+        => browser.Length == 0 ? browser : char.ToUpperInvariant(browser[0]) + browser[1..];
 
     /// <summary>Last browser and profile folder picked, or null.</summary>
     internal static (string Browser, string Folder)? LoadLastChoice()
@@ -92,7 +86,7 @@ internal static class Program
         {
             var lines = File.ReadAllLines(Path.Combine(DataDirectory, LastChoiceFile));
             if (lines.Length < 2) return null;
-            if (lines[0] != "chrome" && lines[0] != "edge") return null;
+            if (!BrowserCatalog.IsKnown(lines[0])) return null;
             if (!BrowserProfiles.IsValidFolder(lines[1])) return null;
             return (lines[0], lines[1]);
         }

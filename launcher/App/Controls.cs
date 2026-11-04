@@ -327,3 +327,150 @@ internal static class Labels
             AutoEllipsis = true,
         };
 }
+
+/// <summary>Small icon tile for one browser profile: browser icon, profile circle (theme color or avatar), name.</summary>
+internal sealed class ProfileTile : Control
+{
+    private bool _selected;
+    private Bitmap? _avatar;
+
+    public Image? BrowserIcon { get; set; }
+    public Color? ThemeColor { get; set; }
+
+    public event EventHandler? SelectedChanged;
+
+    public bool Selected
+    {
+        get => _selected;
+        set
+        {
+            if (_selected == value) return;
+            _selected = value;
+            Invalidate();
+            if (value && Parent is not null)
+            {
+                foreach (var other in Parent.Controls.OfType<ProfileTile>())
+                    if (!ReferenceEquals(other, this)) other.Selected = false;
+            }
+            SelectedChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Loads a copy of the picture so the file is never locked. Silently ignored when unreadable.</summary>
+    public string? AvatarFile
+    {
+        set
+        {
+            _avatar?.Dispose();
+            _avatar = null;
+            if (string.IsNullOrEmpty(value) || !File.Exists(value)) return;
+            try
+            {
+                using var ms = new MemoryStream(File.ReadAllBytes(value));
+                using var img = Image.FromStream(ms);
+                _avatar = new Bitmap(img);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or OutOfMemoryException)
+            {
+                _avatar = null;
+            }
+            Invalidate();
+        }
+    }
+
+    public ProfileTile()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                 | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.SupportsTransparentBackColor, true);
+        BackColor = Color.Transparent;
+        TabStop = true;
+        Cursor = Cursors.Hand;
+        Font = Theme.Ui(9f);
+        Size = new Size(72, 84);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _avatar?.Dispose();
+        base.Dispose(disposing);
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        Focus();
+        Selected = true;
+        base.OnClick(e);
+    }
+
+    protected override bool IsInputKey(Keys keyData)
+        => keyData is Keys.Left or Keys.Right or Keys.Up or Keys.Down || base.IsInputKey(keyData);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        switch (e.KeyCode)
+        {
+            case Keys.Space:
+            case Keys.Enter:
+                e.Handled = true;
+                Selected = true;
+                break;
+            case Keys.Left or Keys.Right or Keys.Up or Keys.Down:
+                e.Handled = true;
+                MoveSelection(e.KeyCode);
+                break;
+        }
+        base.OnKeyDown(e);
+    }
+
+    private void MoveSelection(Keys key)
+    {
+        if (Parent is null) return;
+        var tiles = Parent.Controls.OfType<ProfileTile>().OrderBy(t => t.Top).ThenBy(t => t.Left).ToList();
+        var index = tiles.IndexOf(this);
+        ProfileTile? target = null;
+        if (key == Keys.Left) target = index > 0 ? tiles[index - 1] : null;
+        else if (key == Keys.Right) target = index < tiles.Count - 1 ? tiles[index + 1] : null;
+        else if (key == Keys.Down)
+            target = tiles.Where(t => t.Top > Top).OrderBy(t => t.Top).ThenBy(t => Math.Abs(t.Left - Left)).FirstOrDefault();
+        else
+            target = tiles.Where(t => t.Top < Top).OrderByDescending(t => t.Top).ThenBy(t => Math.Abs(t.Left - Left)).FirstOrDefault();
+        if (target is null) return;
+        target.Focus();
+        target.Selected = true;
+    }
+
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+    protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        var border = _selected ? Theme.Accent : Focused ? Theme.Muted2 : Theme.Line;
+        Theme.PaintRounded(g, ClientRectangle, 10, _selected ? Theme.SelectedCard : Theme.Bg, border);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+
+        if (BrowserIcon is not null)
+            g.DrawImage(BrowserIcon, new Rectangle((Width - 32) / 2, 4, 32, 32));
+
+        var circle = new Rectangle((Width - 26) / 2, 38, 26, 26);
+        if (_avatar is not null)
+        {
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddEllipse(circle);
+            var state = g.Save();
+            g.SetClip(path);
+            g.DrawImage(_avatar, circle);
+            g.Restore(state);
+        }
+        else
+        {
+            using var brush = new SolidBrush(ThemeColor ?? Theme.Muted3);
+            g.FillEllipse(brush, circle);
+        }
+
+        Theme.DrawText(g, Text, Font, Theme.Text, new Rectangle(2, 66, Width - 4, 16),
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+    }
+}

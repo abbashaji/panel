@@ -13,7 +13,8 @@ internal sealed class StartForm : Form
 
     private readonly ParseResult _req;
     private readonly CellRecords _records;
-    private readonly Panel _cards = new() { BackColor = Theme.Window, AutoScroll = true };
+    private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
+    private readonly ToolTip _tip = new();
     private readonly AccentButton _confirm = new() { Text = "Open chat with this prompt" };
     private readonly SecondaryButton _cancel = new() { Text = "Cancel", DialogResult = DialogResult.Cancel };
 
@@ -56,7 +57,7 @@ internal sealed class StartForm : Form
         Controls.Add(promptBox);
 
         Controls.Add(Labels.Create(
-            "Works offline. Reads only profile names from Chrome. Sends nothing anywhere. You press Send in the chat.",
+            "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You press Send in the chat.",
             Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, 36));
 
         _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 566, 260, 44);
@@ -77,37 +78,67 @@ internal sealed class StartForm : Form
     private void LoadProfiles()
     {
         var last = Program.LoadLastChoice();
-        var list = BrowserProfiles.List(Program.LocalAppData).Where(p => Program.FindBrowser(p.Browser) is not null).ToList();
+        var list = BrowserProfiles.List(Program.LocalAppData, Program.AppData).Where(p => Program.FindBrowser(p.Browser) is not null).ToList();
         if (list.Count == 0)
         {
             _confirm.Enabled = false;
-            _cards.Controls.Add(Labels.Create("No Chrome or Edge profile found on this PC.", Theme.Ui(13.5f), Theme.Muted, 0, 12, ContentWidth, 24));
+            _cards.Controls.Add(Labels.Create("No browser profile found on this PC.", Theme.Ui(13.5f), Theme.Muted, 0, 12, ContentWidth, 24));
             return;
         }
 
-        var width = list.Count > 3 ? ContentWidth - 18 : ContentWidth;
-        RadioCard? pick = null;
-        var y = 0;
+        ProfileTile? pick = null;
+        ProfileTile? first = null;
         foreach (var p in list)
         {
-            var card = new RadioCard
+            var tile = new ProfileTile
             {
-                Text = Program.DisplayBrowser(p.Browser) + " \u00B7 " + p.Name,
-                Detail = "Profile folder: " + p.Folder,
+                Text = p.Name,
                 Tag = p,
-                Bounds = new Rectangle(0, y, width, 52),
+                BrowserIcon = BrowserIcons.Get(p.Browser),
+                ThemeColor = ParseColor(p.ThemeColor),
+                AvatarFile = p.AvatarFile?.ToString(),
+                Margin = new Padding(0, 0, 8, 8),
             };
-            _cards.Controls.Add(card);
-            y += 60;
-            if (last is { } l && l.Browser == p.Browser && l.Folder == p.Folder) pick = card;
-            pick ??= card;
+            _tip.SetToolTip(tile, Program.DisplayBrowser(p.Browser));
+            _cards.Controls.Add(tile);
+            first ??= tile;
+            if (last is { } l && l.Browser == p.Browser && l.Folder == p.Folder) pick = tile;
         }
-        if (pick is not null) pick.Selected = true;
+        (pick ?? first)!.Selected = true;
+    }
+
+    /// <summary>Profile theme color as a Color, or null (neutral grey). Accepts #RRGGBB text or a packed ARGB number.</summary>
+    private static Color? ParseColor(object? value)
+    {
+        try
+        {
+            switch (value)
+            {
+                case null:
+                    return null;
+                case Color c:
+                    return c;
+                case string s when s.Length > 0:
+                    return ColorTranslator.FromHtml(s.StartsWith('#') ? s : "#" + s);
+                case int i:
+                    return Color.FromArgb(255, Color.FromArgb(i));
+                case uint u:
+                    return Color.FromArgb(255, Color.FromArgb(unchecked((int)u)));
+                case long l:
+                    return Color.FromArgb(255, Color.FromArgb(unchecked((int)l)));
+                default:
+                    return null;
+            }
+        }
+        catch (Exception e) when (e is ArgumentException or FormatException)
+        {
+            return null;
+        }
     }
 
     private void Confirm()
     {
-        var card = _cards.Controls.OfType<RadioCard>().FirstOrDefault(c => c.Selected);
+        var card = _cards.Controls.OfType<ProfileTile>().FirstOrDefault(c => c.Selected);
         if (card?.Tag is not Profile p) return;
         var exe = Program.FindBrowser(p.Browser);
         if (exe is null)
@@ -117,7 +148,7 @@ internal sealed class StartForm : Form
         }
         try
         {
-            var cmd = LaunchCommand.Build(exe, p.Folder, PromptBuilder.BuildUrl(_req.Repo, _req.Cell));
+            var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, PromptBuilder.BuildUrl(_req.Repo, _req.Cell));
             _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
             Program.SaveLastChoice(p.Browser, p.Folder);
             Program.Run(cmd);
