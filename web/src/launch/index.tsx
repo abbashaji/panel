@@ -4,7 +4,7 @@ import { reserve } from "../core/api";
 import { readStore, writeStore } from "../core/storage";
 import { usePanel } from "../core/store";
 import type { PanelState, ReserveResult } from "../core/types";
-import { CELL_RE, WHO_RE, openUrl, startUrl, syncUrl, transport } from "./protocol";
+import { CELL_RE, MAX_CELLS, WHO_RE, openUrl, startManyUrl, startUrl, syncUrl, transport } from "./protocol";
 
 const WHO_KEY = "bp_who";
 const OWN_KEY = "bp_own";
@@ -51,7 +51,7 @@ function rememberOwn(repo: string, id: string): void {
 const mergedIds = (s: PanelState | null): string[] => (s ? s.cells.filter((c) => c.status === "done").map((c) => c.id) : []);
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-type Dlg = { phase: "name"; id: string } | { phase: "confirm"; id: string; url: string; who: string } | null;
+type Dlg = { phase: "name"; id?: string; many?: string[] } | { phase: "confirm"; id: string; url: string; who: string } | null;
 
 /** Registers the launcher hooks with usePanel().registerLauncher and renders the start dialog. */
 export default function LaunchProvider({ children }: { children?: ReactNode }) {
@@ -143,6 +143,73 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     [doStart],
   );
 
+  /** reserve the cells one after another, drop the ones that fail, then fire one startmany link */
+  const doStartMany = useCallback(
+    async (ids: string[], who: string) => {
+      if (busy.current) return;
+      busy.current = true;
+      const { repo: r, toast: say } = live.current;
+      try {
+        try {
+          startManyUrl(r, who, ids); // fail before reserving anything when the link cannot be built
+        } catch (e) {
+          say(`Cannot build the launcher link: ${errText(e)}`, "error");
+          return;
+        }
+        const ok: string[] = [];
+        const dropped: string[] = [];
+        for (const id of ids) {
+          try {
+            const res = await reserve(r, id, who);
+            if (res.status === "reserved") ok.push(id);
+            else dropped.push(`${id} (${res.status === "taken" ? "taken" : "not ready"})`);
+          } catch {
+            dropped.push(`${id} (error)`);
+          }
+        }
+        if (dropped.length > 0) say(`Not started: ${dropped.join(", ")}`, "error");
+        if (ok.length === 0) return;
+        let url: string;
+        try {
+          url = startManyUrl(r, who, ok);
+        } catch (e) {
+          say(`Cannot build the launcher link: ${errText(e)}`, "error");
+          return;
+        }
+        for (const id of ok) rememberOwn(r, id);
+        sendSync(mergedIds(live.current.state), true);
+        transport.go(url);
+        transport.watch(() => live.current.toast(HINT, "info"));
+      } finally {
+        busy.current = false;
+      }
+    },
+    [sendSync],
+  );
+
+  const startMany = useCallback(
+    (ids: string[]) => {
+      const want = [...new Set(ids)].filter((id) => CELL_RE.test(id));
+      if (want.length === 0) {
+        live.current.toast("No valid cells to start.", "error");
+        return;
+      }
+      if (want.length > MAX_CELLS) {
+        live.current.toast(`Run at most ${MAX_CELLS} cells at once.`, "error");
+        return;
+      }
+      const who = readWho();
+      if (!who) {
+        setName("");
+        setNameErr("");
+        setDlg({ phase: "name", many: want });
+        return;
+      }
+      void doStartMany(want, who);
+    },
+    [doStartMany],
+  );
+
   const open = useCallback(
     (id: string) => {
       const { repo: r, state: s, toast: say } = live.current;
@@ -171,8 +238,8 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   }, [isMine]);
 
   useEffect(
-    () => registerLauncher({ start, open, owner, sync: (ids: string[]) => sendSync(ids, true) }),
-    [registerLauncher, start, open, owner, sendSync],
+    () => registerLauncher({ start, startMany, open, owner, sync: (ids: string[]) => sendSync(ids, true) }),
+    [registerLauncher, start, startMany, open, owner, sendSync],
   );
 
   // when the state changes: tell the launcher which cells are merged, and forget merged cells as mine
@@ -194,9 +261,10 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
       return;
     }
     writeStore(WHO_KEY, v);
-    const id = dlg.id;
+    const { id, many } = dlg;
     setDlg(null);
-    void doStart(id, v);
+    if (many) void doStartMany(many, v);
+    else if (id) void doStart(id, v);
   };
 
   const confirm = () => {

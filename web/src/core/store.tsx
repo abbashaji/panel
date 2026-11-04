@@ -33,6 +33,8 @@ export interface Launcher {
   sync(mergedIds: string[]): void;
   /** display name of the person who owns the cell (reserved / started it), or null */
   owner(id: string): string | null;
+  /** reserve these ready cells and start them through one launcher window (default: no-op) */
+  startMany?: (ids: string[]) => void;
 }
 
 /** Actions other slots provide for each other (the inspector registers requestRelease for the graph banner). */
@@ -228,6 +230,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       start: launcherPart.start ?? (() => toast("Launcher not installed. Install it with launcher/install.ps1.", "error")),
       open: launcherPart.open ?? (() => toast("Launcher not installed. Install it with launcher/install.ps1.", "error")),
       sync: launcherPart.sync ?? (() => {}),
+      startMany: launcherPart.startMany ?? (() => {}),
       owner: launcherPart.owner ?? ((id) => stateRef.current?.cells.find((c) => c.id === id)?.reservedBy ?? null),
     }),
     [launcherPart, toast],

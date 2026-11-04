@@ -5,6 +5,8 @@ export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 export const CELL_RE = /^C-\d{3,5}$/;
 export const WHO_RE = /^[\w .-]{1,40}$/;
 export const MAX_URL = 400;
+/** most cells one startmany link may carry */
+export const MAX_CELLS = 12;
 
 const enc = encodeURIComponent;
 
@@ -24,6 +26,19 @@ export function startUrl(repo: string, cell: string, who: string): string {
   need(CELL_RE, cell, "cell");
   need(WHO_RE, who, "name");
   return fit(`blueprint://start?repo=${enc(repo)}&cell=${enc(cell)}&who=${enc(who)}`);
+}
+
+/**
+ * blueprint://startmany?repo=&who=&cells=C-001,C-002  (1 to 12 valid, unique cell ids; same checks as startUrl).
+ * Throws when anything is invalid or the whole link passes 400 characters.
+ */
+export function startManyUrl(repo: string, who: string, cells: readonly string[]): string {
+  need(REPO_RE, repo, "repo");
+  need(WHO_RE, who, "name");
+  if (!Array.isArray(cells) || cells.length < 1 || cells.length > MAX_CELLS) throw new Error(`need 1 to ${MAX_CELLS} cells`);
+  for (const id of cells) need(CELL_RE, id, "cell");
+  if (new Set(cells).size !== cells.length) throw new Error("duplicate cell");
+  return fit(`blueprint://startmany?repo=${enc(repo)}&who=${enc(who)}&cells=${cells.join(",")}`);
 }
 
 /** blueprint://open?repo=&cell= */
