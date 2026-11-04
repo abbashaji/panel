@@ -124,7 +124,7 @@ public class CellRecordsTests
         File.WriteAllText(recs.FilePath, """
         {
           "o/r C-001": {"browser":"chrome","profileFolder":"Default","profileName":"Me","startedAt":"2026-11-04T12:00:00+00:00","chatUrl":"https://evil.example/x"},
-          "o/r C-002": {"browser":"firefox","profileFolder":"Default","profileName":"Me","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-002": {"browser":"safari","profileFolder":"Default","profileName":"Me","startedAt":"2026-11-04T12:00:00+00:00"},
           "o/r C-003": {"browser":"edge","profileFolder":"..","profileName":"Me","startedAt":"2026-11-04T12:00:00+00:00"},
           "bad key": {"browser":"edge","profileFolder":"Default","profileName":"Me","startedAt":"2026-11-04T12:00:00+00:00"},
           "o/r C-004": null
@@ -142,7 +142,75 @@ public class CellRecordsTests
         var recs = new CellRecords(t.Dir, () => T0);
         Assert.Throws<ArgumentException>(() => recs.Upsert("bad repo", "C-001", "chrome", "Default", "Me"));
         Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-1", "chrome", "Default", "Me"));
-        Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", "firefox", "Default", "Me"));
+        Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", "safari", "Default", "Me"));
         Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", "chrome", "..", "Me"));
+    }
+}
+
+
+public class CellRecordsBrowserIdTests
+{
+    private static readonly DateTimeOffset T0 = new(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+
+    [Theory]
+    [InlineData("chrome", "Profile 1")]
+    [InlineData("edge", "Default")]
+    [InlineData("brave", "Default")]
+    [InlineData("yandex", "Profile 2")]
+    [InlineData("opera", "Opera Stable")]
+    [InlineData("firefox", "default-release")]
+    [InlineData("firefox-dev", "dev-edition-default")]
+    public void EveryCatalogBrowserRoundTrips(string browser, string folder)
+    {
+        using var t = new TempDir();
+        var recs = new CellRecords(t.Dir, () => T0);
+        recs.Upsert("o/r", "C-001", browser, folder, "Me");
+        var rec = recs.Load()["o/r C-001"];
+        Assert.Equal(browser, rec.Browser);
+        Assert.Equal(folder, rec.ProfileFolder);
+    }
+
+    [Theory]
+    [InlineData("safari")]
+    [InlineData("Chrome")]
+    [InlineData("")]
+    [InlineData("chrome ")]
+    [InlineData("firefox-esr")]
+    public void UnknownBrowserIdIsRejectedOnUpsert(string browser)
+    {
+        using var t = new TempDir();
+        var recs = new CellRecords(t.Dir, () => T0);
+        Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", browser, "Default", "Me"));
+        Assert.False(File.Exists(recs.FilePath));
+    }
+
+    [Fact]
+    public void FirefoxProfileNameInjectionIsRejectedOnUpsert()
+    {
+        using var t = new TempDir();
+        var recs = new CellRecords(t.Dir, () => T0);
+        Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", "firefox", "-profile x", "Me"));
+        Assert.Throws<ArgumentException>(() => recs.Upsert("o/r", "C-001", "firefox-dev", "-no-remote", "Me"));
+    }
+
+    [Fact]
+    public void LoadKeepsKnownBrowsersAndDropsUnknownOrInjectedOnes()
+    {
+        using var t = new TempDir();
+        var recs = new CellRecords(t.Dir, () => T0);
+        File.WriteAllText(recs.FilePath, """
+        {
+          "o/r C-001": {"browser":"brave","profileFolder":"Default","profileName":"B","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-002": {"browser":"yandex","profileFolder":"Default","profileName":"Y","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-003": {"browser":"opera","profileFolder":"Opera Stable","profileName":"Opera","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-004": {"browser":"firefox","profileFolder":"default-release","profileName":"F","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-005": {"browser":"firefox-dev","profileFolder":"dev-edition-default","profileName":"D","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-006": {"browser":"firefox","profileFolder":"-profile x","profileName":"X","startedAt":"2026-11-04T12:00:00+00:00"},
+          "o/r C-007": {"browser":"safari","profileFolder":"Default","profileName":"S","startedAt":"2026-11-04T12:00:00+00:00"}
+        }
+        """);
+        Assert.Equal(
+            new[] { "o/r C-001", "o/r C-002", "o/r C-003", "o/r C-004", "o/r C-005" },
+            recs.Load().Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 }
