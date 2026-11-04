@@ -59,7 +59,7 @@ internal static class Program
     internal static string? FindBrowser(string browser)
     {
         if (!BrowserCatalog.IsKnown(browser)) return null;
-        return BrowserExeLocator.Find(browser);
+        return new BrowserExeLocator().Find(browser);
     }
 
     /// <summary>Starts the browser with an argument list. Never a shell string.</summary>
@@ -70,7 +70,7 @@ internal static class Program
         Process.Start(psi)?.Dispose();
     }
 
-    internal static string DisplayBrowser(string browser) => BrowserCatalog.DisplayName(browser);
+    internal static string DisplayBrowser(string browser) => BrowserCatalog.Get(browser)?.Name ?? browser;
 
     /// <summary>Last browser and profile folder picked, or null.</summary>
     internal static (string Browser, string Folder)? LoadLastChoice()

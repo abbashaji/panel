@@ -148,7 +148,7 @@ internal sealed class StartForm : Form
         }
         try
         {
-            var cmd = LaunchCommand.Build(exe, p.Browser, p, PromptBuilder.BuildUrl(_req.Repo, _req.Cell));
+            var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, PromptBuilder.BuildUrl(_req.Repo, _req.Cell));
             _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
             Program.SaveLastChoice(p.Browser, p.Folder);
             Program.Run(cmd);

@@ -416,13 +416,13 @@ internal sealed class ProfileTile : Control
                 break;
             case Keys.Left or Keys.Right or Keys.Up or Keys.Down:
                 e.Handled = true;
-                Move(e.KeyCode);
+                MoveSelection(e.KeyCode);
                 break;
         }
         base.OnKeyDown(e);
     }
 
-    private void Move(Keys key)
+    private void MoveSelection(Keys key)
     {
         if (Parent is null) return;
         var tiles = Parent.Controls.OfType<ProfileTile>().OrderBy(t => t.Top).ThenBy(t => t.Left).ToList();
