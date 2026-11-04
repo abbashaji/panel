@@ -75,3 +75,75 @@ describe("PanelProvider", () => {
     expect(result.current.selection).toEqual(["C-000"]);
   });
 });
+
+describe("PanelProvider repo switching", () => {
+  beforeEach(() => {
+    setMockMode(true);
+    window.localStorage.clear();
+    window.localStorage.setItem("bp_repo", "demo/panel");
+    window.history.replaceState(null, "", "/");
+  });
+  afterEach(() => setMockMode(false));
+
+  it("includes the current repo in recentRepos on first load", () => {
+    const { result } = renderHook(() => usePanel(), { wrapper });
+    expect(result.current.recentRepos).toEqual(["demo/panel"]);
+    expect(JSON.parse(window.localStorage.getItem("bp_repos")!)).toEqual(["demo/panel"]);
+  });
+
+  it("switchRepo accepts a valid repo, saves it, updates the URL and clears selection and filters", async () => {
+    const { result } = renderHook(() => usePanel(), { wrapper });
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => result.current.select("C-004"));
+    act(() => result.current.setSearch("api"));
+    act(() => result.current.toggleStatusFilter("expired"));
+    act(() => result.current.toggleHideMerged());
+
+    let ok = false;
+    act(() => {
+      ok = result.current.switchRepo(" acme/web-app ");
+    });
+    expect(ok).toBe(true);
+    expect(result.current.repo).toBe("acme/web-app");
+    expect(result.current.recentRepos).toEqual(["acme/web-app", "demo/panel"]);
+    expect(result.current.selection).toEqual([]);
+    expect(result.current.search).toBe("");
+    expect(result.current.statusFilter).toEqual([]);
+    expect(result.current.hideMerged).toBe(false);
+    expect(window.localStorage.getItem("bp_repo")).toBe("acme/web-app");
+    expect(new URLSearchParams(window.location.search).get("repo")).toBe("acme/web-app");
+  });
+
+  it("switchRepo rejects invalid input and changes nothing", () => {
+    const { result } = renderHook(() => usePanel(), { wrapper });
+    for (const bad of ["", "nope", "a/b/c", "a b/c", "/c", "a/", `${"x".repeat(101)}/y`]) {
+      let ok = true;
+      act(() => {
+        ok = result.current.switchRepo(bad);
+      });
+      expect(ok).toBe(false);
+    }
+    expect(result.current.repo).toBe("demo/panel");
+    expect(result.current.recentRepos).toEqual(["demo/panel"]);
+    expect(window.location.search).toBe("");
+  });
+
+  it("moves a reused repo to the front and caps recents at 8", () => {
+    const { result } = renderHook(() => usePanel(), { wrapper });
+    for (let i = 1; i <= 9; i++) act(() => void result.current.switchRepo(`o/r${i}`));
+    expect(result.current.recentRepos).toHaveLength(8);
+    expect(result.current.recentRepos[0]).toBe("o/r9");
+    expect(result.current.recentRepos).not.toContain("demo/panel");
+    act(() => void result.current.switchRepo("o/r5"));
+    expect(result.current.recentRepos[0]).toBe("o/r5");
+    expect(result.current.recentRepos).toHaveLength(8);
+  });
+
+  it("forgetRepo removes a repo from recents and storage", () => {
+    const { result } = renderHook(() => usePanel(), { wrapper });
+    act(() => void result.current.switchRepo("o/one"));
+    act(() => result.current.forgetRepo("demo/panel"));
+    expect(result.current.recentRepos).toEqual(["o/one"]);
+    expect(JSON.parse(window.localStorage.getItem("bp_repos")!)).toEqual(["o/one"]);
+  });
+});
