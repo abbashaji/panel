@@ -33,29 +33,27 @@ public sealed class BrowserExeLocator : IBrowserExeLocator
 
     public string? Find(string browser)
     {
-        string exe;
-        string rel;
-        switch (browser)
-        {
-            case "chrome":
-                exe = "chrome.exe";
-                rel = Path.Combine("Google", "Chrome", "Application", "chrome.exe");
-                break;
-            case "edge":
-                exe = "msedge.exe";
-                rel = Path.Combine("Microsoft", "Edge", "Application", "msedge.exe");
-                break;
-            default:
-                return null;
-        }
-        var reg = SafeRegistry(exe);
-        if (reg is not null && File.Exists(reg)) return reg;
+        var info = BrowserCatalog.TryGet(browser);
+        if (info is null) return null;
+        var reg = SafeRegistry(info.ExeName);
+        if (reg is not null && File.Exists(reg) && RegistryPathFits(info, reg)) return reg;
         foreach (var d in _dirs)
         {
-            var p = Path.Combine(d, rel);
-            if (File.Exists(p)) return p;
+            foreach (var rel in info.ExeRelativePaths)
+            {
+                var p = Path.Combine(d, rel);
+                if (File.Exists(p)) return p;
+            }
         }
         return null;
+    }
+
+    /// <summary>Firefox and Firefox Developer Edition share firefox.exe in App Paths, so the registry path must belong to the asked edition.</summary>
+    private static bool RegistryPathFits(BrowserInfo info, string path)
+    {
+        if (info.Family != BrowserFamily.Firefox) return true;
+        var isDevPath = path.Contains("Developer Edition", StringComparison.OrdinalIgnoreCase);
+        return isDevPath == (info.Id == "firefox-dev");
     }
 
     private string? SafeRegistry(string exe)

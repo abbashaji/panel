@@ -30,7 +30,7 @@ public class BrowserProfilesTests
         Assert.Equal(new Profile("chrome", "Profile 1", "Work"), list[1]);
         Assert.DoesNotContain(list, p => p.ToString().Contains("example.com") || p.ToString().Contains("Secret"));
         var props = typeof(Profile).GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(p => p.Name).OrderBy(n => n);
-        Assert.Equal(new[] { "Browser", "Folder", "Name" }, props);
+        Assert.Equal(new[] { "AvatarFile", "Browser", "Folder", "Name", "ThemeColor" }, props);
     }
 
     [Fact]

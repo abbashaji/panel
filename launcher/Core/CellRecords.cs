@@ -58,8 +58,8 @@ public sealed class CellRecords
             foreach (var (key, rec) in raw)
             {
                 if (rec is null || !KeyRx.IsMatch(key)) continue;
-                if (rec.Browser != "chrome" && rec.Browser != "edge") continue;
-                if (!BrowserProfiles.IsValidFolder(rec.ProfileFolder)) continue;
+                if (!BrowserCatalog.IsKnown(rec.Browser)) continue;
+                if (!BrowserProfiles.IsValidProfileId(rec.Browser, rec.ProfileFolder)) continue;
                 result[key] = rec with
                 {
                     ProfileName = BrowserProfiles.CleanName(rec.ProfileName, rec.ProfileFolder),
@@ -95,8 +95,8 @@ public sealed class CellRecords
     {
         if (!ProtocolParser.IsValidRepo(repo)) throw new ArgumentException("invalid repo", nameof(repo));
         if (!ProtocolParser.IsValidCell(cell)) throw new ArgumentException("invalid cell", nameof(cell));
-        if (browser != "chrome" && browser != "edge") throw new ArgumentException("invalid browser", nameof(browser));
-        if (!BrowserProfiles.IsValidFolder(profileFolder)) throw new ArgumentException("invalid profile folder", nameof(profileFolder));
+        if (!BrowserCatalog.IsKnown(browser)) throw new ArgumentException("invalid browser", nameof(browser));
+        if (!BrowserProfiles.IsValidProfileId(browser, profileFolder)) throw new ArgumentException("invalid profile folder", nameof(profileFolder));
         var rec = new CellRecord
         {
             Browser = browser,
