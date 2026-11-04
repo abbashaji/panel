@@ -43,6 +43,11 @@ export interface PanelActions {
 export interface PanelContextValue {
   repo: string;
   setRepo(repo: string): void;
+  /** recently used repos, newest first (max 8, persisted in localStorage bp_repos) */
+  recentRepos: string[];
+  /** validate owner/name, switch to it and reset selection, search and filters; false when invalid */
+  switchRepo(repo: string): boolean;
+  forgetRepo(repo: string): void;
   state: PanelState | null;
   loading: boolean;
   error: Error | null;
@@ -96,6 +101,25 @@ export function usePanel(): PanelContextValue {
 
 const REPO_KEY = "bp_repo";
 const THEME_KEY = "bp_theme";
+const RECENT_KEY = "bp_repos";
+const MAX_RECENT = 8;
+const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+
+function withRecent(list: string[], repo: string): string[] {
+  return [repo, ...list.filter((r) => r !== repo)].slice(0, MAX_RECENT);
+}
+
+function initialRecent(current: string): string[] {
+  let list: string[] = [];
+  try {
+    const raw: unknown = JSON.parse(readStore(RECENT_KEY) ?? "[]");
+    if (Array.isArray(raw)) list = raw.filter((r): r is string => typeof r === "string" && REPO_RE.test(r));
+  } catch {
+    /* ignore a corrupt value */
+  }
+  list = [...new Set(list)].slice(0, MAX_RECENT);
+  return REPO_RE.test(current) ? withRecent(list, current) : list;
+}
 export const POLL_MS = 5000;
 
 function initialRepo(): string {
@@ -125,6 +149,34 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastId = useRef(1);
+
+  const [recentRepos, setRecentRepos] = useState<string[]>(() => initialRecent(initialRepo()));
+  useEffect(() => {
+    writeStore(RECENT_KEY, JSON.stringify(recentRepos));
+  }, [recentRepos]);
+
+  const switchRepo = useCallback((input: string): boolean => {
+    const r = input.trim();
+    if (!REPO_RE.test(r)) return false;
+    writeStore(REPO_KEY, r);
+    setRepoState(r);
+    setRecentRepos((l) => withRecent(l, r));
+    dispatch({ type: "clear" });
+    setSearch("");
+    setStatusFilter([]);
+    setCriticalOnly(false);
+    setHideMerged(false);
+    // initialRepo reads ?repo= first, so keep the address in step with the chosen repo
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("repo", r);
+      window.history.replaceState(window.history.state, "", url);
+    } catch {
+      /* ignore */
+    }
+    return true;
+  }, []);
+  const forgetRepo = useCallback((r: string) => setRecentRepos((l) => l.filter((x) => x !== r)), []);
 
   const query = useQuery({
     queryKey: ["panel-state", repo],
@@ -214,6 +266,9 @@ export function PanelProvider({ children }: { children: ReactNode }) {
         writeStore(REPO_KEY, v);
         setRepoState(v);
       },
+      recentRepos,
+      switchRepo,
+      forgetRepo,
       state,
       loading: query.isLoading,
       error: query.error,
@@ -260,7 +315,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       actions,
       registerActions,
     }),
-    [repo, state, query, needsLogin, qc, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
+    [repo, recentRepos, switchRepo, forgetRepo, state, query, needsLogin, qc, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
