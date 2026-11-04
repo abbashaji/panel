@@ -33,7 +33,7 @@ const h = vi.hoisted(() => {
     criticalOnly: false,
     hideMerged: false,
     theme: 'dark',
-    launcher: { owner: () => null, start, open },
+    launcher: { owner: (_id: string): string | null => null, start, open },
     actions: { requestRelease: vi.fn() },
     select,
     clearSelection,
@@ -109,28 +109,30 @@ describe('badge rules', () => {
   });
 
   it('shows START on ready cells only', () => {
-    expect(badgeRules(cell('A', 1, [], { status: 'ready' }), null, false, false, 0).start).toBe(true);
-    expect(badgeRules(cell('A', 1, [], { status: 'running' }), null, false, false, 0).start).toBe(false);
-    expect(badgeRules(cell('A', 1), null, false, false, 0).owner).toBeNull();
+    expect(badgeRules(cell('A', 1, [], { status: 'ready' }), null, false, 0).start).toBe(true);
+    expect(badgeRules(cell('A', 1, [], { status: 'running' }), null, false, 0).start).toBe(false);
+    expect(badgeRules(cell('A', 1), null, false, 0).owner).toBeNull();
   });
 
-  it('offers Open chat only on your own running cell', () => {
+  it('offers Open chat to anyone on a running or expired cell', () => {
     const running = cell('A', 1, [], { status: 'running' });
-    expect(badgeRules(running, 'Ali Lee', true, false, 0).owner).toEqual({ label: 'AL \u00b7 Open chat', clickable: true });
-    expect(badgeRules(running, 'Ana Hill', false, false, 0).owner).toEqual({ label: 'AH \u00b7 Ana Hill', clickable: false });
-    const mineButReady = cell('B', 1, [], { status: 'ready' });
-    expect(badgeRules(mineButReady, 'Ali Lee', true, false, 0).owner?.clickable).toBe(false);
+    expect(badgeRules(running, 'Ali Lee', false, 0).owner).toEqual({ label: 'AL \u00b7 Open chat', clickable: true });
+    expect(badgeRules(running, 'Ana Hill', false, 0).owner).toEqual({ label: 'AH \u00b7 Open chat', clickable: true });
+    const expired = cell('E', 1, [], { status: 'expired' });
+    expect(badgeRules(expired, 'Ana Hill', false, 0).owner?.clickable).toBe(true);
+    const ready = cell('B', 1, [], { status: 'ready' });
+    expect(badgeRules(ready, 'Ali Lee', false, 0).owner).toEqual({ label: 'AL \u00b7 Ali Lee', clickable: false });
   });
 
   it('never shows an owner chip on merged cells', () => {
-    expect(badgeRules(cell('A', 1, [], { status: 'done' }), 'Ali Lee', true, false, 0).owner).toBeNull();
+    expect(badgeRules(cell('A', 1, [], { status: 'done' }), 'Ali Lee', false, 0).owner).toBeNull();
   });
 
   it('shows BLOCKS n on the bottleneck only', () => {
     const c = cell('A', 1, [], { status: 'expired' });
-    expect(badgeRules(c, null, false, true, 8).blocks).toBe(8);
-    expect(badgeRules(c, null, false, false, 8).blocks).toBeNull();
-    expect(badgeRules(c, null, false, true, 0).blocks).toBeNull();
+    expect(badgeRules(c, null, true, 8).blocks).toBe(8);
+    expect(badgeRules(c, null, false, 8).blocks).toBeNull();
+    expect(badgeRules(c, null, true, 0).blocks).toBeNull();
   });
 });
 
@@ -198,6 +200,7 @@ describe('graph interaction', () => {
     h.clearSelection.mockClear();
     h.start.mockClear();
     h.open.mockClear();
+    h.panel.launcher.owner = (_id: string): string | null => null;
     h.panel.state.cells = [cell('A', 1, [], { status: 'ready' }), cell('B', 2, [impl('A')], { blockedBy: ['A'] })];
   });
   afterEach(() => cleanup());
@@ -230,6 +233,42 @@ describe('graph interaction', () => {
     fireEvent.doubleClick(card('B'));
     expect(h.start).not.toHaveBeenCalled();
     expect(h.select).toHaveBeenCalledWith('B');
+  });
+
+  describe('a teammate who did not start the cell', () => {
+    beforeEach(() => {
+      h.panel.launcher.owner = (id: string): string | null => (id === 'R' || id === 'X' ? 'Bob Ray' : null);
+      h.panel.state.cells = [
+        cell('R', 1, [], { status: 'running', reservedBy: 'Bob Ray' }),
+        cell('X', 1, [], { status: 'expired', reservedBy: 'Bob Ray' }),
+      ];
+    });
+
+    it('gets a clickable owner chip that calls launcher.open', () => {
+      render(<GraphView />);
+      const chips = screen.getAllByRole('button', { name: 'BR \u00b7 Open chat' });
+      expect(chips).toHaveLength(2);
+      fireEvent.click(chips[0] as Element);
+      expect(h.open).toHaveBeenCalledTimes(1);
+      expect(h.open).toHaveBeenCalledWith('R');
+      expect(document.body.textContent).not.toContain('Only the person');
+    });
+
+    it('gets the Open chat context menu item', async () => {
+      render(<GraphView />);
+      fireEvent.contextMenu(card('X'));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Open chat' }));
+      expect(h.open).toHaveBeenCalledWith('X');
+      expect(document.body.textContent).not.toContain('Only the person');
+    });
+
+    it('opens the chat on double-click', () => {
+      render(<GraphView />);
+      fireEvent.doubleClick(card('R'));
+      expect(h.open).toHaveBeenCalledWith('R');
+      fireEvent.doubleClick(card('X'));
+      expect(h.open).toHaveBeenCalledWith('X');
+    });
   });
 
   it('clicking the pane clears the selection', () => {

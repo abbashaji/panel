@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PanelCell, PanelDepend } from '../core/types';
-import { BADGE_H, CARD_H, CARD_W, COL_PITCH, ROW_PITCH, layoutCells, metaLine, primaryAction, type Layout } from './layout';
+import { BADGE_H, CARD_H, CARD_W, COL_PITCH, ROW_PITCH, badgeRules, layoutCells, metaLine, primaryAction, type Layout } from './layout';
 
 const impl = (id: string): PanelDepend => ({ id, kind: 'implementation' });
 const contract = (id: string): PanelDepend => ({ id, kind: 'contract' });
@@ -118,10 +118,19 @@ describe('card helpers', () => {
   const now = Date.parse('2026-11-04T12:00:00Z');
 
   it('picks the double-click action', () => {
-    expect(primaryAction('ready', false)).toBe('start');
-    expect(primaryAction('running', true)).toBe('open');
-    expect(primaryAction('running', false)).toBe('select');
-    expect(primaryAction('done', true)).toBe('select');
+    expect(primaryAction('ready')).toBe('start');
+    expect(primaryAction('running')).toBe('open');
+    expect(primaryAction('expired')).toBe('open');
+    expect(primaryAction('done')).toBe('select');
+    expect(primaryAction('waiting')).toBe('select');
+  });
+
+  it('makes the owner chip clickable for any owner of a running or expired cell', () => {
+    const open = { label: 'BR \u00b7 Open chat', clickable: true };
+    expect(badgeRules(cell('R', 1, [], { status: 'running' }), 'Bob Ray', false, 0).owner).toEqual(open);
+    expect(badgeRules(cell('E', 1, [], { status: 'expired' }), 'Bob Ray', false, 0).owner).toEqual(open);
+    expect(badgeRules(cell('G', 1, [], { status: 'ready' }), 'Bob Ray', false, 0).owner).toEqual({ label: 'BR \u00b7 Bob Ray', clickable: false });
+    expect(badgeRules(cell('D', 1, [], { status: 'done' }), 'Bob Ray', false, 0).owner).toBeNull();
   });
 
   it('builds the meta line', () => {
