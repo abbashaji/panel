@@ -1,0 +1,26 @@
+id: C-017
+title: Fix Windows file-name case clash (Activity.tsx vs activity.ts)
+type: normal
+priority: 5
+goal: |
+  web/src/shell has Activity.tsx (component) and activity.ts (helpers). Windows and macOS ignore letter case, so import "./Activity" resolves to activity.ts and tsc fails with TS1261. Rename the component to web/src/shell/ActivityPanel.tsx (same content), change the single import in web/src/shell/index.tsx to "./ActivityPanel", delete Activity.tsx, and add web/src/core/filenames.test.ts: a vitest that fails when two .ts/.tsx files in one folder share a name stem ignoring case. No behaviour change.
+inputs: []
+after: [C-013, C-016]
+provides:
+  - "web/src/shell/ActivityPanel.tsx (default export, was Activity.tsx)"
+read:
+  - web/src/shell/index.tsx
+allowed_paths:
+  - web/src/shell/Activity.tsx
+  - web/src/shell/ActivityPanel.tsx
+  - web/src/shell/index.tsx
+  - web/src/core/filenames.test.ts
+outputs:
+  - web/src/shell/ActivityPanel.tsx
+  - web/src/shell/index.tsx
+  - web/src/core/filenames.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Found by running the build on Windows; Linux CI cannot see this class of bug, hence the guard test.
