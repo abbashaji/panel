@@ -1,5 +1,6 @@
 import { SIDEBAR_ORDER, STATUS_META, statusVar } from "../core/status";
 import { usePanel, type View } from "../core/store";
+import PanelToggle, { panelId } from "./PanelToggle";
 
 const NAV: { id: View; label: string }[] = [
   { id: "graph", label: "Graph" },
@@ -9,7 +10,7 @@ const NAV: { id: View; label: string }[] = [
 
 const caption = { font: "600 11px var(--font-sans)", letterSpacing: ".08em", color: "var(--muted-3)" } as const;
 
-export default function Sidebar({ onSettings }: { onSettings?: () => void }) {
+export default function Sidebar({ onSettings, onHide }: { onSettings?: () => void; onHide?: () => void }) {
   const p = usePanel();
   const { state, view, setView, statusFilter, toggleStatusFilter, clearFilters } = p;
   const criticalOnly = !!p.criticalOnly;
@@ -28,10 +29,16 @@ export default function Sidebar({ onSettings }: { onSettings?: () => void }) {
 
   return (
     <nav
+      id={panelId("sidebar")}
       aria-label="Sidebar"
       className="flex w-[196px] shrink-0 flex-col overflow-y-auto border-r px-3 py-4"
       style={{ background: "var(--surface)", borderColor: "var(--border)" }}
     >
+      {onHide && (
+        <div className="mb-2 flex justify-end">
+          <PanelToggle panel="sidebar" visible onToggle={onHide} />
+        </div>
+      )}
       <div className="mb-[22px] flex flex-col gap-1">
         {NAV.map((n) => (
           <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)} style={navStyle(view === n.id)}>
