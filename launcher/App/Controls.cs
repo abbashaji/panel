@@ -337,6 +337,9 @@ internal sealed class ProfileTile : Control
     public Image? BrowserIcon { get; set; }
     public Color? ThemeColor { get; set; }
 
+    /// <summary>Multi select: click toggles, siblings stay selected.</summary>
+    public bool Multi { get; set; }
+
     public event EventHandler? SelectedChanged;
 
     public bool Selected
@@ -349,7 +352,7 @@ internal sealed class ProfileTile : Control
             Invalidate();
             if (value && Parent is not null)
             {
-                foreach (var other in Parent.Controls.OfType<ProfileTile>())
+                foreach (var other in Multi ? Enumerable.Empty<ProfileTile>() : Parent.Controls.OfType<ProfileTile>())
                     if (!ReferenceEquals(other, this)) other.Selected = false;
             }
             SelectedChanged?.Invoke(this, EventArgs.Empty);
@@ -398,7 +401,7 @@ internal sealed class ProfileTile : Control
     protected override void OnClick(EventArgs e)
     {
         Focus();
-        Selected = true;
+        Selected = Multi ? !Selected : true;
         base.OnClick(e);
     }
 
@@ -412,7 +415,7 @@ internal sealed class ProfileTile : Control
             case Keys.Space:
             case Keys.Enter:
                 e.Handled = true;
-                Selected = true;
+                Selected = Multi ? !Selected : true;
                 break;
             case Keys.Left or Keys.Right or Keys.Up or Keys.Down:
                 e.Handled = true;
@@ -436,7 +439,7 @@ internal sealed class ProfileTile : Control
             target = tiles.Where(t => t.Top < Top).OrderByDescending(t => t.Top).ThenBy(t => Math.Abs(t.Left - Left)).FirstOrDefault();
         if (target is null) return;
         target.Focus();
-        target.Selected = true;
+        if (!Multi) target.Selected = true;
     }
 
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
