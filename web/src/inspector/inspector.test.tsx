@@ -95,16 +95,28 @@ describe("Inspector", () => {
     expect(screen.queryByTestId("cell-details")).toBeNull();
   });
 
-  it("Continue in my chat and Start call the launcher", () => {
+  it("Open chat and Start call the launcher", () => {
     const fns = setup([cell("C-006", "running"), cell("C-007", "ready")], ["C-006"]);
     render(<Inspector />);
-    fireEvent.click(btn("Continue in my chat"));
+    fireEvent.click(btn("Open chat"));
     expect(fns.launcher.open).toHaveBeenCalledWith("C-006");
     cleanup();
     setup([cell("C-007", "ready")], ["C-007"], { launcher: fns.launcher });
     render(<Inspector />);
     fireEvent.click(btn("Start"));
     expect(fns.launcher.start).toHaveBeenCalledWith("C-007");
+  });
+
+  it("offers an enabled Open chat button on a cell reserved by another person", () => {
+    const fns = setup([cell("C-006", "running", { reservedBy: "Alex" })], ["C-006"], {
+      launcher: { start: vi.fn(), open: vi.fn(), sync: vi.fn(), owner: vi.fn(() => "Sam") },
+    });
+    render(<Inspector />);
+    expect(screen.getByText("Alex")).toBeTruthy();
+    const open = btn("Open chat");
+    expect(open.disabled).toBe(false);
+    fireEvent.click(open);
+    expect((h.ctx.launcher as typeof fns.launcher).open).toHaveBeenCalledWith("C-006");
   });
 
   it("hides Release cell on done and waiting cells", () => {
@@ -194,7 +206,7 @@ describe("Inspector", () => {
     expect(screen.getByText("Lease expired 22 min ago · attempt 2 of 3")).toBeTruthy();
     expect(screen.getByText("Critical cell · 5 direct, 8 total dependents")).toBeTruthy();
     expect(screen.getByTestId("status-chip").textContent).toContain("Lease expired");
-    expect(btn("Continue in my chat")).toBeTruthy();
+    expect(btn("Open chat")).toBeTruthy();
     expect(btn("Release cell").disabled).toBe(false);
   });
 
@@ -203,7 +215,7 @@ describe("Inspector", () => {
     setup([cell("C-007", "ready")], ["C-007"], { launcher });
     render(<Inspector />);
     expect(screen.getByText("\u2014")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Continue in my chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
     expect(btn("Start")).toBeTruthy();
   });
 

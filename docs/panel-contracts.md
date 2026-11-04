@@ -17,7 +17,7 @@ A web panel plus a small Windows launcher, replacing `blueprint-limit-ext`.
 3. Browser data never reaches a web page or service. The profile picker lives in the launcher's own window.
 4. The panel sends only `repo + cell id` (plus the display name `who`) to the launcher. The launcher builds the prompt itself from a fixed template.
 5. The prompt is pre-filled, never auto-sent. The launcher always shows a confirm window.
-6. A teammate can only reopen their own cells. Others' cells show a name, no link.
+6. Any teammate can use Open chat on a running or lease expired cell; the launcher opens it when this PC has a local record of the chat.
 7. Local records are deleted when the cell is merged (green), or after 14 days.
 8. Stack: React 18 + TypeScript + Vite, Tailwind, Radix UI, `@xyflow/react` + dagre (rankdir LR), TanStack Query, Vitest. Launcher: C# .NET 8 WinForms, self-contained single exe.
 
@@ -143,8 +143,8 @@ Chat link accepted only if it matches `^https://claude\.ai/chat/[0-9a-f-]{36}$`.
 - Card 152x72: id (mono), status chip, title, sha7, one meta line (lease left, blocked by, merged ago). Badges (START, owner, BLOCKS n) sit fully **outside** the card, above it, covering nothing.
 - Edges: solid = implementation, dashed = contract; edges from the bottleneck are red. Wave labels on top. Pan, zoom, minimap.
 - Bottleneck: ring on the card, "BLOCKS n" tag, top banner with one-click Release, red downstream edges.
-- Interaction: click = select, double-click = primary action (Start if ready, Open chat if mine and running, else details), shift-click = multi-select, Esc clears, Ctrl+K search, arrow keys move selection, right-click menu.
-- Inspector: lease bar, attempts, branch, lock/tip sha, last commit, next step, holder, files; buttons Continue in my chat / Release / Open branch on GitHub.
+- Interaction: click = select, double-click = primary action (Start if ready, Open chat if running or lease expired, else details), shift-click = multi-select, Esc clears, Ctrl+K search, arrow keys move selection, right-click menu.
+- Inspector: lease bar, attempts, branch, lock/tip sha, last commit, next step, holder, files; buttons Open chat / Release / Open branch on GitHub.
 - Merged cells: no Open chat badge; the panel asks the launcher to `sync` merged ids on every Start/Open.
 - Views: Graph (first), Table, Timeline. Live updates by polling every 5 s (SSE later). Respect reduced motion.
 

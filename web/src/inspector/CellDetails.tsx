@@ -95,7 +95,7 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
       <div className="mt-[18px] flex flex-col gap-[10px]">
         {canOpenChat && (
           <button type="button" className={primary} onClick={() => launcher.open(cell.id)}>
-            Continue in my chat
+            Open chat
           </button>
         )}
         {cell.status === "ready" && (
