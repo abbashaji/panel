@@ -191,3 +191,57 @@ describe('visible cells in the layout', () => {
     expect(l.waves.map((w) => w.count)).toEqual([1, 1]);
   });
 });
+
+describe('graph interaction', () => {
+  beforeEach(() => {
+    h.select.mockClear();
+    h.clearSelection.mockClear();
+    h.start.mockClear();
+    h.open.mockClear();
+    h.panel.state.cells = [cell('A', 1, [], { status: 'ready' }), cell('B', 2, [impl('A')], { blockedBy: ['A'] })];
+  });
+  afterEach(() => cleanup());
+
+  const card = (id: string) => screen.getByLabelText(new RegExp(`^${id}, `));
+
+  it('selects a card exactly once on click', () => {
+    render(<GraphView />);
+    fireEvent.click(card('A'));
+    expect(h.select).toHaveBeenCalledTimes(1);
+    expect(h.select).toHaveBeenCalledWith('A', false);
+  });
+
+  it('shift-click adds to the selection', () => {
+    render(<GraphView />);
+    fireEvent.click(card('B'), { shiftKey: true });
+    expect(h.select).toHaveBeenCalledTimes(1);
+    expect(h.select).toHaveBeenCalledWith('B', true);
+  });
+
+  it('double-click on a ready cell starts it', () => {
+    render(<GraphView />);
+    fireEvent.doubleClick(card('A'));
+    expect(h.start).toHaveBeenCalledTimes(1);
+    expect(h.start).toHaveBeenCalledWith('A');
+  });
+
+  it('double-click on a waiting cell only selects it', () => {
+    render(<GraphView />);
+    fireEvent.doubleClick(card('B'));
+    expect(h.start).not.toHaveBeenCalled();
+    expect(h.select).toHaveBeenCalledWith('B');
+  });
+
+  it('clicking the pane clears the selection', () => {
+    const { container } = render(<GraphView />);
+    const pane = container.querySelector('.react-flow__pane');
+    expect(pane).not.toBeNull();
+    fireEvent.click(pane as Element);
+    expect(h.clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no minimap', () => {
+    const { container } = render(<GraphView />);
+    expect(container.querySelector('.react-flow__minimap')).toBeNull();
+  });
+});
