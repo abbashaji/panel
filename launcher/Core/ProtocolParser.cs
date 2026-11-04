@@ -54,6 +54,8 @@ public static class ProtocolParser
         var q = rest.IndexOf('?');
         if (q < 0) return ParseResult.Reject("missing query");
         var command = rest.Substring(0, q);
+        // Windows and browsers normalise blueprint://start?x into blueprint://start/?x. Accept exactly one slash.
+        if (command.EndsWith("/", StringComparison.Ordinal)) command = command.Substring(0, command.Length - 1);
         var query = rest.Substring(q + 1);
 
         CommandKind kind;
