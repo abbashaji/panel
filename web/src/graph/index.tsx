@@ -4,7 +4,6 @@ import {
   BaseEdge,
   ControlButton,
   Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -13,7 +12,7 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react';
-import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { STATUS_META } from '../core/status';
 import { usePanel } from '../core/store';
 import { readOwn, readWho } from '../launch';
@@ -38,6 +37,9 @@ const nodeTypes = { cell: CellCard, wave: WaveLabel };
 const reducedMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 const BOTTLENECK_COLOR = STATUS_META.expired.color;
+
+/** the context menu is portaled but its events still bubble through React to the node: ignore them */
+const fromMenu = (e: ReactMouseEvent): boolean => e.target instanceof HTMLElement && e.target.closest('[role="menu"]') !== null;
 
 /** bezier from the right middle of the source to the left middle of the target; solid = implementation, dashed = contract, red = leaves the bottleneck */
 function BpEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps) {
@@ -117,6 +119,23 @@ function Graph() {
       else select(id);
     },
     [cells, launcher, actions, select, isMine],
+  );
+
+  /** one click path: React Flow reports the click on the node; the card body has no click handler of its own */
+  const onNodeClick = useCallback(
+    (e: ReactMouseEvent, node: Node) => {
+      if (node.type !== 'cell' || fromMenu(e)) return;
+      byKeyboard.current = false;
+      select(node.id, e.shiftKey);
+    },
+    [select],
+  );
+  const onNodeDoubleClick = useCallback(
+    (e: ReactMouseEvent, node: Node) => {
+      if (node.type !== 'cell' || fromMenu(e)) return;
+      onAct(node.id, 'primary');
+    },
+    [onAct],
   );
 
   const nodes = useMemo<Node[]>(() => {
@@ -207,6 +226,9 @@ function Graph() {
           selectionKeyCode={null}
           multiSelectionKeyCode={null}
           deleteKeyCode={null}
+          zoomOnDoubleClick={false}
+          onNodeClick={onNodeClick}
+          onNodeDoubleClick={onNodeDoubleClick}
           onPaneClick={clearSelection}
         >
           <Background />
@@ -215,13 +237,6 @@ function Graph() {
               <span style={{ fontSize: 10, fontWeight: 700 }}>Fit</span>
             </ControlButton>
           </Controls>
-          <MiniMap
-            position='bottom-right'
-            style={{ width: 120, height: 80 }}
-            pannable
-            zoomable
-            nodeColor={(n) => (n.type === 'cell' ? STATUS_META[(n.data as CardData).cell.status].color : 'transparent')}
-          />
         </ReactFlow>
       </div>
     </div>

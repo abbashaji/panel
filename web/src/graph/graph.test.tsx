@@ -1,9 +1,51 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PanelCell, PanelDepend } from '../core/types';
 import { visibleCells, type CellFilters } from '../shell/filter';
 import { Banner, bannerParts, bannerText, showBanner } from './Banner';
+import GraphView from './index';
 import { badgeRules, cellsLabel, initials, layoutCells, metaLine, shaLabel } from './layout';
+
+// jsdom lacks what React Flow measures with.
+class RO {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as any).ResizeObserver ??= RO;
+(globalThis as any).DOMMatrixReadOnly ??= class {
+  m22 = 1;
+  constructor(_t?: string) {}
+};
+
+const h = vi.hoisted(() => {
+  const select = vi.fn();
+  const clearSelection = vi.fn();
+  const start = vi.fn();
+  const open = vi.fn();
+  const panel = {
+    state: { cells: [] as unknown[], bottleneck: null },
+    repo: 'demo/panel',
+    selection: [] as string[],
+    search: '',
+    statusFilter: [] as string[],
+    criticalOnly: false,
+    hideMerged: false,
+    theme: 'dark',
+    launcher: { owner: () => null, start, open },
+    actions: { requestRelease: vi.fn() },
+    select,
+    clearSelection,
+    moveSelection: vi.fn(),
+  };
+  return { panel, select, clearSelection, start, open };
+});
+
+vi.mock('../core/store', async (orig) => {
+  const real = await orig<typeof import('../core/store')>();
+  return { ...real, usePanel: () => h.panel };
+});
 
 const impl = (id: string): PanelDepend => ({ id, kind: 'implementation' });
 
@@ -147,5 +189,59 @@ describe('visible cells in the layout', () => {
     const l = layoutCells(visibleCells(all, { ...base, criticalOnly: true }));
     expect(l.edges.map((e) => e.id)).toEqual(['A->B']);
     expect(l.waves.map((w) => w.count)).toEqual([1, 1]);
+  });
+});
+
+describe('graph interaction', () => {
+  beforeEach(() => {
+    h.select.mockClear();
+    h.clearSelection.mockClear();
+    h.start.mockClear();
+    h.open.mockClear();
+    h.panel.state.cells = [cell('A', 1, [], { status: 'ready' }), cell('B', 2, [impl('A')], { blockedBy: ['A'] })];
+  });
+  afterEach(() => cleanup());
+
+  const card = (id: string) => screen.getByLabelText(new RegExp(`^${id}, `));
+
+  it('selects a card exactly once on click', () => {
+    render(<GraphView />);
+    fireEvent.click(card('A'));
+    expect(h.select).toHaveBeenCalledTimes(1);
+    expect(h.select).toHaveBeenCalledWith('A', false);
+  });
+
+  it('shift-click adds to the selection', () => {
+    render(<GraphView />);
+    fireEvent.click(card('B'), { shiftKey: true });
+    expect(h.select).toHaveBeenCalledTimes(1);
+    expect(h.select).toHaveBeenCalledWith('B', true);
+  });
+
+  it('double-click on a ready cell starts it', () => {
+    render(<GraphView />);
+    fireEvent.doubleClick(card('A'));
+    expect(h.start).toHaveBeenCalledTimes(1);
+    expect(h.start).toHaveBeenCalledWith('A');
+  });
+
+  it('double-click on a waiting cell only selects it', () => {
+    render(<GraphView />);
+    fireEvent.doubleClick(card('B'));
+    expect(h.start).not.toHaveBeenCalled();
+    expect(h.select).toHaveBeenCalledWith('B');
+  });
+
+  it('clicking the pane clears the selection', () => {
+    const { container } = render(<GraphView />);
+    const pane = container.querySelector('.react-flow__pane');
+    expect(pane).not.toBeNull();
+    fireEvent.click(pane as Element);
+    expect(h.clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no minimap', () => {
+    const { container } = render(<GraphView />);
+    expect(container.querySelector('.react-flow__minimap')).toBeNull();
   });
 });

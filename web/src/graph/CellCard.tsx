@@ -69,6 +69,7 @@ export function CellCard({ data }: NodeProps<CardNode>) {
                 e.stopPropagation();
                 onAct(cell.id, 'start');
               }}
+              onDoubleClick={(e) => e.stopPropagation()}
             >
               <span className='inline-flex items-center gap-1'>
                 <Icon name='play' size={9} />
@@ -87,6 +88,7 @@ export function CellCard({ data }: NodeProps<CardNode>) {
                   e.stopPropagation();
                   onAct(cell.id, 'open');
                 }}
+                onDoubleClick={(e) => e.stopPropagation()}
               >
                 {rules.owner.label}
               </button>
@@ -124,8 +126,6 @@ export function CellCard({ data }: NodeProps<CardNode>) {
                 outlineOffset: 2,
                 boxShadow: bottleneck ? '0 0 0 6px rgba(255,107,94,.28)' : undefined,
               }}
-              onClick={(e) => onAct(cell.id, e.shiftKey ? 'multi' : 'select')}
-              onDoubleClick={() => onAct(cell.id, 'primary')}
             >
               <span aria-hidden className='pointer-events-none absolute inset-0' style={{ background: meta.color, opacity: 0.1, borderRadius: 11 }} />
               <div className='relative flex items-center justify-between gap-1'>
