@@ -41,8 +41,8 @@ internal static class Program
                 Application.Run(new OpenForm(parsed, records));
                 return 0;
             case CommandKind.StartMany:
-                MessageBox.Show("Starting several cells at once is not supported yet.", "Blueprint launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return 1;
+                Application.Run(new StartManyForm(parsed, records));
+                return 0;
             default:
                 Application.Run(new StartForm(parsed, records));
                 return 0;
