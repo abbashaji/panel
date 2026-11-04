@@ -62,6 +62,37 @@ describe("Header", () => {
   });
 });
 
+describe("Header Run ready button", () => {
+  const withReady = (...ids: string[]) =>
+    ({ ...STATE, cells: [...STATE.cells, ...ids.map((id) => mk(id, "ready"))] }) as unknown as PanelState;
+
+  it("is hidden when no cell is ready", () => {
+    render(<Header onSearch={() => {}} />);
+    expect(screen.queryByRole("button", { name: /Run ready/ })).toBeNull();
+  });
+
+  it("shows the ready count and opens the dialog with the ready cells only", () => {
+    h.panel = { ...h.panel, state: withReady("C-010", "C-011") } as unknown as PanelContextValue;
+    render(<Header onSearch={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run ready (2)" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("C-010")).toBeTruthy();
+    expect(screen.getByText("C-011")).toBeTruthy();
+    expect(screen.queryByText("C-002")).toBeNull();
+  });
+
+  it("Run calls launcher.startMany with the ticked ids and closes the dialog", () => {
+    const startMany = vi.fn();
+    h.panel = { ...h.panel, state: withReady("C-010", "C-011"), launcher: { startMany } } as unknown as PanelContextValue;
+    render(<Header onSearch={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run ready (2)" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /C-011/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run 1 cells" }));
+    expect(startMany).toHaveBeenCalledWith(["C-010"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("Settings", () => {
   it("saves a valid display name to localStorage and rejects an invalid one", () => {
     render(<Settings open onOpenChange={() => {}} />);

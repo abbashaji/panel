@@ -4,6 +4,7 @@ import { Icon } from "../core/Icon";
 import { readStore } from "../core/storage";
 import { usePanel } from "../core/store";
 import { initials, progress } from "./activity";
+import RunReadyDialog from "../launch/RunReadyDialog";
 import RepoSwitcher from "./RepoSwitcher";
 
 /** localStorage key of the display name (written by the launch slot and the settings dialog). */
@@ -21,8 +22,10 @@ function useNow(intervalMs = 1000): number {
 const chip = { background: "var(--surface-2)", border: "1px solid var(--raised-border)", borderRadius: 8 } as const;
 
 export default function Header({ onSearch }: { onSearch: () => void }) {
-  const { state, lastUpdated } = usePanel();
+  const { state, lastUpdated, launcher } = usePanel();
+  const [runOpen, setRunOpen] = useState(false);
   const now = useNow();
+  const readyCount = (state?.cells ?? []).filter((c) => c.status === "ready").length;
   const p = progress(state?.cells ?? []);
   const who = (readStore(WHO_KEY) ?? "").trim();
   const name = who || "You";
@@ -66,6 +69,25 @@ export default function Header({ onSearch }: { onSearch: () => void }) {
           <Icon name="warning" size={12} color="var(--danger)" />
           acct-a over 90% of 5h limit · resets 2:40 AM (sample)
         </span>
+      )}
+
+      {readyCount > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setRunOpen(true)}
+            className="shrink-0 whitespace-nowrap"
+            style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--accent)", color: "#06142B", font: "700 12.5px var(--font-sans)" }}
+          >
+            Run ready ({readyCount})
+          </button>
+          <RunReadyDialog
+            open={runOpen}
+            onOpenChange={setRunOpen}
+            cells={state?.cells ?? []}
+            onRun={(ids) => launcher?.startMany?.(ids)}
+          />
+        </>
       )}
 
       <button

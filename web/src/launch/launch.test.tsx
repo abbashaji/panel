@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reserve } from "../core/api";
 import { usePanel } from "../core/store";
 import LaunchProvider from "./index";
-import { openUrl, startUrl, syncUrl, transport } from "./protocol";
+import RunReadyDialog from "./RunReadyDialog";
+import { openUrl, startManyUrl, startUrl, syncUrl, transport } from "./protocol";
 
 vi.mock("../core/store", () => ({ usePanel: vi.fn() }));
 vi.mock("../core/api", () => ({ reserve: vi.fn() }));
@@ -42,6 +43,81 @@ describe("protocol builders", () => {
   });
 });
 
+describe("startManyUrl", () => {
+  it("builds the startmany link from valid input", () => {
+    expect(startManyUrl(REPO, "Ann B", ["C-010", "C-011"])).toBe(
+      "blueprint://startmany?repo=abbashaji%2Fpanel&who=Ann%20B&cells=C-010,C-011",
+    );
+    const twelve = Array.from({ length: 12 }, (_, i) => `C-${String(i + 1).padStart(3, "0")}`);
+    expect(startManyUrl(REPO, "Ann", twelve).endsWith(`cells=${twelve.join(",")}`)).toBe(true);
+  });
+
+  it("refuses bad input", () => {
+    expect(() => startManyUrl(REPO, "Ann", [])).toThrow();
+    const thirteen = Array.from({ length: 13 }, (_, i) => `C-${String(i + 1).padStart(3, "0")}`);
+    expect(() => startManyUrl(REPO, "Ann", thirteen)).toThrow();
+    expect(() => startManyUrl(REPO, "Ann", ["C-001", "C-001"])).toThrow();
+    expect(() => startManyUrl(REPO, "Ann", ["C-001", "C-1"])).toThrow();
+    expect(() => startManyUrl(REPO, "Ann", ["C-001&x=1"])).toThrow();
+    expect(() => startManyUrl("bad repo", "Ann", ["C-001"])).toThrow();
+    expect(() => startManyUrl(REPO, "a&b", ["C-001"])).toThrow();
+    expect(() => startManyUrl(REPO, "", ["C-001"])).toThrow();
+  });
+
+  it("refuses a link over 400 characters", () => {
+    const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
+    const ids = Array.from({ length: 12 }, (_, i) => `C-${String(i + 1).padStart(5, "0")}`);
+    expect(() => startManyUrl(repo, " ".repeat(40), ids)).toThrow(/too long/);
+  });
+});
+
+describe("RunReadyDialog", () => {
+  const cell = (id: string, status: string) => ({ id, title: `Title ${id}`, status }) as never;
+  const cells = [cell("C-001", "done"), cell("C-010", "ready"), cell("C-011", "running"), cell("C-012", "ready"), cell("C-013", "expired"), cell("C-014", "ready")];
+  afterEach(cleanup);
+
+  it("lists only ready cells, all ticked, with a counter and the profile hint", () => {
+    render(<RunReadyDialog open onOpenChange={() => {}} cells={cells} onRun={() => {}} />);
+    for (const id of ["C-010", "C-012", "C-014"]) expect(screen.getByText(id)).toBeTruthy();
+    for (const id of ["C-001", "C-011", "C-013"]) expect(screen.queryByText(id)).toBeNull();
+    const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(boxes).toHaveLength(3);
+    expect(boxes.every((b) => b.checked)).toBe(true);
+    expect(screen.getByText("3 selected")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run 3 cells" })).toBeTruthy();
+    expect(screen.getByText(/next window lets you pick the browser profiles/)).toBeTruthy();
+  });
+
+  it("None and Select all change the selection", () => {
+    render(<RunReadyDialog open onOpenChange={() => {}} cells={cells} onRun={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    expect(screen.getByText("0 selected")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Run 0 cells" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(screen.getByText("3 selected")).toBeTruthy();
+  });
+
+  it("Run passes only the ticked cells and closes the dialog", () => {
+    const onRun = vi.fn();
+    const onOpenChange = vi.fn();
+    render(<RunReadyDialog open onOpenChange={onOpenChange} cells={cells} onRun={onRun} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /C-012/ }));
+    expect(screen.getByText("2 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Run 2 cells" }));
+    expect(onRun).toHaveBeenCalledWith(["C-010", "C-014"]);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("ticks at most 12 cells", () => {
+    const many = Array.from({ length: 14 }, (_, i) => cell(`C-${String(i + 1).padStart(3, "0")}`, "ready"));
+    render(<RunReadyDialog open onOpenChange={() => {}} cells={many} onRun={() => {}} />);
+    expect(screen.getByText("12 selected")).toBeTruthy();
+    const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(boxes.filter((b) => b.checked)).toHaveLength(12);
+    expect(boxes.filter((b) => b.disabled)).toHaveLength(2);
+  });
+});
+
 describe("transport.watch", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -67,7 +143,12 @@ describe("transport.watch", () => {
 
 describe("LaunchProvider", () => {
   const toast = vi.fn();
-  let registered: { start?: (id: string) => void; open?: (id: string) => void; owner?: (id: string) => string | null } = {};
+  let registered: {
+    start?: (id: string) => void;
+    startMany?: (ids: string[]) => void;
+    open?: (id: string) => void;
+    owner?: (id: string) => string | null;
+  } = {};
   const state = {
     cells: [
       { id: "C-001", status: "done", reservedBy: null },
@@ -177,5 +258,61 @@ describe("LaunchProvider", () => {
     registered.open!("C-012");
     registered.open!("C-010");
     for (const call of toast.mock.calls) expect(String(call[0])).not.toContain("Only the person");
+  });
+
+  it("startMany reserves one after another, drops failures and links only the reserved cells", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    vi.mocked(reserve).mockImplementation(async (_repo: string, id: string) => {
+      if (id === "C-013") return { status: "taken", detail: "Held by Bob" };
+      if (id === "C-014") throw new Error("boom");
+      return { status: "reserved", detail: "ok" };
+    });
+    registered.startMany!(["C-010", "C-013", "C-014", "C-015"]);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(reserve).mock.calls.map((c) => c[1])).toEqual(["C-010", "C-013", "C-014", "C-015"]);
+    expect(go).toHaveBeenCalledWith("blueprint://startmany?repo=abbashaji%2Fpanel&who=Ann&cells=C-010,C-015");
+    const said = toast.mock.calls.map((c) => String(c[0])).find((m) => m.includes("C-013"))!;
+    expect(said).toContain("C-013 (taken)");
+    expect(said).toContain("C-014 (error)");
+    expect(said).not.toContain("C-010");
+    expect(said).not.toContain("C-015");
+    expect(registered.owner!("C-010")).toBe("Ann");
+  });
+
+  it("startMany shows the launcher missing hint when the page stays visible", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    registered.startMany!(["C-010"]);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(transport.watch).toHaveBeenCalledTimes(1);
+    vi.mocked(transport.watch).mock.calls[0]![0]();
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("Install the launcher"), "info");
+  });
+
+  it("startMany opens nothing when every reserve fails", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    vi.mocked(reserve).mockResolvedValue({ status: "taken", detail: "Held by Bob" });
+    registered.startMany!(["C-010", "C-012"]);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Not started: C-010 (taken), C-012 (taken)", "error"));
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("startMany asks for a name first when none is saved", async () => {
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    registered.startMany!(["C-010", "C-012"]);
+    const input = await screen.findByLabelText("Display name");
+    expect(reserve).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "Ann" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(go).toHaveBeenCalledWith("blueprint://startmany?repo=abbashaji%2Fpanel&who=Ann&cells=C-010,C-012");
+    expect(window.localStorage.getItem("bp_who")).toBe("Ann");
+  });
+
+  it("startMany refuses more than 12 cells and reserves nothing", () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startMany!(Array.from({ length: 13 }, (_, i) => `C-${String(i + 1).padStart(3, "0")}`));
+    expect(toast).toHaveBeenCalledWith("Run at most 12 cells at once.", "error");
+    expect(reserve).not.toHaveBeenCalled();
   });
 });
