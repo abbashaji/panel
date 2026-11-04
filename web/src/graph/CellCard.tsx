@@ -11,8 +11,6 @@ export type CardAction = 'select' | 'multi' | 'primary' | 'start' | 'open' | 're
 export interface CardData extends Record<string, unknown> {
   cell: PanelCell;
   owner: string | null;
-  /** the owner is you: the chip offers Open chat */
-  mine: boolean;
   bottleneck: boolean;
   blocks: number;
   selected: boolean;
@@ -45,13 +43,13 @@ function Item({ onSelect, children }: { onSelect: () => void; children: ReactNod
 
 /** 152x72 card. The badge row sits above it (BADGE_H) and never overlaps it. */
 export function CellCard({ data }: NodeProps<CardNode>) {
-  const { cell, owner, mine, bottleneck, blocks, selected, onAct } = data;
+  const { cell, owner, bottleneck, blocks, selected, onAct } = data;
   const meta = STATUS_META[cell.status];
-  const rules = badgeRules(cell, owner, mine, bottleneck, blocks);
+  const rules = badgeRules(cell, owner, bottleneck, blocks);
   const sha7 = shaLabel(cell);
   const line = metaLine(cell);
   const canStart = rules.start;
-  const canOpen = rules.owner?.clickable === true;
+  const canOpen = cell.status === 'running' || cell.status === 'expired';
   const canRelease = cell.status === 'running' || cell.status === 'expired' || bottleneck;
   const handleTop = BADGE_H + CARD_H / 2;
 

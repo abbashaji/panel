@@ -150,10 +150,6 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
         say(`${id} is merged; there is no chat to open.`, "info");
         return;
       }
-      if (!isMine(id)) {
-        say("Only the person who started a cell can reopen its chat.", "info");
-        return;
-      }
       let url: string;
       try {
         url = openUrl(r, id);
@@ -165,10 +161,10 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
       transport.go(url);
       transport.watch(() => live.current.toast(HINT, "info"));
     },
-    [isMine, sendSync],
+    [sendSync],
   );
 
-  /** my name for my own cells; for others' cells their name, with no link */
+  /** my name for my own cells; for others' cells their name */
   const owner = useCallback((id: string): string | null => {
     if (isMine(id)) return readWho() || null;
     return live.current.state?.cells.find((c) => c.id === id)?.reservedBy ?? null;

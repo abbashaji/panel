@@ -73,6 +73,7 @@ describe("LaunchProvider", () => {
       { id: "C-001", status: "done", reservedBy: null },
       { id: "C-010", status: "ready", reservedBy: null },
       { id: "C-011", status: "running", reservedBy: "Bob" },
+      { id: "C-012", status: "expired", reservedBy: "Cy" },
     ],
   };
   const panel = {
@@ -156,17 +157,25 @@ describe("LaunchProvider", () => {
     expect(window.localStorage.getItem("bp_who")).toBe("Ann");
   });
 
-  it("open works only for my own, unmerged cells", () => {
-    registered.open!("C-011");
-    expect(go).not.toHaveBeenCalled();
+  it("open works for any teammate on running and expired cells, but not on merged cells", () => {
     expect(registered.owner!("C-011")).toBe("Bob");
-
-    window.localStorage.setItem("bp_own", JSON.stringify({ [REPO]: ["C-011", "C-001"] }));
     registered.open!("C-011");
     expect(go).toHaveBeenCalledWith("blueprint://open?repo=abbashaji%2Fpanel&cell=C-011");
 
     go.mockClear();
+    registered.open!("C-012");
+    expect(go).toHaveBeenCalledWith("blueprint://open?repo=abbashaji%2Fpanel&cell=C-012");
+
+    go.mockClear();
     registered.open!("C-001");
     expect(go).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("C-001 is merged; there is no chat to open.", "info");
+  });
+
+  it("never shows the owner-only toast", () => {
+    registered.open!("C-011");
+    registered.open!("C-012");
+    registered.open!("C-010");
+    for (const call of toast.mock.calls) expect(String(call[0])).not.toContain("Only the person");
   });
 });

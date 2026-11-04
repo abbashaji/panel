@@ -159,10 +159,10 @@ export function layoutCells(cells: PanelCell[], bottleneckId: string | null = nu
   return { nodes, edges: [...edgeMap.values()], waves };
 }
 
-/** What a double-click does: Start if ready, Open chat if running and owned, else just select. */
-export function primaryAction(status: PanelCell['status'], hasOwner: boolean): PrimaryAction {
+/** What a double-click does: Start if ready, Open chat if running or expired (for anyone), else just select. */
+export function primaryAction(status: PanelCell['status']): PrimaryAction {
   if (status === 'ready') return 'start';
-  if (status === 'running' && hasOwner) return 'open';
+  if (status === 'running' || status === 'expired') return 'open';
   return 'select';
 }
 
@@ -208,7 +208,7 @@ export function initials(name: string): string {
 
 export interface OwnerChip {
   label: string;
-  /** only your own running cell: opens the chat */
+  /** any owner of a running or expired cell: opens the chat */
   clickable: boolean;
 }
 
@@ -219,11 +219,12 @@ export interface BadgeRules {
 }
 
 /** Which badges sit above a card: START (ready), owner chip (never on merged cells), BLOCKS n (bottleneck only). */
-export function badgeRules(cell: PanelCell, owner: string | null, mine: boolean, bottleneck: boolean, blocks: number): BadgeRules {
+export function badgeRules(cell: PanelCell, owner: string | null, bottleneck: boolean, blocks: number): BadgeRules {
   let chip: OwnerChip | null = null;
   if (owner && cell.status !== 'done') {
     const ini = initials(owner);
-    chip = mine && cell.status === 'running' ? { label: `${ini} · Open chat`, clickable: true } : { label: `${ini} · ${owner}`, clickable: false };
+    const openable = cell.status === 'running' || cell.status === 'expired';
+    chip = openable ? { label: `${ini} · Open chat`, clickable: true } : { label: `${ini} · ${owner}`, clickable: false };
   }
   return { start: cell.status === 'ready', owner: chip, blocks: bottleneck && blocks > 0 ? blocks : null };
 }
