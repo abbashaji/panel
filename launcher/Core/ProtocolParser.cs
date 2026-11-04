@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace BlueprintLauncher.Core;
 
-public enum CommandKind { Start, Open, Sync }
+public enum CommandKind { Start, Open, Sync, StartMany }
 
 /// <summary>Typed result of parsing a blueprint:// URL. Ok=false carries a rejection reason.</summary>
 public sealed record ParseResult
@@ -15,6 +15,7 @@ public sealed record ParseResult
     public string Cell { get; init; } = "";
     public string Who { get; init; } = "";
     public IReadOnlyList<string> Merged { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Cells { get; init; } = Array.Empty<string>();
 
     internal static ParseResult Reject(string reason) => new() { Ok = false, Reason = reason };
 }
@@ -24,11 +25,13 @@ public static class ProtocolParser
 {
     public const int MaxUrlLength = 400;
     private const int MaxMerged = 50;
+    private const int MaxCells = 12;
     private const string Prefix = "blueprint://";
 
     private static readonly string[] StartKeys = { "repo", "cell", "who" };
     private static readonly string[] OpenKeys = { "repo", "cell" };
     private static readonly string[] SyncKeys = { "repo", "merged" };
+    private static readonly string[] StartManyKeys = { "repo", "who", "cells" };
 
     // ASCII-only on purpose (same meaning as a JavaScript \w).
     private static readonly Regex RepoRx = new(@"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\z", RegexOptions.CultureInvariant);
@@ -65,6 +68,7 @@ public static class ProtocolParser
             case "start": kind = CommandKind.Start; keys = StartKeys; break;
             case "open": kind = CommandKind.Open; keys = OpenKeys; break;
             case "sync": kind = CommandKind.Sync; keys = SyncKeys; break;
+            case "startmany": kind = CommandKind.StartMany; keys = StartManyKeys; break;
             default: return ParseResult.Reject("unknown command");
         }
         if (query.Length == 0) return ParseResult.Reject("empty query");
@@ -100,6 +104,21 @@ public static class ProtocolParser
                 if (!IsValidCell(id)) return ParseResult.Reject("invalid merged id");
             }
             return new ParseResult { Ok = true, Kind = kind, Repo = repo, Merged = ids.Distinct(StringComparer.Ordinal).ToList() };
+        }
+
+        if (kind == CommandKind.StartMany)
+        {
+            var manyWho = values["who"];
+            if (!IsValidWho(manyWho)) return ParseResult.Reject("invalid who");
+            var parts = values["cells"].Split(',');
+            if (parts.Length > MaxCells) return ParseResult.Reject("too many cells (max 12)");
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var part in parts)
+            {
+                if (!IsValidCell(part)) return ParseResult.Reject(part.Length == 0 ? "empty cell id" : "invalid cell id");
+                if (!seen.Add(part)) return ParseResult.Reject("duplicate cell id");
+            }
+            return new ParseResult { Ok = true, Kind = kind, Repo = repo, Who = manyWho, Cells = parts };
         }
 
         var cell = values["cell"];

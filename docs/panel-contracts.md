@@ -93,6 +93,7 @@ The only input is a URL; treat it as hostile.
 - `blueprint://start?repo=<owner/name>&cell=<C-NNN>&who=<name>`: confirm window, then launch.
 - `blueprint://open?repo=&cell=`: "my cell" window (open claude.ai in the saved profile; optional chat link box).
 - `blueprint://sync?repo=<owner/name>&merged=C-001,C-002`: silent; deletes local records of merged cells.
+- `blueprint://startmany?repo=<owner/name>&who=<name>&cells=C-001,C-002,...`: 1 to 12 distinct cell ids. The launcher shows a profile picker for the cells and starts one cell per chosen profile (each start keeps its own confirm window; nothing is auto-sent).
 
 ### 4.1 Validation (reject otherwise)
 
@@ -103,6 +104,7 @@ The only input is a URL; treat it as hostile.
 | cell | `^C-\d{3,5}$` |
 | who | `^[\w .-]{1,40}$` |
 | merged | comma list of valid cells |
+| cells (startmany) | 1 to 12 valid cells, comma separated, no duplicates, nothing else |
 
 Also reject: unknown command, duplicate or extra keys, control characters.
 
