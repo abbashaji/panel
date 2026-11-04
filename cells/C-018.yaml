@@ -1,0 +1,26 @@
+id: C-018
+title: Graph click handling and remove the minimap
+type: normal
+priority: 5
+goal: |
+  Two fixes in web/src/graph/index.tsx.
+  1) No no-op handlers. The user reported `onNodeClick={() => undefined}` on the ReactFlow element. A search of main finds no such line (the graph currently sets elementsSelectable={false} and relies on handlers inside the card buttons), so make the click path explicit and single: pass a real `onNodeClick={(e, node) => ...}` that selects the cell (shift-click toggles multi-select, same as usePanel().select(id, e.shiftKey)), a real `onNodeDoubleClick` that runs the existing primary action (Start if ready, Open chat if mine and running, else select), and keep `onPaneClick={clearSelection}`. Remove any handler that is an empty arrow function or `undefined`, anywhere in web/src/graph/**. Make sure a click on a card is handled exactly once (no double select from both the card button and the ReactFlow event; stop propagation in one of them). Keep the right-click context menu and keyboard navigation.
+  2) Delete the minimap: remove the MiniMap import and element, its props and any style or test that mentions it. Keep the zoom controls and the Fit button (bottom left).
+  Update web/src/graph/graph.test.tsx: clicking a card selects it once, shift-click adds, double-click on a ready cell calls launcher.start, pane click clears, and no element with class react-flow__minimap exists.
+inputs: []
+after: [C-005, C-014]
+provides:
+  - "web/src/graph/index.tsx: GraphView without minimap and without no-op click handlers"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+allowed_paths:
+  - web/src/graph/**
+outputs:
+  - web/src/graph/index.tsx
+  - web/src/graph/graph.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  jsdom lacks ResizeObserver and DOMMatrixReadOnly; web/src/integration.test.tsx shows the stubs. Do not change the layout constants or card styling.

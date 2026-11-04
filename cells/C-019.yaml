@@ -1,0 +1,40 @@
+id: C-019
+title: Switch GitHub repo from the header repo name
+type: normal
+priority: 5
+goal: |
+  Let the user switch the repository by clicking the repo name in the header (the chip that shows `owner/name · main`).
+  Design: the chip becomes a button with a small chevron (aria-haspopup=dialog, aria-expanded). It opens a Radix Popover anchored under the chip (add dependency @radix-ui/react-popover ^1.3.1 to web/package.json) containing: a text input 'owner/name' with an Open button (Enter submits), the list of recently used repos (newest first, max 8, the current one marked with a check, each with a small remove button), and an inline error line. Esc or click outside closes it. All copy in English, dark tokens from docs/panel-design.md.
+  Store (web/src/core/store.tsx): add `recentRepos: string[]` (localStorage key bp_repos, JSON array, wrapped in try/catch via core/storage), `switchRepo(repo: string): boolean` and `forgetRepo(repo: string): void`. switchRepo validates with ^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$ (returns false and does not change anything when invalid), then sets the repo (existing setRepo behaviour, also saved under bp_repo), moves it to the front of recentRepos, clears selection, search and filters, and updates the page URL with history.replaceState so that ?repo=owner/name matches (initialRepo reads the URL first, so a stale ?repo= would otherwise win after reload). The state query key already includes the repo, so polling restarts for the new repo; keep the previous state hidden while the new one loads (no flash of the old graph).
+  If the Worker answers 403 or 404 for the new repo the main area already shows the error; the switcher stays usable so the user can pick another repo. Include the current repo in recentRepos on first load.
+  Header.tsx: replace the static chip with <RepoSwitcher/> (web/src/shell/RepoSwitcher.tsx). Keep the mock-mode behaviour (demo/panel).
+  Tests: store switchRepo (valid, invalid, recents order and cap, URL updated, selection cleared), RepoSwitcher (opens, lists recents, Enter switches, invalid input shows an error, remove button forgets), and keep web/src/shell/header.test.tsx green.
+inputs: []
+after: [C-004, C-012, C-007, C-013, C-017]
+provides:
+  - "web/src/core/store.tsx: usePanel().recentRepos, switchRepo(repo): boolean, forgetRepo(repo)"
+  - "web/src/shell/RepoSwitcher.tsx default RepoSwitcher"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+  - web/src/shell/Header.tsx
+allowed_paths:
+  - web/package.json
+  - web/src/core/store.tsx
+  - web/src/core/store.test.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/RepoSwitcher.tsx
+  - web/src/shell/repoSwitcher.test.tsx
+  - web/src/shell/header.test.tsx
+outputs:
+  - web/package.json
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/shell/RepoSwitcher.tsx
+  - web/src/shell/repoSwitcher.test.tsx
+  - web/src/core/store.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Do not commit a lockfile (CI runs npm install). Only owner/name repos matching the regex are accepted; the Worker enforces ALLOWED_REPOS. Never put the repo in anything but the URL query and localStorage.

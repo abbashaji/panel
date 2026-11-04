@@ -1,0 +1,31 @@
+id: C-021
+title: Search cells lists every cell in a scroll view
+type: normal
+priority: 5
+goal: |
+  Clicking 'Search cells' in the header (or Ctrl+K) opens the search dialog. Today it shows nothing useful until you type and caps results at 8. Change web/src/shell/Palette.tsx so that:
+  - The moment the dialog opens, ALL cells are listed in a scrollable list directly under the search box (max height about 60vh, overflow-y auto), ordered by wave then id, regardless of the sidebar filters. A small caption under the box shows 'N cells' (or 'M of N' while filtering).
+  - Typing filters the list live by id, title or status label (case-insensitive, 'merged' finds done cells, 'expired' finds lease expired cells); no cap on the number of results; empty result shows 'No matching cells'.
+  - Each row shows the id (mono), the title, the wave ('Wave 2') and the status as icon + label (StatusIcon from core/Icon). The row of the active cell is highlighted.
+  - ArrowUp/ArrowDown move the active row and keep it scrolled into view (guard scrollIntoView, jsdom lacks it); Home/End jump to the first/last; Enter or click selects the cell (usePanel().select) and closes the dialog; Esc closes.
+  - Keep the combobox/listbox/option roles and the existing aria attributes so the current Ctrl+K test keeps working.
+  Tests in web/src/shell/palette.test.tsx: opens with every cell listed (use the mock state, 14 cells), typing narrows, status label search works, arrow keys + Enter select the right cell, click selects, the list container is scrollable (overflow-y auto), no cap at 8.
+inputs: []
+after: [C-007, C-013, C-017]
+provides:
+  - "web/src/shell/Palette.tsx default Palette({open, onOpenChange}) listing all cells"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+  - web/src/shell/Palette.tsx
+allowed_paths:
+  - web/src/shell/Palette.tsx
+  - web/src/shell/palette.test.tsx
+outputs:
+  - web/src/shell/Palette.tsx
+  - web/src/shell/palette.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Palette.tsx is rendered by shell/index.tsx; do not edit that file (C-020 owns it) or shell.test.tsx. The Palette must still work when usePanel() is mocked with only {state, select}.

@@ -1,0 +1,44 @@
+id: C-020
+title: Hide and show buttons for both side bars and the activity panel
+type: normal
+priority: 5
+goal: |
+  Each of the three panels gets a visible hide and show control: the left sidebar, the right inspector and the bottom live activity panel. State lives in the Shell (no store change) and is saved in localStorage key bp_panels as JSON {sidebar, inspector, activity} booleans (true = visible; default all true; try/catch via core/storage).
+  - Hook web/src/shell/usePanelVisibility.ts: returns {visible, toggle(name), show(name), hide(name)} and persists. Keyboard: Ctrl+B toggles the sidebar, Ctrl+Alt+I the inspector, Ctrl+J the activity panel (ignore while typing in an input).
+  - Component web/src/shell/PanelToggle.tsx: small icon button (chevron) with aria-label 'Hide sidebar' / 'Show sidebar' (same for inspector, activity), aria-expanded and aria-controls, title with the shortcut, 28px hit area, focus ring.
+  - Sidebar.tsx: a hide button in the sidebar header; when hidden the sidebar column collapses to a 28px rail on the left that holds only the show button.
+  - Inspector (the aside prop passed by App.tsx): Shell wraps it, so App.tsx is not changed: a hide button at the top-left edge of the inspector; when hidden a 28px rail on the right with the show button. The inspector content is not rendered while hidden.
+  - ActivityPanel.tsx: a hide chevron in the panel header; when hidden it becomes a 36px bar 'LIVE ACTIVITY (n)' with the show chevron.
+  - The center column grows into the freed space; the graph re-measures through React Flow's ResizeObserver (check that the graph still fills the area). Transitions are short and disabled for prefers-reduced-motion.
+  - Add chevron icons (chevron-left, chevron-right, chevron-up, chevron-down) to web/src/core/Icon.tsx.
+  Tests: hook persistence and defaults, each toggle button hides and restores its panel, keyboard shortcuts, rails show only the show button, aria-expanded values, and shell.test.tsx stays green.
+inputs: []
+after: [C-007, C-013, C-017, C-012]
+provides:
+  - "web/src/shell/usePanelVisibility.ts, web/src/shell/PanelToggle.tsx"
+read:
+  - docs/panel-design.md
+  - docs/decisions.md
+  - web/src/shell/index.tsx
+allowed_paths:
+  - web/src/shell/index.tsx
+  - web/src/shell/Sidebar.tsx
+  - web/src/shell/ActivityPanel.tsx
+  - web/src/shell/PanelToggle.tsx
+  - web/src/shell/usePanelVisibility.ts
+  - web/src/shell/panels.test.tsx
+  - web/src/shell/shell.test.tsx
+  - web/src/core/Icon.tsx
+outputs:
+  - web/src/shell/index.tsx
+  - web/src/shell/Sidebar.tsx
+  - web/src/shell/ActivityPanel.tsx
+  - web/src/shell/PanelToggle.tsx
+  - web/src/shell/usePanelVisibility.ts
+  - web/src/shell/panels.test.tsx
+  - web/src/core/Icon.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Do not touch Header.tsx, Palette.tsx or store.tsx (other cells own them). Keep file names exactly as they are on main (ActivityPanel.tsx, activity.ts): Windows is case-insensitive.
