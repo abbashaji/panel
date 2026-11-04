@@ -1,9 +1,51 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PanelCell, PanelDepend } from '../core/types';
 import { visibleCells, type CellFilters } from '../shell/filter';
 import { Banner, bannerParts, bannerText, showBanner } from './Banner';
+import GraphView from './index';
 import { badgeRules, cellsLabel, initials, layoutCells, metaLine, shaLabel } from './layout';
+
+// jsdom lacks what React Flow measures with.
+class RO {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as any).ResizeObserver ??= RO;
+(globalThis as any).DOMMatrixReadOnly ??= class {
+  m22 = 1;
+  constructor(_t?: string) {}
+};
+
+const h = vi.hoisted(() => {
+  const select = vi.fn();
+  const clearSelection = vi.fn();
+  const start = vi.fn();
+  const open = vi.fn();
+  const panel = {
+    state: { cells: [] as unknown[], bottleneck: null },
+    repo: 'demo/panel',
+    selection: [] as string[],
+    search: '',
+    statusFilter: [] as string[],
+    criticalOnly: false,
+    hideMerged: false,
+    theme: 'dark',
+    launcher: { owner: () => null, start, open },
+    actions: { requestRelease: vi.fn() },
+    select,
+    clearSelection,
+    moveSelection: vi.fn(),
+  };
+  return { panel, select, clearSelection, start, open };
+});
+
+vi.mock('../core/store', async (orig) => {
+  const real = await orig<typeof import('../core/store')>();
+  return { ...real, usePanel: () => h.panel };
+});
 
 const impl = (id: string): PanelDepend => ({ id, kind: 'implementation' });
 
