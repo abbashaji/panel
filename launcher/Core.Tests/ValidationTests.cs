@@ -38,6 +38,18 @@ public class ValidationTests
     }
 
     [Theory]
+    [InlineData("blueprint://start/?repo=a/b&cell=C-001&who=x")]
+    [InlineData("blueprint://open/?repo=a/b&cell=C-001")]
+    public void AcceptsTheSingleSlashWindowsAddsAfterTheCommand(string url) =>
+        Assert.True(ProtocolParser.Parse(url).Ok);
+
+    [Theory]
+    [InlineData("blueprint://start//?repo=a/b&cell=C-001&who=x")]
+    [InlineData("blueprint://start/x?repo=a/b&cell=C-001&who=x")]
+    public void StillRejectsAnyOtherPathAfterTheCommand(string url) =>
+        Assert.False(ProtocolParser.Parse(url).Ok);
+
+    [Theory]
     [InlineData("")]
     [InlineData("blueprint://")]
     [InlineData("blueprint://start")]
@@ -45,7 +57,6 @@ public class ValidationTests
     [InlineData("BLUEPRINT://start?repo=a/b&cell=C-001&who=x")]
     [InlineData("http://start?repo=a/b&cell=C-001&who=x")]
     [InlineData("blueprint://evil?repo=a/b&cell=C-001&who=x")]
-    [InlineData("blueprint://start/?repo=a/b&cell=C-001&who=x")]
     [InlineData("blueprint://start?repo=a/b&cell=C-001")]
     [InlineData("blueprint://start?repo=a/b&cell=C-001&cell=C-002&who=x")]
     [InlineData("blueprint://start?repo=a/b&repo=c/d&cell=C-001&who=x")]
