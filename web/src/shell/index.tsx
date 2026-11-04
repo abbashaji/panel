@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import Activity from "./Activity";
+import Activity from "./ActivityPanel";
 import Header from "./Header";
 import Palette from "./Palette";
 import Settings from "./Settings";
