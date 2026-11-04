@@ -64,7 +64,7 @@ describe("Header", () => {
 
 describe("Header Run ready button", () => {
   const withReady = (...ids: string[]) =>
-    ({ ...STATE, cells: [...STATE.cells, ...ids.map((id) => mk(id, "ready"))] }) as unknown as PanelState;
+    ({ ...STATE, cells: [...STATE.cells, ...ids.map((id) => ({ ...mk(id, "ready"), title: `Title of ${id}` }))] }) as unknown as PanelState;
 
   it("is hidden when no cell is ready", () => {
     render(<Header onSearch={() => {}} />);
