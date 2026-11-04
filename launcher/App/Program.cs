@@ -59,7 +59,13 @@ internal static class Program
     internal static string? FindBrowser(string browser)
     {
         if (!BrowserCatalog.IsKnown(browser)) return null;
-        return new BrowserExeLocator().Find(browser);
+        var roots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            LocalAppData,
+        }.Where(r => !string.IsNullOrEmpty(r));
+        return new BrowserExeLocator(roots).Find(browser);
     }
 
     /// <summary>Starts the browser with an argument list. Never a shell string.</summary>
@@ -70,7 +76,7 @@ internal static class Program
         Process.Start(psi)?.Dispose();
     }
 
-    internal static string DisplayBrowser(string browser) => BrowserCatalog.Get(browser)?.Name ?? browser;
+    internal static string DisplayBrowser(string browser) => BrowserCatalog.Get(browser)?.DisplayName ?? browser;
 
     /// <summary>Last browser and profile folder picked, or null.</summary>
     internal static (string Browser, string Folder)? LoadLastChoice()
