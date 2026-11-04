@@ -166,8 +166,13 @@ public class ValidationTests
             }
             Assert.True(ProtocolParser.IsValidRepo(r.Repo));
             if (r.Kind == CommandKind.Sync) Assert.All(r.Merged, m => Assert.True(ProtocolParser.IsValidCell(m)));
+            else if (r.Kind == CommandKind.StartMany)
+            {
+                Assert.InRange(r.Cells.Count, 1, 12);
+                Assert.All(r.Cells, c => Assert.True(ProtocolParser.IsValidCell(c)));
+            }
             else Assert.True(ProtocolParser.IsValidCell(r.Cell));
-            if (r.Kind == CommandKind.Start) Assert.True(ProtocolParser.IsValidWho(r.Who));
+            if (r.Kind is CommandKind.Start or CommandKind.StartMany) Assert.True(ProtocolParser.IsValidWho(r.Who));
         }
     }
 
@@ -252,5 +257,125 @@ public class ValidationTests
     public void LaunchCommandRejectsBadUrl(string url)
     {
         Assert.Throws<ArgumentException>(() => LaunchCommand.Build("chrome.exe", "Default", url));
+    }
+
+    private const string ManyBase = "blueprint://startmany?repo=abbashaji/panel&who=Abbas&cells=";
+
+    [Fact]
+    public void StartManyAcceptsOneAndTwelveIds()
+    {
+        var one = ProtocolParser.Parse(ManyBase + "C-001");
+        Assert.True(one.Ok, one.Reason);
+        Assert.Equal(CommandKind.StartMany, one.Kind);
+        Assert.Equal("abbashaji/panel", one.Repo);
+        Assert.Equal("Abbas", one.Who);
+        Assert.Equal(new[] { "C-001" }, one.Cells);
+
+        var ids = Enumerable.Range(1, 12).Select(i => $"C-{i:000}").ToArray();
+        var twelve = ProtocolParser.Parse(ManyBase + string.Join(",", ids));
+        Assert.True(twelve.Ok, twelve.Reason);
+        Assert.Equal(ids, twelve.Cells);
+    }
+
+    [Fact]
+    public void StartManyAcceptsTrailingSlashKeyOrderAndOneEncodedComma()
+    {
+        var slash = ProtocolParser.Parse("blueprint://startmany/?repo=a/b&who=x&cells=C-001,C-002");
+        Assert.True(slash.Ok, slash.Reason);
+        Assert.Equal(new[] { "C-001", "C-002" }, slash.Cells);
+        var order = ProtocolParser.Parse("blueprint://startmany?cells=C-003&who=x&repo=a/b");
+        Assert.True(order.Ok, order.Reason);
+        var enc = ProtocolParser.Parse("blueprint://startmany?repo=a/b&who=x&cells=C-001%2CC-002");
+        Assert.True(enc.Ok, enc.Reason);
+        Assert.Equal(new[] { "C-001", "C-002" }, enc.Cells);
+    }
+
+    [Fact]
+    public void StartManyAcceptsMaximumLengthUrl()
+    {
+        var ids = string.Join(",", Enumerable.Range(1, 12).Select(i => $"C-{i:00000}"));
+        var url = $"blueprint://startmany?repo={new string('a', 100)}/{new string('b', 100)}&who={new string('w', 40)}&cells={ids}";
+        Assert.True(url.Length <= ProtocolParser.MaxUrlLength);
+        var r = ProtocolParser.Parse(url);
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal(12, r.Cells.Count);
+    }
+
+    [Fact]
+    public void StartManyRejectsThirteenIds()
+    {
+        var ids = string.Join(",", Enumerable.Range(1, 13).Select(i => $"C-{i:000}"));
+        var r = ProtocolParser.Parse(ManyBase + ids);
+        Assert.False(r.Ok);
+        Assert.Contains("too many", r.Reason);
+    }
+
+    [Fact]
+    public void StartManyRejectsDuplicatesWithAClearReason()
+    {
+        var r = ProtocolParser.Parse(ManyBase + "C-001,C-002,C-001");
+        Assert.False(r.Ok);
+        Assert.Contains("duplicate", r.Reason);
+    }
+
+    [Theory]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001,C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%2CC-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001,x")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-01")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-123456")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=c-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001,,C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001,")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=,C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001, C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%20C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%2C%20C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%252CC-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%2C%2CC-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%2C")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%00")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%0AC-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001;C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001+C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001%3BC-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001,C-002%2C%2C")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001&cells=C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001&extra=1")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cell=C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cell=C-001&cells=C-002")]
+    [InlineData("blueprint://startmany?repo=a/b&cells=C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=&cells=C-001")]
+    [InlineData("blueprint://startmany?who=x&cells=C-001")]
+    [InlineData("blueprint://startmany?repo=a&who=x&cells=C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x%C3%A9&cells=C-001")]
+    [InlineData("blueprint://startmany//?repo=a/b&who=x&cells=C-001")]
+    [InlineData("blueprint://startmany/x?repo=a/b&who=x&cells=C-001")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001#frag")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001\n")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001\u00e9")]
+    [InlineData("blueprint://startmany?repo=a/b&who=x&cells=C-001=C-002")]
+    [InlineData("blueprint://start?repo=a/b&who=x&cells=C-001")]
+    [InlineData("blueprint://start?repo=a/b&cell=C-001&who=x&cells=C-002")]
+    [InlineData("blueprint://open?repo=a/b&cell=C-001&cells=C-002")]
+    [InlineData("blueprint://sync?repo=a/b&merged=C-001&cells=C-002")]
+    public void StartManyRejectsMalformedOrHostile(string url)
+    {
+        var r = ProtocolParser.Parse(url);
+        Assert.False(r.Ok, url);
+        Assert.False(string.IsNullOrEmpty(r.Reason));
+    }
+
+    [Fact]
+    public void StartManyRejectsOverlongUrl()
+    {
+        var r = ProtocolParser.Parse(ManyBase + "C-001&x=" + new string('a', 400));
+        Assert.False(r.Ok);
+        Assert.Contains("long", r.Reason);
+        var ids = string.Join(",", Enumerable.Range(1, 12).Select(i => $"C-{i:00000}"));
+        var padded = $"blueprint://startmany?repo={new string('a', 100)}/{new string('b', 100)}&who={new string('w', 40)}&cells={ids}";
+        Assert.False(ProtocolParser.Parse(padded + new string('0', ProtocolParser.MaxUrlLength - padded.Length + 1)).Ok);
+        Assert.Equal(CommandKind.Start, ProtocolParser.Parse("blueprint://start?repo=a/b&cell=C-001&who=x").Kind);
     }
 }
