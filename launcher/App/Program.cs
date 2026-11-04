@@ -76,7 +76,8 @@ internal static class Program
         Process.Start(psi)?.Dispose();
     }
 
-    internal static string DisplayBrowser(string browser) => BrowserCatalog.Get(browser)?.DisplayName ?? browser;
+    internal static string DisplayBrowser(string browser)
+        => browser.Length == 0 ? browser : char.ToUpperInvariant(browser[0]) + browser[1..];
 
     /// <summary>Last browser and profile folder picked, or null.</summary>
     internal static (string Browser, string Folder)? LoadLastChoice()
