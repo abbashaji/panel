@@ -48,7 +48,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const saved = () => JSON.parse(window.localStorage.getItem(PANELS_KEY) ?? "null");
-const key = (init: KeyboardEventInit, target: EventTarget = window) => fireEvent.keyDown(target, init);
+const key = (init: KeyboardEventInit, target: Window | Element = window) => fireEvent.keyDown(target, init);
 
 function renderShell() {
   return render(
