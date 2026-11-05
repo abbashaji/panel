@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace BlueprintLauncher.Core;
 
-public enum CommandKind { Start, Open, Sync, StartMany }
+public enum CommandKind { Start, Open, Sync, StartMany, Steward }
 
 /// <summary>Typed result of parsing a blueprint:// URL. Ok=false carries a rejection reason.</summary>
 public sealed record ParseResult
@@ -32,6 +32,7 @@ public static class ProtocolParser
     private static readonly string[] OpenKeys = { "repo", "cell" };
     private static readonly string[] SyncKeys = { "repo", "merged" };
     private static readonly string[] StartManyKeys = { "repo", "who", "cells" };
+    private static readonly string[] StewardKeys = { "repo", "who" };
 
     // ASCII-only on purpose (same meaning as a JavaScript \w).
     private static readonly Regex RepoRx = new(@"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\z", RegexOptions.CultureInvariant);
@@ -69,6 +70,7 @@ public static class ProtocolParser
             case "open": kind = CommandKind.Open; keys = OpenKeys; break;
             case "sync": kind = CommandKind.Sync; keys = SyncKeys; break;
             case "startmany": kind = CommandKind.StartMany; keys = StartManyKeys; break;
+            case "steward": kind = CommandKind.Steward; keys = StewardKeys; break;
             default: return ParseResult.Reject("unknown command");
         }
         if (query.Length == 0) return ParseResult.Reject("empty query");
@@ -104,6 +106,13 @@ public static class ProtocolParser
                 if (!IsValidCell(id)) return ParseResult.Reject("invalid merged id");
             }
             return new ParseResult { Ok = true, Kind = kind, Repo = repo, Merged = ids.Distinct(StringComparer.Ordinal).ToList() };
+        }
+
+        if (kind == CommandKind.Steward)
+        {
+            var stewardWho = values["who"];
+            if (!IsValidWho(stewardWho)) return ParseResult.Reject("invalid who");
+            return new ParseResult { Ok = true, Kind = kind, Repo = repo, Who = stewardWho };
         }
 
         if (kind == CommandKind.StartMany)
