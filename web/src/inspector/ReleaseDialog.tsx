@@ -31,7 +31,7 @@ const danger =
 
 /** Confirm dialog for Release / Clear feedback. The admin key lives only in this component's state and is cleared on use and on close. */
 export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
-  const { repo, toast, refresh } = usePanel();
+  const { repo, toast, refresh, refreshAfterAction } = usePanel();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const open = cellId !== null;
@@ -47,9 +47,20 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
     setKey("");
     setBusy(true);
     try {
-      const text = action === "release" ? await release(repo, cellId, typed) : await clearFeedback(repo, cellId, typed);
-      toast(text.slice(0, 200) || "Done.", "success");
-      refresh();
+      const answer = action === "release" ? await release(repo, cellId, typed) : await clearFeedback(repo, cellId, typed);
+      // tolerate a plain string answer
+      const text = typeof answer === "string" ? answer : answer.text;
+      const cell = typeof answer === "string" ? undefined : answer.cell;
+      const fallback = action === "release" ? "Released. Ready to resume." : "Feedback cleared.";
+      toast((text || fallback).slice(0, 200), "success");
+      if (cell && typeof refreshAfterAction === "function") {
+        // the cached cell is patched synchronously here, so card and inspector change before the dialog closes
+        void Promise.resolve(
+          refreshAfterAction(cellId, { status: cell.status, resumable: cell.resumable, clearOwner: action === "release" }),
+        ).catch(() => {});
+      } else if (typeof refresh === "function") {
+        void Promise.resolve(refresh()).catch(() => {});
+      }
       onClose();
     } catch (err) {
       const msg =

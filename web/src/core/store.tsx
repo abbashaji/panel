@@ -56,7 +56,10 @@ export interface PanelContextValue {
   /** the API answered 401: show the login screen */
   needsLogin: boolean;
   login(password: string): Promise<void>;
-  refresh(): void;
+  /** refetch the panel state and resolve when the new data is in */
+  refresh(): Promise<void>;
+  /** after release / clear-feedback / reserve: patch the cached cell at once, then refetch (0, 1.5, 4, 8 s) until its status matches */
+  refreshAfterAction(cellId: string, expected: ExpectedCell): Promise<void>;
 
   selection: string[];
   setSelection(ids: string[]): void;
@@ -124,6 +127,35 @@ function initialRecent(current: string): string[] {
 }
 export const POLL_MS = 5000;
 
+/** What the Worker said the cell looks like after an action. */
+export interface ExpectedCell {
+  status: PanelStatus;
+  resumable?: boolean;
+  /** also clear reservedBy (release) */
+  clearOwner?: boolean;
+}
+
+/** Refetch times after an action, in ms from the action. GitHub can serve the old branch for a few seconds after a write. */
+export const ACTION_RETRY_MS: number[] = [0, 1500, 4000, 8000];
+
+interface Pending {
+  expected: ExpectedCell;
+  matched: boolean;
+}
+
+function patchCell(s: PanelState, id: string, e: ExpectedCell): PanelState {
+  return {
+    ...s,
+    cells: s.cells.map((c) => {
+      if (c.id !== id) return c;
+      const next: Record<string, unknown> = { ...c, status: e.status };
+      if (e.resumable !== undefined) next.resumable = e.resumable;
+      if (e.clearOwner) next.reservedBy = null;
+      return next as unknown as typeof c;
+    }),
+  };
+}
+
 function initialRepo(): string {
   const fromUrl = new URLSearchParams(window.location.search).get("repo");
   return (fromUrl ?? readStore(REPO_KEY) ?? "").trim();
@@ -180,9 +212,27 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   }, []);
   const forgetRepo = useCallback((r: string) => setRecentRepos((l) => l.filter((x) => x !== r)), []);
 
+  // cells whose status we expect after an action; a refetch that still shows the old status is patched, not shown
+  const pendingRef = useRef(new Map<string, Pending>());
+  const runsRef = useRef(new Set<() => void>());
+
   const query = useQuery({
     queryKey: ["panel-state", repo],
-    queryFn: () => getState(repo),
+    queryFn: async () => {
+      const s = await getState(repo);
+      let out = s;
+      for (const [id, p] of pendingRef.current) {
+        const c = s.cells.find((x) => x.id === id);
+        if (!c) continue;
+        if (c.status === p.expected.status) {
+          p.matched = true;
+          pendingRef.current.delete(id);
+        } else {
+          out = patchCell(out, id, p.expected);
+        }
+      }
+      return out;
+    },
     enabled: repo !== "",
     retry: false,
     // live updates by polling every 5 s; stop while the login screen is shown
@@ -190,6 +240,63 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   });
   const state = query.data ?? null;
   const needsLogin = query.error instanceof ApiError && query.error.status === 401;
+
+  // a repo change or unmount stops every running retry series and forgets pending expectations
+  useEffect(() => {
+    const runs = runsRef.current;
+    const pending = pendingRef.current;
+    pending.clear();
+    return () => {
+      for (const cancel of [...runs]) cancel();
+      runs.clear();
+      pending.clear();
+    };
+  }, [repo]);
+
+  const refreshAfterAction = useCallback(
+    (cellId: string, expected: ExpectedCell): Promise<void> => {
+      const key = ["panel-state", repo];
+      const entry: Pending = { expected, matched: false };
+      pendingRef.current.set(cellId, entry);
+      // optimistic patch, applied synchronously
+      qc.setQueryData<PanelState>(key, (old) => (old ? patchCell(old, cellId, expected) : old));
+
+      let cancelled = false;
+      let wake: (() => void) | null = null;
+      let timer: number | undefined;
+      const cancel = () => {
+        cancelled = true;
+        if (timer !== undefined) window.clearTimeout(timer);
+        wake?.();
+      };
+      runsRef.current.add(cancel);
+      const started = Date.now();
+      return (async () => {
+        try {
+          for (const at of ACTION_RETRY_MS) {
+            const wait = at - (Date.now() - started);
+            if (wait > 0) {
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+                timer = window.setTimeout(resolve, wait);
+              });
+            }
+            if (cancelled || (!entry.matched && pendingRef.current.get(cellId) !== entry)) return;
+            try {
+              await qc.refetchQueries({ queryKey: key, exact: true });
+            } catch {
+              /* try again at the next time */
+            }
+            if (cancelled || entry.matched) return;
+          }
+        } finally {
+          runsRef.current.delete(cancel);
+          if (pendingRef.current.get(cellId) === entry) pendingRef.current.delete(cellId);
+        }
+      })();
+    },
+    [qc, repo],
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -280,7 +387,10 @@ export function PanelProvider({ children }: { children: ReactNode }) {
         await apiLogin(password);
         await qc.invalidateQueries({ queryKey: ["panel-state"] });
       },
-      refresh: () => void query.refetch(),
+      refresh: async () => {
+        await query.refetch();
+      },
+      refreshAfterAction,
 
       selection,
       setSelection: (ids) => dispatch({ type: "set", ids }),
@@ -318,7 +428,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       actions,
       registerActions,
     }),
-    [repo, recentRepos, switchRepo, forgetRepo, state, query, needsLogin, qc, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
+    [repo, recentRepos, switchRepo, forgetRepo, state, query, needsLogin, qc, refreshAfterAction, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
