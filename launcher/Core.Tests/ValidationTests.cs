@@ -18,6 +18,27 @@ public class ValidationTests
     }
 
     [Fact]
+    public void ParsesSteward()
+    {
+        var r = ProtocolParser.Parse("blueprint://steward?repo=abbashaji/panel&who=Abbas");
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal(CommandKind.Steward, r.Kind);
+        Assert.Equal("abbashaji/panel", r.Repo);
+        Assert.Equal("Abbas", r.Who);
+        Assert.Equal("", r.Cell);
+    }
+
+    [Fact]
+    public void ParsesStewardWithOneTrailingSlash()
+    {
+        var r = ProtocolParser.Parse("blueprint://steward/?repo=a/b&who=Ann%20Lee");
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal(CommandKind.Steward, r.Kind);
+        Assert.Equal("Ann Lee", r.Who);
+        Assert.False(ProtocolParser.Parse("blueprint://steward//?repo=a/b&who=Ann").Ok);
+    }
+
+    [Fact]
     public void ParsesOpenAndSync()
     {
         var o = ProtocolParser.Parse("blueprint://open?repo=a/b&cell=C-001");
