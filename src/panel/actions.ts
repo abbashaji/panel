@@ -10,12 +10,13 @@ import { createGitHubApi } from "../github.ts";
 import { isFeedback, isRelease, parseTrailers } from "../trailers.ts";
 import { engineOptions, toolHandlers } from "../tools.ts";
 import { json, readBounded, requirePanelAuth, timingSafeEqual } from "./auth.ts";
-import { buildPanelState, clearPanelCache } from "./state.ts";
-import type { PanelEnv, PanelStatus, ReserveResult } from "./types.ts";
+import { STEWARD_BRANCH, parseLease, readTip, releaseSteward, stewardStatus } from "../steward.ts";
+import { buildPanelState, clearPanelCache, toPanelSteward } from "./state.ts";
+import type { PanelEnv, PanelStatus, PanelSteward, ReserveResult } from "./types.ts";
 
 const CELL_RE = /^C-\d{3,5}$/;
 const WHO_RE = /^[\w .-]{1,40}$/;
-const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback"]);
+const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback", "/panel/api/steward-release"]);
 
 /** The cell after the write, computed by the same logic as GET /panel/api/state. */
 export interface CellInfo {
@@ -112,6 +113,30 @@ async function defaultTakeover(env: PanelEnv, repo: string, cell: string, adminK
   return h.takeover(mode === "release" ? { repo, cell_id: cell, admin_key: adminKey, handoff: true } : { repo, cell_id: cell, admin_key: adminKey, clear_feedback: true });
 }
 
+/** Owner override: handoff-release the Steward lease whoever holds it (the holder's own session is read from the lease). */
+async function releaseStewardAsOwner(env: PanelEnv, repo: string, deps: ActionDeps, api: GitHubApi): Promise<{ ok: boolean; text: string }> {
+  const opts = deps.opts ?? engineOptions(env);
+  const tip = await readTip(api, repo, STEWARD_BRANCH);
+  if (!tip) return { ok: false, text: "NO_STEWARD: nobody holds the Steward role" };
+  const session = parseLease(tip.message).session;
+  return releaseSteward(api, repo, session, true, { mainBranch: opts.mainBranch, now: opts.now, uuid: opts.uuid });
+}
+
+/** The Steward as the panel state now shows it. Never fails: falls back to the bare lease, then to none. */
+async function stewardAfter(env: PanelEnv, repo: string, deps: ActionDeps, api: GitHubApi): Promise<PanelSteward> {
+  clearPanelCache();
+  try {
+    return (await buildPanelState(env, repo, { api, opts: deps.opts })).steward;
+  } catch {
+    try {
+      const opts = deps.opts ?? engineOptions(env);
+      return toPanelSteward(stewardStatus(await readTip(api, repo, STEWARD_BRANCH), opts.now()), 0);
+    } catch {
+      return toPanelSteward({ state: "none" }, 0);
+    }
+  }
+}
+
 export async function handlePanelAction(
   req: Request,
   env: PanelEnv,
@@ -143,6 +168,16 @@ export async function handlePanelAction(
   if (typeof body.repo !== "string" || !body.repo) return json(400, { error: "bad_repo" });
   const r = resolveRepo(env, body.repo);
   if ("error" in r) return json(400, { error: "bad_repo" });
+  if (path === "/panel/api/steward-release") {
+    try {
+      const api = deps.api ?? createGitHubApi(env.GITHUB_TOKEN);
+      const out = await releaseStewardAsOwner(env, r.repo, deps, api);
+      const steward = await stewardAfter(env, r.repo, deps, api);
+      return json(200, { ok: out.ok, result: String(out.text).replace(/\s+/g, " ").slice(0, 200), steward });
+    } catch {
+      return json(502, { error: "upstream_error" });
+    }
+  }
   const cell = body.cell_id;
   if (typeof cell !== "string" || !CELL_RE.test(cell)) return json(400, { error: "bad_cell_id" });
 

@@ -16,8 +16,9 @@ import {
   transitiveDependents,
   waves,
 } from "../plan.ts";
+import { STEWARD_BRANCH, readTip, stewardStatus, type LeaseTip, type StewardStatus } from "../steward.ts";
 import { isFeedback, isRelease, parseTrailers, subjectOf } from "../trailers.ts";
-import type { CellType, PanelCell, PanelCounts, PanelDepend, PanelEnv, PanelState, PanelStatus } from "./types.ts";
+import type { CellType, PanelCell, PanelCounts, PanelDepend, PanelEnv, PanelState, PanelSteward, PanelStatus } from "./types.ts";
 
 export interface PanelDeps {
   api?: GitHubApi;
@@ -67,12 +68,36 @@ async function reservedBy(env: PanelEnv, repo: string, id: string): Promise<stri
   }
 }
 
-/** reservedBy is advisory KV state that changes without any git change, so it is never served from the cache. */
-async function withReservations(env: PanelEnv, repo: string, state: PanelState): Promise<PanelState> {
+export function toPanelSteward(st: StewardStatus, problems: number): PanelSteward {
+  return {
+    status: st.state,
+    holder: st.state === "none" ? null : st.holder,
+    minutesLeft: st.state === "active" ? st.minutesLeft : null,
+    expiredMinutesAgo: st.state === "expired" ? st.expiredMinutesAgo : null,
+    problems,
+  };
+}
+
+/** The Steward lease is outside cell/, so it may be missing from the snapshot: read it directly then. Never fails. */
+async function stewardOf(api: GitHubApi, repo: string, snap: { branches: Record<string, unknown> }, leaseMinutes: number, now: number, problems: number): Promise<PanelSteward> {
+  let tip = (snap.branches?.[STEWARD_BRANCH] as LeaseTip | undefined) ?? null;
+  if (!tip) {
+    try {
+      tip = await readTip(api, repo, STEWARD_BRANCH);
+    } catch {
+      tip = null;
+    }
+  }
+  const lm = Number.isInteger(leaseMinutes) && leaseMinutes > 0 ? leaseMinutes : 60;
+  return toPanelSteward(stewardStatus(tip, now, lm), problems);
+}
+
+/** reservedBy and the Steward lease age change without any git change, so they are never served from the cache. */
+async function withReservations(env: PanelEnv, repo: string, state: PanelState, steward?: PanelSteward): Promise<PanelState> {
   const cells = await Promise.all(
     state.cells.map(async (c) => ({ ...c, reservedBy: c.status === "done" ? null : await reservedBy(env, repo, c.id) })),
   );
-  return { ...state, cells };
+  return { ...state, ...(steward ? { steward } : {}), cells };
 }
 
 export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDeps = {}): Promise<PanelState> {
@@ -87,12 +112,16 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
   if (snap.blueprint === null) throw new Error("NOT_INITIALIZED: this repository has no Blueprint (blueprint.yaml)");
   const plan = loadPlan(repo, snap, opts);
   if (plan.errors.length) throw new Error(`INVALID_PLAN: ${plan.errors[0]}`);
+  const leaseMinutes = Number(plan.cfg.lease_minutes);
 
   const tips = Object.keys(snap.branches).sort().map((n) => `${n}:${snap.branches[n].oid}`);
   const key = [snap.mainOid, ...tips].join("|");
   const ck = `${repo}@${opts.mainBranch}`;
   const hit = cache.get(ck);
-  if (hit && hit.key === key && now - hit.at < TTL_MS) return withReservations(env, repo, hit.state);
+  if (hit && hit.key === key && now - hit.at < TTL_MS) {
+    const fresh = await stewardOf(api, repo, snap, leaseMinutes, now, hit.state.steward?.problems ?? 0);
+    return withReservations(env, repo, hit.state, fresh);
+  }
 
   const { cells, cfg } = plan;
   const merged = mergedOf(snap);
@@ -239,6 +268,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
     counts,
     cells: cellsOut,
     bottleneck,
+    steward: await stewardOf(api, repo, snap, leaseMinutes, now, human.size + split.size),
   };
   cache.set(ck, { key, at: now, state: out });
   return out;
