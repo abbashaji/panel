@@ -24,7 +24,10 @@ async function post(env: any, path: string, body: unknown, deps: ActionDeps, aut
   const req = new Request(`https://x.test${path}`, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
   return handlePanelAction(req, env, ctx, path, deps);
 }
-const ready: ActionDeps = { readiness: async () => ({ ready: true, detail: "ready" }) };
+const ready: ActionDeps = {
+  readiness: async () => ({ ready: true, detail: "ready" }),
+  cellInfo: async (_e, _r, cell) => ({ id: cell, status: "ready", resumable: false }),
+};
 
 test("unknown paths return null", async () => {
   const req = new Request("https://x.test/panel/api/state");
@@ -92,7 +95,7 @@ test("release: wrong or missing admin_key is 403 and takeover is never called", 
 
 test("release: handoff mode, result truncated to 200, key never echoed", async () => {
   let seen: any;
-  const deps: ActionDeps = { takeover: async (_e, repo, cell, key, mode) => ((seen = { repo, cell, key, mode }), "RELEASED C-003: " + "y".repeat(400)) };
+  const deps: ActionDeps = { takeover: async (_e, repo, cell, key, mode) => ((seen = { repo, cell, key, mode }), "RELEASED C-003: " + "y".repeat(400)), cellInfo: async () => null };
   const res = await post(mkEnv(), "/panel/api/release", { repo: REPO, cell_id: "C-003", admin_key: "adm" }, deps);
   assert.equal(res!.status, 200);
   const text = await res!.text();
@@ -123,4 +126,71 @@ test("engine errors become a 502 without details", async () => {
   const res = await post(mkEnv(), "/panel/api/release", { repo: REPO, cell_id: "C-003", admin_key: "adm" }, deps);
   assert.equal(res!.status, 502);
   assert.ok(!(await res!.text()).includes("secret"));
+});
+
+const info = (status: any, resumable = true) => async (_e: any, _r: string, cell: string) => ({ id: cell, status, resumable });
+const adminBody = { repo: REPO, cell_id: "C-003", admin_key: "adm" };
+
+test("release: answer carries cell {id,status,resumable}, old fields stay, reservation is deleted", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: "x" }));
+  const deps: ActionDeps = { takeover: async () => "RELEASED C-003: handed off", cellInfo: info("ready") };
+  const res = await post(mkEnv(kv), "/panel/api/release", adminBody, deps);
+  const text = await res!.text();
+  const j = JSON.parse(text);
+  assert.equal(j.ok, true);
+  assert.match(j.result, /RELEASED/);
+  assert.deepEqual(j.cell, { id: "C-003", status: "ready", resumable: true });
+  assert.equal(kv.m.has(`reserve:${REPO}:C-003`), false);
+  assert.ok(!text.includes("adm"));
+});
+
+test("clear-feedback: RESUME answer deletes the reservation and answers status ready or expired", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: "x" }));
+  const deps: ActionDeps = { takeover: async () => "RESUME C-003 base=abc1234", cellInfo: info("expired") };
+  const res = await post(mkEnv(kv), "/panel/api/clear-feedback", adminBody, deps);
+  const j = await res!.json();
+  assert.equal(j.ok, true);
+  assert.match(j.cell.status, /^(ready|expired)$/);
+  assert.equal(kv.m.has(`reserve:${REPO}:C-003`), false);
+});
+
+test("a failed release keeps the reservation and has no cell", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: "x" }));
+  const deps: ActionDeps = { takeover: async () => "NOT_RUNNING C-003: no branch", cellInfo: info("ready") };
+  const j = await (await post(mkEnv(kv), "/panel/api/release", adminBody, deps))!.json();
+  assert.equal(j.ok, false);
+  assert.equal(j.cell, undefined);
+  assert.equal(kv.m.has(`reserve:${REPO}:C-003`), true);
+});
+
+test("KV failure does not fail release or clear-feedback", async () => {
+  const kv = fakeKv();
+  const broken = { ...kv, get: async () => { throw new Error("kv down"); }, delete: async () => { throw new Error("kv down"); } };
+  const deps: ActionDeps = { takeover: async () => "RELEASED C-003", cellInfo: info("ready") };
+  for (const p of ["/panel/api/release", "/panel/api/clear-feedback"]) {
+    const res = await post(mkEnv(broken as any), p, adminBody, deps);
+    assert.equal(res!.status, 200);
+    const j = await res!.json();
+    assert.equal(j.ok, true);
+    assert.equal(j.cell.status, "ready");
+  }
+});
+
+test("a failing state lookup leaves the answer without cell but still ok", async () => {
+  const deps: ActionDeps = { takeover: async () => "RELEASED C-003", cellInfo: async () => { throw new Error("github down"); } };
+  const res = await post(mkEnv(), "/panel/api/release", adminBody, deps);
+  assert.equal(res!.status, 200);
+  const j = await res!.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.cell, undefined);
+});
+
+test("reserve: answer carries cell.status", async () => {
+  const deps: ActionDeps = { readiness: async () => ({ ready: true, detail: "ready" }), cellInfo: info("expired", true) };
+  const j = await (await post(mkEnv(), "/panel/api/reserve", { repo: REPO, cell_id: "C-003", who: "Ann" }, deps))!.json();
+  assert.equal(j.status, "reserved");
+  assert.deepEqual(j.cell, { id: "C-003", status: "expired", resumable: true });
 });
