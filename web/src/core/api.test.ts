@@ -67,7 +67,7 @@ describe("real API", () => {
     const f = vi.fn(async () => new Response("x".repeat(500), { status: 200 }));
     vi.stubGlobal("fetch", f);
     const out = await release("a/b", "C-004", "secret");
-    expect(out).toHaveLength(200);
+    expect(out.text).toHaveLength(200);
     const [, init] = f.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ repo: "a/b", cell_id: "C-004", admin_key: "secret" });
   });
