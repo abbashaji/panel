@@ -42,6 +42,7 @@ export interface PanelCell {
   allowedPaths: string[];
   provides: string[];
   inputs: string[];
+  resumable?: boolean;
 }
 
 export interface PanelCounts {

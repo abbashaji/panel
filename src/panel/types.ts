@@ -59,6 +59,8 @@ export interface PanelCell {
   allowedPaths: string[];
   provides: string[];
   inputs: string[];
+  /** true for a ready or expired cell whose branch tip is a release/handoff commit, and for a branch whose lease expired */
+  resumable?: boolean;
 }
 
 export interface PanelCounts {

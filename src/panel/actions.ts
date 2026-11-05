@@ -1,20 +1,28 @@
 // Panel actions: POST /panel/api/reserve, /release, /clear-feedback (docs/panel-contracts.md sections 3.3 and 3.4).
 // Returns null for every path this module does not own, so the router answers 404.
 // admin_key is compared to ADMIN_TOKEN timing-safe; it is never stored, logged or echoed.
-import { getReservation, setReservation, type ReserveKv } from "../claim.ts";
+import { clearReservation, getReservation, setReservation, type ReserveKv } from "../claim.ts";
+import type { GitHubApi } from "../api.ts";
 import { claimsFromBranches, computeState, parseRuns } from "../plan.ts";
-import { loadPlan, mergedOf } from "../common.ts";
+import { loadPlan, mergedOf, type EngineOptions } from "../common.ts";
 import { resolveRepo } from "../engine.ts";
 import { createGitHubApi } from "../github.ts";
 import { isFeedback, isRelease, parseTrailers } from "../trailers.ts";
 import { engineOptions, toolHandlers } from "../tools.ts";
 import { json, readBounded, requirePanelAuth, timingSafeEqual } from "./auth.ts";
-import type { PanelEnv, ReserveResult } from "./types.ts";
+import { buildPanelState, clearPanelCache } from "./state.ts";
+import type { PanelEnv, PanelStatus, ReserveResult } from "./types.ts";
 
 const CELL_RE = /^C-\d{3,5}$/;
 const WHO_RE = /^[\w .-]{1,40}$/;
 const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback"]);
 
+/** The cell after the write, computed by the same logic as GET /panel/api/state. */
+export interface CellInfo {
+  id: string;
+  status: PanelStatus;
+  resumable: boolean;
+}
 export interface Readiness {
   ready: boolean;
   detail: string;
@@ -23,6 +31,10 @@ export interface Readiness {
 export interface ActionDeps {
   readiness?: (env: PanelEnv, repo: string, cell: string) => Promise<Readiness>;
   takeover?: (env: PanelEnv, repo: string, cell: string, adminKey: string, mode: "release" | "clear") => Promise<string>;
+  cellInfo?: (env: PanelEnv, repo: string, cell: string, deps: ActionDeps) => Promise<CellInfo | null>;
+  /** used by the default cellInfo (tests) */
+  api?: GitHubApi;
+  opts?: EngineOptions;
 }
 
 async function defaultReadiness(env: PanelEnv, repo: string, id: string): Promise<Readiness> {
@@ -77,6 +89,22 @@ async function defaultReadiness(env: PanelEnv, repo: string, id: string): Promis
   if (has(state.needs_human)) return { ready: false, detail: "needs a human" };
   if (has(state.needs_split)) return { ready: false, detail: "needs to be split" };
   return { ready: false, detail: "not ready" };
+}
+
+async function defaultCellInfo(env: PanelEnv, repo: string, id: string, deps: ActionDeps): Promise<CellInfo | null> {
+  clearPanelCache();
+  const s = await buildPanelState(env, repo, { api: deps.api, opts: deps.opts });
+  const c = s.cells.find((x) => x.id === id);
+  return c ? { id, status: c.status, resumable: c.resumable === true } : null;
+}
+
+/** Never fails the action: when the new state cannot be read the answer simply has no cell. */
+async function cellInfoOf(env: PanelEnv, repo: string, id: string, deps: ActionDeps): Promise<CellInfo | null> {
+  try {
+    return await (deps.cellInfo ?? defaultCellInfo)(env, repo, id, deps);
+  } catch {
+    return null;
+  }
 }
 
 async function defaultTakeover(env: PanelEnv, repo: string, cell: string, adminKey: string, mode: "release" | "clear"): Promise<string> {
@@ -140,11 +168,26 @@ export async function handlePanelAction(
           return json(503, { error: "kv_unavailable" });
         }
       }
-      return out("reserved", `${cell} reserved for ${who} for 10 minutes`);
+      clearPanelCache();
+      const info = await cellInfoOf(env, r.repo, cell, deps);
+      return json(200, { status: "reserved", detail: `${cell} reserved for ${who} for 10 minutes`, ...(info ? { cell: info } : {}) });
     }
     const text = await (deps.takeover ?? defaultTakeover)(env, r.repo, cell, body.admin_key, path === "/panel/api/release" ? "release" : "clear");
     const result = String(text).replace(/\s+/g, " ").slice(0, 200);
-    return json(200, { ok: /^(RELEASED|RESUME)\b/.test(text), result });
+    const ok = /^(RELEASED|RESUME)\b/.test(text);
+    if (!ok) return json(200, { ok, result });
+    // The cell is free again: the old reservation must not keep the old name on it (advisory, errors ignored).
+    const rkv = env.OAUTH_KV as unknown as ReserveKv | undefined;
+    if (rkv) {
+      try {
+        await clearReservation(rkv, r.repo, cell);
+      } catch {
+        /* advisory only */
+      }
+    }
+    clearPanelCache();
+    const info = await cellInfoOf(env, r.repo, cell, deps);
+    return json(200, { ok, result, ...(info ? { cell: info } : {}) });
   } catch {
     return json(502, { error: "upstream_error" });
   }

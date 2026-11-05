@@ -67,6 +67,14 @@ async function reservedBy(env: PanelEnv, repo: string, id: string): Promise<stri
   }
 }
 
+/** reservedBy is advisory KV state that changes without any git change, so it is never served from the cache. */
+async function withReservations(env: PanelEnv, repo: string, state: PanelState): Promise<PanelState> {
+  const cells = await Promise.all(
+    state.cells.map(async (c) => ({ ...c, reservedBy: c.status === "done" ? null : await reservedBy(env, repo, c.id) })),
+  );
+  return { ...state, cells };
+}
+
 export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDeps = {}): Promise<PanelState> {
   const opts = deps.opts ?? defaultOptions(env);
   let api = deps.api;
@@ -84,7 +92,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
   const key = [snap.mainOid, ...tips].join("|");
   const ck = `${repo}@${opts.mainBranch}`;
   const hit = cache.get(ck);
-  if (hit && hit.key === key && now - hit.at < TTL_MS) return hit.state;
+  if (hit && hit.key === key && now - hit.at < TTL_MS) return withReservations(env, repo, hit.state);
 
   const { cells, cfg } = plan;
   const merged = mergedOf(snap);
@@ -185,6 +193,8 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         lock = l;
         if (p) pr = { number: p.number, state: p.merged ? "merged" : p.state === "open" ? "open" : "closed" };
       }
+      // Ready again after a release/handoff, or a branch whose lease ran out: the next claim resumes it.
+      const resumable = !!b && (status === "expired" || (status === "ready" && released.includes(id)));
       const blockedBy = waiting.get(id)?.blocked_by ?? (status === "waiting" && id in sup ? sup[id].filter((x) => !merged.has(x)) : []);
       return {
         id,
@@ -205,6 +215,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         lastCommit: b ? { subject: subjectOf(b.message), next: parseTrailers(b.message).next ?? null, at: b.committedDate } : null,
         reservedBy: status === "done" ? null : await reservedBy(env, repo, id),
         pr,
+        resumable,
         allowedPaths: slist(c, "allowed_paths"),
         provides: slist(c, "provides"),
         inputs: inputsOf(c).map((i) => String(i.from)),
