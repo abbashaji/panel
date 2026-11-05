@@ -1,0 +1,24 @@
+id: C-038
+title: Launcher window starts the Steward in a chosen browser profile
+type: normal
+priority: 6
+goal: |
+  Handle CommandKind.Steward in launcher/App/Program.cs: reuse the single start window (StartForm) in a steward mode: title 'Start the Steward', no cell chip and no 10 minute reservation text, the same icon tiles for the profile, the prompt box shows PromptBuilder.BuildStewardPrompt, the button reads 'Open Steward chat', the footer says the admin key is typed by you in the chat and never passes through the launcher. Launch uses PromptBuilder.BuildStewardUrl and LaunchCommand.Build. No CellRecords entry (the Steward is not a cell). Rejected URLs keep the existing error window.
+inputs: []
+after: [C-009, C-016, C-027, C-028, C-037]
+provides:
+  - "blueprint://steward opens a Steward chat"
+read:
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+allowed_paths:
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+outputs:
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text.

@@ -1,0 +1,40 @@
+id: C-035
+title: Panel state reports the Steward and has a steward release route
+type: normal
+priority: 6
+goal: |
+  - PanelState gets steward: { status: none | active | expired | released, holder: string | null, minutesLeft: number | null, expiredMinutesAgo: number | null, problems: number } built in src/panel/state.ts from stewardStatus (C-033) and the count of needs_human + needs_split cells. Mirror the type in src/panel/types.ts and web/src/core/types.ts (parity test).
+  - POST /panel/api/steward-release { repo, admin_key } in src/panel/actions.ts and src/panel/router.ts: admin gate like release, then handoff-release the steward lease whoever holds it (owner override), answers { ok, result, steward }. clearPanelCache after it.
+  - State stays valid when the repository has no steward branch (status none).
+  - Tests in test/panel_steward.test.ts: all four statuses, problems count, release route admin gate 403, release then state shows released, no key in answers.
+inputs:
+  - from: C-033
+    kind: implementation
+    contract: |
+      src/steward.ts exports stewardStatus(snap, now) and releaseSteward as described in C-033.
+after: [C-000, C-002, C-003, C-004, C-012, C-030, C-033]
+provides:
+  - "PanelState.steward and POST /panel/api/steward-release"
+read:
+  - src/panel/state.ts
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/steward.ts
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - web/src/core/types.ts
+  - test/panel_steward.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - web/src/core/types.ts
+  - test/panel_steward.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Keep every existing state field. Old web clients ignore the new field.

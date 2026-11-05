@@ -1,0 +1,41 @@
+id: C-030
+title: Worker state is fresh right after release clear-feedback and reserve
+type: normal
+priority: 8
+goal: |
+  Fix the server side of 'I released a cell and the panel still shows the old state'. Found causes:
+  1. src/panel/state.ts caches the built state for 60 s under a key made only of git oids. reservedBy comes from KV and is NOT in the key, so reserving, releasing or a reservation expiring stays invisible for up to a minute. Put the reservations (or a cheap version stamp of them) into the cache key, or read reservedBy outside the cache every time.
+  2. src/panel/actions.ts release (handoff) and clear-feedback never delete the KV reservation reserve:<repo>:<cell>, so the old person's name stays on a cell that is free again and next_cell keeps skipping it for 10 minutes. Delete it (clearReservation, errors ignored) after a successful RELEASED or RESUME answer.
+  3. After any successful reserve, release or clear-feedback call clearPanelCache() so the next GET /panel/api/state is rebuilt.
+  4. The action answer carries the new truth: release and clear-feedback return { ok, result, cell: { id, status, resumable } } where status is computed by the same logic as the state route right after the write (status names unchanged) and resumable is true when the branch tip is a release or handoff commit, i.e. the cell comes back as 'ready to resume'. reserve also returns cell.status.
+  5. PanelCell gets an optional resumable: boolean (true for a ready or expired cell whose branch tip is a release or handoff commit, and for a cell with a branch whose lease expired; false otherwise). Mirror it in web/src/core/types.ts (the parity test must stay green).
+  Tests in test/panel_state.test.ts and test/panel_actions.test.ts: reserve then state shows reservedBy at once, release then state shows no reservedBy and resumable true, cache not served after an action, release answer contains cell.status, clear-feedback on a feedback cell answers status ready or expired, KV failure does not fail the action.
+inputs: []
+after: [C-000, C-002, C-003, C-004, C-012]
+provides:
+  - "POST /panel/api/release|clear-feedback|reserve answer includes cell { id, status, resumable }"
+  - "PanelCell.resumable?: boolean"
+read:
+  - src/panel/state.ts
+  - src/panel/actions.ts
+  - src/panel/types.ts
+  - src/claim.ts
+  - docs/panel-contracts.md
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/actions.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+  - test/panel_actions.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/actions.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+  - test/panel_actions.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The Worker answers must still never contain the admin key. Keep the old fields of the action answers so the current web client keeps working until C-031.

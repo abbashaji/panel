@@ -1,0 +1,43 @@
+id: C-032
+title: Ready to resume state is visible and every start path refreshes
+type: normal
+priority: 7
+goal: |
+  Show the states that were invisible and refresh after every write.
+  - A cell with resumable true (C-030) and status ready or expired shows the label 'Ready to resume' with a resume icon instead of plain 'Ready' or 'Lease expired' on the card (graph/layout.ts), in the status chip, sidebar and search (core/status.ts keeps the status ids; add a displayLabel(cell) helper) and in the inspector (inspector/CellDetails.tsx: line 'Ready to resume, the last chat left a handoff', primary button 'Resume' that calls launcher.start).
+  - A reset cell (branch gone, back to ready, resumable false) shows 'Ready' and no holder.
+  - web/src/launch/index.tsx: after reserve (start, start many) and after sendSync call refreshAfterAction or refresh so the card shows the reservation chip at once; a rejected reserve (taken, not_ready) refreshes too because the panel was wrong.
+  - Audit: grep every place that shows status, holder or buttons (graph, inspector, table, shell, launch) and make them read the same helper so no place uses an old status after a refresh. List what was changed in the PR text.
+  - Tests: web/src/core/status.test.ts, web/src/graph/layout.test.ts, new web/src/inspector/resume.test.tsx, web/src/launch/launch.test.tsx.
+inputs: []
+after: [C-004, C-005, C-006, C-010, C-012, C-014, C-015, C-018, C-023, C-024, C-029, C-030, C-031]
+provides:
+  - "displayLabel(cell) and the Ready to resume state in every view"
+read:
+  - web/src/core/status.ts
+  - web/src/graph/layout.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/launch/index.tsx
+allowed_paths:
+  - web/src/core/status.ts
+  - web/src/core/status.test.ts
+  - web/src/graph/layout.ts
+  - web/src/graph/layout.test.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/resume.test.tsx
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+outputs:
+  - web/src/core/status.ts
+  - web/src/core/status.test.ts
+  - web/src/graph/layout.ts
+  - web/src/graph/layout.test.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/resume.test.tsx
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Keep the status filter chips working on the status ids (resumable is a display detail, not a new filter status).

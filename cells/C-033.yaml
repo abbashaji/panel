@@ -1,0 +1,44 @@
+id: C-033
+title: Steward core with lease briefing and notes
+type: normal
+priority: 6
+goal: |
+  Add the Steward, a special role that any stateless chat can take, resume or release like a cell, and that has the admin key to solve problems of other cells so no human is needed. It is NOT a cell in cells/ and never merges.
+  New src/steward.ts (no tool registration here, C-034 does that):
+  - Lease: git branch steward/lease (outside the cell/ namespace; check claimsFromBranches and every cell/ regex ignore it). Its tip is an empty commit whose message has trailers: steward-who, steward-session (random token), steward-at, and release when handed off. Same lease length as lease_minutes (blueprint.yaml). stewardStatus(snap, now) returns none | active | expired | released with holder, minutesLeft or expiredMinutesAgo.
+  - claimSteward(api, repo, who, session?): no branch gives create, active with another session gives STEWARD_BUSY, expired or released gives adopt (resume), same session gives refresh (heartbeat). Race safe with fastForward like tryTakeover.
+  - releaseSteward(api, repo, session, handoff): handoff commit that marks the lease released.
+  - buildBriefing(...): the text the chat gets first. It contains the project name and rules (BLUEPRINT.md and docs/*.md excerpts, bounded), the counts, and the PROBLEM LIST ordered by impact: transitive dependents descending, then critical flag, then age. Problems are needs_human (feedback text), needs_split (attempts), expired cells with attempts of 2 or more, cells whose PR CI failed, and a stuck ready cell nobody takes for over 60 minutes. For each: id, title, why, attempts, last commit subject, dependents count and the allowed actions. Ends with the working rules: always take the first problem, resolve it, then the next; when the list is empty say so and tell the chat to call steward_next again in 45 seconds (at most 8 times) then stop.
+  - noteCell(api, repo, cell, text): appends an empty commit on cell/C-NNN with subject steward(C-NNN): and the text (bounded 2000 chars, control characters stripped); src/resume.ts shows the latest steward note at the top of the resume text a fresh chat gets, and src/trailers.ts gets the helpers isSteward / stewardNote.
+  - Resolution actions the Steward may take with existing admin tools: answer a feedback with a note then takeover clear_feedback, release (handoff) a stuck chat, publish_plan a superseding split cell, fix a branch with apply_changes. Document them in the briefing.
+  - Tests in test/steward.test.ts using test/fakegh.ts (extend it if a ref helper is missing): lease states, busy, adopt, heartbeat, release, ordering of problems by dependents, notes appear in resume text, cell/ regexes ignore steward/lease, briefing never contains secrets.
+inputs: []
+after: []
+provides:
+  - "src/steward.ts: stewardStatus, claimSteward, releaseSteward, buildBriefing, noteCell"
+read:
+  - src/claim.ts
+  - src/takeover.ts
+  - src/resume.ts
+  - src/trailers.ts
+  - src/plan.ts
+  - src/api.ts
+allowed_paths:
+  - src/steward.ts
+  - src/resume.ts
+  - src/trailers.ts
+  - src/api.ts
+  - src/github.ts
+  - test/steward.test.ts
+  - test/fakegh.ts
+  - test/resume_steward.test.ts
+outputs:
+  - src/steward.ts
+  - src/resume.ts
+  - src/trailers.ts
+  - test/steward.test.ts
+  - test/resume_steward.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The briefing must never contain GITHUB_TOKEN, ADMIN_TOKEN or any env value. Cells stay immutable: the Steward fixes problems through notes, takeover, supersede and branch fixes, never by editing cells/*.yaml in place.

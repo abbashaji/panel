@@ -1,0 +1,35 @@
+id: C-031
+title: Panel shows the new state right after an action
+type: normal
+priority: 8
+goal: |
+  Client side of the stale-UI fix.
+  - web/src/core/api.ts: release, clearFeedback and reserve return the parsed answer including cell { id, status, resumable } (keep the text for toasts); tolerate an older Worker that has no cell field.
+  - web/src/core/store.tsx: refresh() returns a Promise and bypasses nothing but waits for the refetch; add refreshAfterAction(cellId, expected) that (a) patches the cached panel-state query at once with the status and resumable from the answer (optimistic, also clears reservedBy for release) and (b) refetches at 0, 1.5, 4 and 8 seconds until the cell's status matches the answer, because GitHub can return the old branch for a few seconds after a write. Stop early when the status matches, stop on unmount or repo change. Polling continues as before.
+  - web/src/inspector/ReleaseDialog.tsx: after success call refreshAfterAction, keep the toast, close the dialog only after the optimistic patch so the card and the inspector change before the dialog fades; show 'Released. Ready to resume.' or 'Feedback cleared.' style text from the answer.
+  - Tests in web/src/core/api.test.ts and web/src/inspector/inspector.test.tsx: answer parsed, optimistic patch visible immediately, later refetch with the old status does not flip it back before the retries end, retries stop when matching, admin key never appears in any toast or cache.
+inputs: []
+after: [C-004, C-006, C-012, C-015, C-019, C-024, C-029, C-030]
+provides:
+  - "usePanel().refreshAfterAction(cellId, expected)"
+read:
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/inspector/ReleaseDialog.tsx
+allowed_paths:
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/core/api.test.ts
+  - web/src/inspector/ReleaseDialog.tsx
+  - web/src/inspector/inspector.test.tsx
+outputs:
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/core/api.test.ts
+  - web/src/inspector/ReleaseDialog.tsx
+  - web/src/inspector/inspector.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Mocked usePanel() in existing tests may lack refreshAfterAction: guard the call so those tests keep passing.

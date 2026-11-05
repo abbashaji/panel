@@ -1,0 +1,38 @@
+id: C-034
+title: Steward tools steward_next steward_note steward_release
+type: normal
+priority: 6
+goal: |
+  Register the Steward in the MCP tool list (src/tools.ts) using src/steward.ts from C-033.
+  - steward_next { repo, admin_key, who?, session? }: checks admin_key with the existing constant-time admin check (fails closed without ADMIN_TOKEN), then claimSteward. First call returns STEWARD_STARTED with a session token the chat must pass on every later call plus the briefing. Later calls with the session refresh the lease and return the new briefing (and what changed). Resuming a dead steward returns STEWARD_RESUMED with the briefing. Another live steward returns STEWARD_BUSY.
+  - steward_note { repo, admin_key, cell_id, note }: noteCell for a cell with a branch.
+  - steward_release { repo, admin_key, session, handoff }: releaseSteward.
+  - The steward also keeps using takeover (clear_feedback, handoff), publish_plan, apply_changes, read_files, ci_result: update their descriptions and src/protocol.ts and src/kit.ts instructions so a chat that was told 'you are the Steward' starts with steward_next, and every other chat still starts with next_cell.
+  - Add 'steward' to the list of tools that need no pinned cell binding in the limit-warning wrapper.
+  - Tests in test/steward_tools.test.ts: wrong key gives 403-style text and no lease change, missing ADMIN_TOKEN is off, start then resume then release, busy, notes, the admin key never in any answer.
+inputs:
+  - from: C-033
+    kind: implementation
+    contract: |
+      src/steward.ts exports stewardStatus, claimSteward, releaseSteward, buildBriefing, noteCell as described in C-033.
+after: [C-001, C-033]
+provides:
+  - "MCP tools steward_next, steward_note, steward_release"
+read:
+  - src/tools.ts
+  - src/steward.ts
+  - src/engine.ts
+allowed_paths:
+  - src/tools.ts
+  - src/protocol.ts
+  - src/kit.ts
+  - test/steward_tools.test.ts
+outputs:
+  - src/tools.ts
+  - src/protocol.ts
+  - src/kit.ts
+  - test/steward_tools.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Existing protocol tests (protocol_echo, protocol_warning, tools) must stay green: only add text, do not change the wording they assert.

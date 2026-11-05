@@ -1,0 +1,29 @@
+id: C-037
+title: Launcher core accepts blueprint://steward and builds the steward prompt
+type: normal
+priority: 6
+goal: |
+  - ProtocolParser: new command blueprint://steward?repo=<owner/name>&who=<name> (exact key set, same repo and who rules, ASCII only, max length 400, one trailing slash tolerated), CommandKind.Steward.
+  - PromptBuilder: BuildStewardPrompt(repo) returns a FIXED template text: you are the Steward of <repo>; call steward_next with repo and who; ask the owner to paste the admin key in this chat when the tool asks for it; never write the key into any file, commit, comment or message; follow the briefing and always take the first problem; call steward_next again after each solved problem. BuildStewardUrl(repo) gives the claude.ai/new?q= link. The prompt never contains URL-supplied text except the validated repo.
+  - Tests in launcher/Core.Tests/ValidationTests.cs and new StewardTests.cs: accepts the command and the slash, rejects extra keys, bad repo, bad who, overlong; template never holds unvalidated text; the prompt text contains no key-like value.
+inputs: []
+after: [C-008, C-022, C-026]
+provides:
+  - "CommandKind.Steward and PromptBuilder.BuildStewardPrompt / BuildStewardUrl"
+read:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+allowed_paths:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/Core.Tests/StewardTests.cs
+outputs:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/Core.Tests/StewardTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Program.cs is not allowed here (C-038). Keep the Core free of System.Net and System.Drawing.

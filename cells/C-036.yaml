@@ -1,0 +1,37 @@
+id: C-036
+title: Header shows the Steward with start resume and release
+type: normal
+priority: 6
+goal: |
+  - New web/src/shell/StewardChip.tsx in the header next to the repo name: shows 'Steward idle' (none), 'Steward active, <holder>, 41m left', 'Steward expired 12m ago' or 'Steward released', plus the problem count ('3 problems'). Buttons: 'Start steward' (none), 'Resume steward' (expired or released), 'Open chat' is not available (a steward chat is stateless), and 'Release' (active or expired, uses ReleaseDialog with a new action 'steward-release', admin key typed like for cells). Start and Resume call usePanel().launcher.startSteward() (optional, hidden when the launcher slot does not provide it).
+  - web/src/core/api.ts: stewardRelease(repo, adminKey). web/src/core/store.tsx: Launcher gets optional startSteward?: () => void (default no-op) and usePanel exposes state.steward. web/src/inspector/ReleaseDialog.tsx: support action steward-release and refresh through refreshAfterAction or refresh.
+  - web/src/shell/Header.tsx mounts the chip; it collapses to an icon with a tooltip on narrow widths.
+  - Tests in web/src/shell/steward.test.tsx: each status, buttons per status, release flow calls the API with the key and clears it, chip hidden when state.steward is absent (old Worker).
+inputs: []
+after: [C-004, C-006, C-007, C-012, C-013, C-015, C-019, C-021, C-024, C-029, C-031, C-032, C-035]
+provides:
+  - "Launcher.startSteward?: () => void and the Steward chip"
+read:
+  - web/src/shell/Header.tsx
+  - web/src/core/store.tsx
+  - web/src/inspector/ReleaseDialog.tsx
+  - docs/panel-design.md
+allowed_paths:
+  - web/src/shell/Header.tsx
+  - web/src/shell/StewardChip.tsx
+  - web/src/shell/steward.test.tsx
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/inspector/ReleaseDialog.tsx
+outputs:
+  - web/src/shell/Header.tsx
+  - web/src/shell/StewardChip.tsx
+  - web/src/shell/steward.test.tsx
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/inspector/ReleaseDialog.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  The admin key is typed in the dialog and lives only in component state, exactly like Release.
