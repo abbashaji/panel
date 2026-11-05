@@ -73,6 +73,20 @@ export interface PanelCounts {
   needs_split: number;
 }
 
+export type PanelStewardStatus = "none" | "active" | "expired" | "released";
+
+/** The Steward role (lease branch steward/lease), see src/steward.ts stewardStatus. */
+export interface PanelSteward {
+  status: PanelStewardStatus;
+  holder: string | null;
+  /** set while active */
+  minutesLeft: number | null;
+  /** set when expired */
+  expiredMinutesAgo: number | null;
+  /** number of needs_human + needs_split cells */
+  problems: number;
+}
+
 export interface PanelState {
   /** owner/name */
   repo: string;
@@ -85,6 +99,7 @@ export interface PanelState {
   cells: PanelCell[];
   /** not-done cell with the most transitive dependents; null when nothing is blocked */
   bottleneck: { id: string; blocks: number } | null;
+  steward: PanelSteward;
 }
 
 export interface ReserveResult {
@@ -109,6 +124,19 @@ export interface AdminActionBody {
   repo: string;
   cell_id: string;
   admin_key: string;
+}
+
+/** Body of POST /panel/api/steward-release */
+export interface StewardReleaseBody {
+  repo: string;
+  admin_key: string;
+}
+
+/** Answer of POST /panel/api/steward-release */
+export interface StewardReleaseResult {
+  ok: boolean;
+  result: string;
+  steward: PanelSteward;
 }
 
 export interface PanelEnv extends Env {

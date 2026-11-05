@@ -55,6 +55,16 @@ export interface PanelCounts {
   needs_split: number;
 }
 
+export type PanelStewardStatus = "none" | "active" | "expired" | "released";
+
+export interface PanelSteward {
+  status: PanelStewardStatus;
+  holder: string | null;
+  minutesLeft: number | null;
+  expiredMinutesAgo: number | null;
+  problems: number;
+}
+
 export interface PanelState {
   repo: string;
   project: string;
@@ -63,6 +73,7 @@ export interface PanelState {
   counts: PanelCounts;
   cells: PanelCell[];
   bottleneck: { id: string; blocks: number } | null;
+  steward: PanelSteward;
 }
 
 export interface ReserveResult {
