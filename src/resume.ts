@@ -5,7 +5,7 @@
 import type { GitHubApi, Snapshot } from "./api.ts";
 import { RULES } from "./protocol.ts";
 import { RUN_TITLE_RE } from "./plan.ts";
-import { parseTrailers, subjectOf } from "./trailers.ts";
+import { parseTrailers, stewardNote, subjectOf } from "./trailers.ts";
 import { branchOf, cellYaml, short, type Loaded } from "./common.ts";
 
 export async function resumeText(api: GitHubApi, repo: string, snap: Snapshot, plan: Loaded, id: string, tip: string, attempt?: number): Promise<string> {
@@ -30,12 +30,25 @@ export async function resumeText(api: GitHubApi, repo: string, snap: Snapshot, p
   } catch {
     /* the line is a convenience */
   }
+  // The newest steward note on this branch goes right under the header: the Steward wrote it for whoever continues the cell.
+  let noteLine = "";
+  try {
+    for (const c of (await api.branchCommits(repo, branchOf(id), 1, 20)) ?? []) {
+      const t = stewardNote(c.message);
+      if (t !== null) {
+        noteLine = `STEWARD NOTE (written for you by the Steward, read it first): ${t}\n`;
+        break;
+      }
+    }
+  } catch {
+    /* the note is a convenience */
+  }
   // Last commit: its subject and next: trailer only. The attempt: and req: trailers are never printed (the header is the single source).
   const trl = parseTrailers(b?.message ?? "");
   const last = `Last commit: ${subjectOf(b?.message ?? "")}${trl.next ? `\nnext: ${trl.next}` : ""}`;
   const shown = files.slice(0, 30).join(", ") + (files.length > 30 ? ", ..." : "");
   return (
     `RESUME ${id} base=${short(tip)} repo=${repo} on ${branchOf(id)}${n > 0 ? ` attempt ${n}/${plan.cfg.max_attempts ?? 3}` : ""}. ${last}\n` +
-    `Files already changed (${files.length}): ${shown || "none"}${prLine}\n\n${cellYaml(plan.cells[id])}\n\n${RULES}`
+    `${noteLine}Files already changed (${files.length}): ${shown || "none"}${prLine}\n\n${cellYaml(plan.cells[id])}\n\n${RULES}`
   );
 }
