@@ -183,3 +183,177 @@ export async function releaseSteward(api: GitHubApi, repo: string, session: stri
     return { ok: false, text: `RELEASE_FAILED: ${e instanceof Error ? e.message : String(e)}` };
   }
 }
+
+// ---------------------------------------------------------------- notes
+/** Control characters stripped, whitespace collapsed to one line, at most NOTE_MAX chars. */
+export function cleanNote(text: string): string {
+  return String(text)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, NOTE_MAX);
+}
+
+/**
+ * Append an empty commit "steward(C-NNN): <text>" on cell/C-NNN. The next chat that resumes the cell sees the note at the
+ * top of its resume text. A note moves the branch tip, so it fences out a live owner: write notes for cells that are
+ * dead, released or waiting on feedback, not for a chat that is working. A feedback or release state is kept (held:).
+ */
+export async function noteCell(api: GitHubApi, repo: string, cell: string, text: string): Promise<string> {
+  if (!ID_RE.test(cell)) return `UNKNOWN_CELL ${cell}`;
+  const note = cleanNote(text);
+  if (!note) return `EMPTY_NOTE ${cell}: nothing to write`;
+  try {
+    const tip = await readTip(api, repo, branchOf(cell));
+    if (!tip) return `NOT_RUNNING ${cell}: no branch ${branchOf(cell)}`;
+    const state = stateSubject(tip.message);
+    const held = /^(feedback|release)\(/.test(state) ? state.slice(0, NOTE_MAX) : undefined;
+    const oid = await api.commitEmpty(repo, tip.oid, tip.treeOid, withHeld(carry(tip.message, `steward(${cell}): ${note}`), held));
+    if ((await api.fastForward(repo, branchOf(cell), oid)) !== "ok") return `NOTE_FAILED ${cell}: someone else just updated the branch`;
+    return `NOTED ${cell} (tip ${short(oid)}): the next chat that resumes it sees the note first.`;
+  } catch (e) {
+    return `NOTE_FAILED ${cell}: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+// ---------------------------------------------------------------- problems
+export type ProblemKind = "needs_human" | "needs_split" | "expired" | "ci_failed" | "stuck_ready";
+export interface Problem {
+  id: string;
+  title: string;
+  kind: ProblemKind;
+  why: string;
+  attempts: number;
+  lastCommit: string;
+  dependents: number; // cells waiting for this one, directly or not
+  critical: boolean;
+  ageMinutes: number;
+  actions: string[];
+}
+
+export interface ProblemInput {
+  cells: Record<string, Cell>;
+  cfg: Config;
+  snap: Snapshot;
+  merged: Set<string>;
+  now: number;
+  /** minutes since each cell's newest active workflow run started */
+  ci?: Record<string, number>;
+  /** cells whose newest gate run failed */
+  failedCi?: Iterable<string>;
+  /** minutes since the last commit on main: a lower bound for how long a ready cell has been ready */
+  mainAgeMinutes?: number;
+}
+
+const KIND_RANK: Record<ProblemKind, number> = { needs_human: 0, needs_split: 1, expired: 2, ci_failed: 3, stuck_ready: 4 };
+
+export const ACTIONS: Record<ProblemKind, string[]> = {
+  needs_human: [
+    "answer the feedback yourself (read the cell and the feedback), write the answer as a note on the cell (noteCell), then takeover(cell_id, clear_feedback=true, handoff=true) so a fresh chat resumes with your note",
+    "if the cell itself is wrong or too big: publish_plan a superseding cell (supersedes: [the old id]) instead",
+  ],
+  needs_split: [
+    "publish_plan a superseding cell or cells (supersedes: [the old id]) that cut the work smaller, with the same provides",
+    "or write a note with a sharper hint and takeover(cell_id, force=true, handoff=true) once, if a hint alone can unblock it",
+  ],
+  expired: [
+    "write a note with what the dead chats got stuck on (noteCell), then takeover(cell_id, force=true, handoff=true) to release it for a fresh chat",
+    "if the branch already holds good work but is broken: fix it with apply_changes on the cell branch (takeover first so you hold the base)",
+  ],
+  ci_failed: [
+    "read the failure, fix the branch with apply_changes (takeover first so you hold the base), or write a note and release it with takeover(handoff=true)",
+  ],
+  stuck_ready: [
+    "check that the cell is not reserved for a person or blocked by a plan mistake; if it is fine, a fresh chat must call next_cell: report it and move on",
+    "if the plan is wrong, publish_plan a replacement cell",
+  ],
+};
+
+function longestChain(down: Record<string, string[]>, id: string, memo: Record<string, number>): number {
+  if (id in memo) return memo[id];
+  memo[id] = 0; // cycle guard
+  let best = 0;
+  for (const d of down[id] ?? []) best = Math.max(best, 1 + longestChain(down, d, memo));
+  return (memo[id] = best);
+}
+
+/** Open problems, most impactful first: transitive dependents descending, then critical, then age (oldest first), then id. */
+export function findProblems(inp: ProblemInput): Problem[] {
+  const { cells, cfg, snap, merged, now } = inp;
+  const claims = claimsFromBranches(snap.branches, now);
+  const released: string[] = [];
+  const feedback: string[] = [];
+  const attempts: Record<string, number> = {};
+  for (const [name, b] of Object.entries(snap.branches)) {
+    const m = /^cell\/(C-\d+)$/.exec(name);
+    if (!m) continue;
+    if (isRelease(b.message)) released.push(m[1]);
+    if (isFeedback(b.message)) feedback.push(m[1]);
+    attempts[m[1]] = parseTrailers(b.message).attempt;
+  }
+  const state = computeState(cells, merged, claims, cfg.lease_minutes, inp.ci ?? {}, cfg.max_ci_minutes, cfg.bottleneck_threshold, {
+    criticalLeaseMinutes: cfg.critical_lease_minutes,
+    criticalChainThreshold: cfg.critical_chain_threshold,
+    criticalTransitiveThreshold: cfg.critical_transitive_threshold,
+    parkMaxMinutes: cfg.park_max_minutes,
+    maxAttempts: cfg.max_attempts,
+    released,
+    attempts,
+    feedback,
+  });
+
+  const trans = transitiveDependents(cells);
+  const direct = directDependents(cells);
+  const down: Record<string, string[]> = {};
+  for (const c of Object.keys(cells)) down[c] = [];
+  for (const [c, deps] of Object.entries(hardGraph(cells))) for (const d of deps) down[d].push(c);
+  const memo: Record<string, number> = {};
+  const isCritical = (id: string): boolean =>
+    direct[id] >= cfg.bottleneck_threshold || trans[id] >= cfg.critical_transitive_threshold || longestChain(down, id, memo) >= cfg.critical_chain_threshold;
+
+  const found = new Map<string, { kind: ProblemKind; whys: string[] }>();
+  const add = (id: string, kind: ProblemKind, why: string) => {
+    if (!(id in cells) || merged.has(id)) return;
+    const cur = found.get(id);
+    if (!cur) found.set(id, { kind, whys: [why] });
+    else {
+      if (KIND_RANK[kind] < KIND_RANK[cur.kind]) cur.kind = kind;
+      if (!cur.whys.includes(why)) cur.whys.push(why);
+    }
+  };
+
+  for (const x of state.needs_human ?? []) {
+    const b = snap.branches[branchOf(x.id)];
+    const text = b ? stateSubject(b.message).replace(/^feedback\([^)]*\):\s*/, "") : "";
+    add(x.id, "needs_human", `a chat asked for a decision: ${oneLine(text, 400) || "(no text)"}`);
+  }
+  for (const x of state.needs_split ?? []) add(x.id, "needs_split", `the lease died ${x.attempts} times: the cell is too big or unclear`);
+  for (const r of state.ready) {
+    if (r.reclaim && (attempts[r.id] ?? 0) >= 2) add(r.id, "expired", `lease expired after ${attempts[r.id]} dead attempts${r.released ? " (released)" : ""}`);
+    if (!r.reclaim && (inp.mainAgeMinutes ?? 0) > STUCK_READY_MINUTES) {
+      add(r.id, "stuck_ready", `ready and unclaimed for at least ${Math.floor(inp.mainAgeMinutes ?? 0)} min (main has not moved since)`);
+    }
+  }
+  for (const id of inp.failedCi ?? []) {
+    if (snap.branches[branchOf(id)] && (claims[id] ?? 0) >= CI_FAIL_IDLE_MINUTES) add(id, "ci_failed", "the newest CI gate run of its PR failed and the chat has not pushed since");
+  }
+
+  const out: Problem[] = [];
+  for (const [id, f] of found) {
+    const b = snap.branches[branchOf(id)];
+    out.push({
+      id,
+      title: oneLine(String(cells[id].title ?? ""), 120),
+      kind: f.kind,
+      why: f.whys.join("; "),
+      attempts: attempts[id] ?? 0,
+      lastCommit: b ? oneLine(subjectOf(b.message), 160) : "(no branch yet)",
+      dependents: trans[id] ?? 0,
+      critical: isCritical(id),
+      ageMinutes: Math.round(b ? (claims[id] ?? 0) : (inp.mainAgeMinutes ?? 0)),
+      actions: ACTIONS[f.kind],
+    });
+  }
+  out.sort((a, b) => b.dependents - a.dependents || Number(b.critical) - Number(a.critical) || b.ageMinutes - a.ageMinutes || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out;
+}
