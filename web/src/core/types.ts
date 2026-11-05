@@ -73,10 +73,21 @@ export interface PanelState {
   counts: PanelCounts;
   cells: PanelCell[];
   bottleneck: { id: string; blocks: number } | null;
-  steward: PanelSteward;
+  steward?: PanelSteward;
 }
 
 export interface ReserveResult {
   status: "reserved" | "not_ready" | "taken";
   detail: string;
+}
+
+export interface StewardReleaseBody {
+  repo: string;
+  admin_key: string;
+}
+
+export interface StewardReleaseResult {
+  ok: boolean;
+  result: string;
+  steward: PanelSteward;
 }
