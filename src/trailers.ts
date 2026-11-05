@@ -42,9 +42,41 @@ export function carry(prev: string, subject: string, over: { next?: string; atte
 }
 
 export function isRelease(message: string): boolean {
-  return subjectOf(message).startsWith("release(");
+  return stateSubject(message).startsWith("release(");
 }
 
 export function isFeedback(message: string): boolean {
-  return subjectOf(message).startsWith("feedback(");
+  return stateSubject(message).startsWith("feedback(");
+}
+
+// ---- Steward (see steward.ts). A note on a cell branch is an empty commit "steward(C-NNN): text". It keeps the
+// release / feedback state of the commit it was written on in a "held:" trailer, so a note never hides a feedback.
+export function isSteward(message: string): boolean {
+  return subjectOf(message).startsWith("steward(");
+}
+
+/** The text of a steward note commit, or null if the message is not one (the lease commit steward(lease) is not a note). */
+export function stewardNote(message: string): string | null {
+  const m = /^steward\((C-\d{3,})\):[ \t]*(.*)$/.exec(subjectOf(message));
+  return m && m[2] ? m[2] : null;
+}
+
+function heldOf(message: string): string {
+  let held = "";
+  for (const raw of message.split("\n").slice(1)) {
+    const m = /^held:[ \t]*(.*)$/.exec(raw.trim());
+    if (m) held = m[1].trim();
+  }
+  return held;
+}
+
+/** The subject that decides release / feedback state: a steward note stands in for the commit it was written on. */
+export function stateSubject(message: string): string {
+  const s = subjectOf(message);
+  return isSteward(s) ? heldOf(message) || s : s;
+}
+
+export function withHeld(message: string, held: string | undefined): string {
+  if (!held) return message;
+  return message.includes("\n") ? `${message}\nheld: ${held}` : `${message}\n\nheld: ${held}`;
 }
