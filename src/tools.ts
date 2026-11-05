@@ -10,6 +10,7 @@ import { ID_RE } from "./plan.ts";
 import { nextCellWait } from "./longpoll.ts";
 import { SERVER_INSTRUCTIONS } from "./protocol.ts";
 import { cellSignal } from "./signal.ts";
+import { claimSteward, gatherBriefing, leaseMinutesOf, noteCell, redact, releaseSteward } from "./steward.ts";
 import type { ClaimOptions, ReserveKv } from "./claim.ts";
 
 export interface Env {
@@ -29,6 +30,20 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 type ApiFactory = (token: string) => GitHubApi;
 
+/** Wraps a handler: GITHUB_TOKEN check, repo allow-list, and every failure turned into short text. */
+function makeRun(env: Env, apiFactory: ApiFactory) {
+  return (fn: (api: GitHubApi, repo: string, a: any) => Promise<string>) => async (a: any): Promise<string> => {
+    try {
+      if (!env.GITHUB_TOKEN) return "NOT_CONFIGURED: GITHUB_TOKEN secret is not set";
+      const r = engine.resolveRepo(env, a?.repo);
+      if ("error" in r) return r.error;
+      return await fn(apiFactory(env.GITHUB_TOKEN), r.repo, a);
+    } catch (e) {
+      return `ERROR: ${String((e as Error)?.message ?? e).slice(0, 400)}`;
+    }
+  };
+}
+
 export function engineOptions(env: Env): engine.EngineOptions {
   return {
     mainBranch: env.MAIN_BRANCH || "main",
@@ -41,16 +56,7 @@ export function engineOptions(env: Env): engine.EngineOptions {
 
 /** Per tool name: the text the tool answers. Every tool resolves the repo against the allow-list and turns failures into short text. */
 export function toolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: ApiFactory = createGitHubApi): Record<string, (args: any) => Promise<string>> {
-  const run = (fn: (api: GitHubApi, repo: string, a: any) => Promise<string>) => async (a: any): Promise<string> => {
-    try {
-      if (!env.GITHUB_TOKEN) return "NOT_CONFIGURED: GITHUB_TOKEN secret is not set";
-      const r = engine.resolveRepo(env, a?.repo);
-      if ("error" in r) return r.error;
-      return await fn(apiFactory(env.GITHUB_TOKEN), r.repo, a);
-    } catch (e) {
-      return `ERROR: ${String((e as Error)?.message ?? e).slice(0, 400)}`;
-    }
-  };
+  const run = makeRun(env, apiFactory);
   const raw = {
     next_cell: run((api, r, a) => {
       const kv = env.OAUTH_KV as unknown as ReserveKv | undefined;
@@ -77,6 +83,81 @@ export function toolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: A
   return withWarning(env, raw);
 }
 
+// The Steward tools are not bound to one pinned cell (steward_note names a cell but never holds it): no limit warning, no flag.
+const STEWARD_TOOLS = new Set(["steward_next", "steward_note", "steward_release"]);
+const sessionOf = (s: unknown): string | undefined => (typeof s === "string" && /^[\w.-]{1,80}$/.test(s.trim()) ? s.trim() : undefined);
+const PROBLEM_LINE = /^\d+\. (C-\d+) /gm;
+
+/**
+ * The Steward tools: steward_next, steward_note, steward_release. All three need the owner's admin_key (checked first, in
+ * constant time, fails closed without ADMIN_TOKEN) and no answer ever contains a secret. Kept apart from toolHandlers, whose
+ * tool list (the 11 cell tools) is asserted exactly by test/tools.test.ts; buildServer registers both sets.
+ */
+export function stewardToolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: ApiFactory = createGitHubApi): Record<string, (args: any) => Promise<string>> {
+  const run = makeRun(env, apiFactory);
+  const secretsOf = (a: any): string[] =>
+    [env.ADMIN_TOKEN, env.GITHUB_TOKEN, env.MCP_AUTH_TOKEN, env.EXT_TOKEN, a?.admin_key].filter((s): s is string => typeof s === "string" && s.length > 0);
+  const sopts = { mainBranch: opts.mainBranch, now: opts.now, uuid: opts.uuid };
+  const guard = (fn: (a: any) => Promise<string>) => async (a: any): Promise<string> => redact(await fn(a), secretsOf(a));
+  const admin = (a: any) => engine.checkAdmin(env.ADMIN_TOKEN, a?.admin_key);
+
+  const raw = {
+    steward_next: guard(run(async (api, r, a) => {
+      const denied = await admin(a);
+      if (denied) return denied;
+      const claim = await claimSteward(api, r, typeof a.who === "string" ? a.who : "steward", sessionOf(a.session), sopts);
+      if (claim.status === "STEWARD_BUSY" || claim.status === "STEWARD_FAILED") return claim.text;
+      const lm = await leaseMinutesOf(api, r, opts.mainBranch);
+      const head = claim.status === "CREATED" ? "STEWARD_STARTED" : claim.status === "ADOPTED" ? "STEWARD_RESUMED" : "STEWARD_REFRESHED";
+      const briefing = await gatherBriefing(api, r, opts, {
+        secrets: secretsOf(a),
+        status: { state: "active", holder: claim.who, session: claim.session, minutesLeft: lm },
+      });
+      // What changed since the last call of this Steward: advisory, kept in KV (no KV or any KV error = no change lines).
+      let changes = "";
+      if (briefing.startsWith("STEWARD BRIEFING")) {
+        const ids = [...briefing.matchAll(PROBLEM_LINE)].map((m) => m[1]);
+        const kv = env.OAUTH_KV as unknown as { get(k: string): Promise<string | null>; put(k: string, v: string, o?: { expirationTtl: number }): Promise<void> } | undefined;
+        const key = `steward-seen:${r}`;
+        try {
+          if (kv) {
+            const prev = claim.status === "REFRESHED" ? await kv.get(key) : null;
+            if (prev) {
+              const before = JSON.parse(prev) as string[];
+              const added = ids.filter((x) => !before.includes(x));
+              const gone = before.filter((x) => !ids.includes(x));
+              changes = `CHANGES since your last steward_next: new problems: ${added.join(", ") || "none"}; gone: ${gone.join(", ") || "none"}.`;
+            }
+            await kv.put(key, JSON.stringify(ids), { expirationTtl: 86400 });
+          }
+        } catch {
+          changes = "";
+        }
+      }
+      const lines = [
+        `${head} session=${claim.session} repo=${r} (lease ${lm} min, renewed by every steward call)`,
+        `Pass session=${claim.session} on every later steward call (steward_next, steward_note, steward_release).`,
+      ];
+      if (changes) lines.push(changes);
+      return [...lines, "", briefing].join("\n");
+    })),
+    steward_note: guard(run(async (api, r, a) => {
+      const denied = await admin(a);
+      if (denied) return denied;
+      if (typeof a.cell_id !== "string" || typeof a.note !== "string") return "BAD_ARGS: steward_note needs cell_id and note";
+      return noteCell(api, r, a.cell_id, redact(a.note, secretsOf(a)));
+    })),
+    steward_release: guard(run(async (api, r, a) => {
+      const denied = await admin(a);
+      if (denied) return denied;
+      const session = sessionOf(a.session);
+      if (!session) return "NOT_STEWARD: pass the session you got from steward_next";
+      return (await releaseSteward(api, r, session, !!a.handoff, sopts)).text;
+    })),
+  };
+  return withWarning(env, raw);
+}
+
 const NO_WARN = /^(CONFLICT|NOT_CLAIMED|CELL_DONE)/;
 const WARNED_TOOLS = new Set(["apply_changes", "cell_signal", "read_files", "submit_cell", "ci_result", "preflight"]);
 
@@ -85,7 +166,7 @@ function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>
   const out: Record<string, (args: any) => Promise<string>> = {};
   for (const [name, fn] of Object.entries(h)) {
     const bound = WARNED_TOOLS.has(name);
-    if (!bound && name !== "next_cell" && name !== "takeover") {
+    if (STEWARD_TOOLS.has(name) || (!bound && name !== "next_cell" && name !== "takeover")) {
       out[name] = fn;
       continue;
     }
@@ -123,7 +204,7 @@ function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>
 
 export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi): McpServer {
   const server = new McpServer({ name: "blueprint-mcp", version: "1.0.0" }, { instructions: SERVER_INSTRUCTIONS } as any);
-  const h = toolHandlers(env, engineOptions(env), apiFactory);
+  const h = { ...toolHandlers(env, engineOptions(env), apiFactory), ...stewardToolHandlers(env, engineOptions(env), apiFactory) };
   const repo = z.string().optional().describe("owner/name; omit to use the default repository");
 
   server.registerTool("next_cell", {
@@ -137,7 +218,7 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.ready_cells(a)));
 
   server.registerTool("read_files", {
-    description: "Read files or line ranges (max 12 files, ~600 lines). Reads your cell's branch, else main.",
+    description: "Read files or line ranges (max 12 files, ~600 lines). Reads your cell's branch, else main. The Steward uses it too.",
     inputSchema: {
       repo,
       cell_id: z.string().optional(),
@@ -147,7 +228,7 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.read_files(a)));
 
   server.registerTool("apply_changes", {
-    description: "Commit many file changes at once to your cell branch. ops: {path,content} | {path,old,new} | {path,append} | {path,delete:true}.",
+    description: "Commit many file changes at once to your cell branch. ops: {path,content} | {path,old,new} | {path,append} | {path,delete:true}. The Steward uses it to fix a branch it holds after takeover.",
     inputSchema: {
       repo,
       cell_id: z.string(),
@@ -169,7 +250,7 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.preflight(a)));
 
   server.registerTool("ci_result", {
-    description: "Result of CI for your cell (waits up to wait_seconds). Call once, never in a loop.",
+    description: "Result of CI for your cell (waits up to wait_seconds). Call once, never in a loop. The Steward uses it to read a failed gate.",
     inputSchema: { repo, cell_id: z.string(), wait_seconds: z.number().int().optional() },
   }, async (a) => text(await h.ci_result(a)));
 
@@ -179,12 +260,12 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.init_blueprint(a)));
 
   server.registerTool("publish_plan", {
-    description: "OWNER ONLY (needs admin_key): add NEW cells (cells/C-NNN.yaml) to main. Validated as a whole; existing cells are never changed.",
+    description: "OWNER or STEWARD ONLY (needs admin_key): add NEW cells (cells/C-NNN.yaml) to main, e.g. a superseding cell. Validated as a whole; existing cells are never changed.",
     inputSchema: { repo, admin_key: z.string().optional(), cells: z.array(z.object({ id: z.string(), yaml: z.string() })), message: z.string().optional() },
   }, async (a) => text(await h.publish_plan(a)));
 
   server.registerTool("takeover", {
-    description: "OWNER ONLY (needs admin_key): take over a running cell whose chat died. Agents never call this; expired cells come back through next_cell.",
+    description: "OWNER or STEWARD ONLY (needs admin_key): take over a running cell whose chat died (force, handoff, clear_feedback). Cell agents never call this; expired cells come back through next_cell.",
     inputSchema: { repo, admin_key: z.string().optional(), cell_id: z.string(), force: z.boolean().optional(), handoff: z.boolean().optional(), clear_feedback: z.boolean().optional() },
   }, async (a) => text(await h.takeover(a)));
 
@@ -192,6 +273,21 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
     description: "Heartbeat, release (hand the cell to another chat) or feedback for your cell.",
     inputSchema: { repo, cell_id: z.string(), base: z.string(), kind: z.enum(["heartbeat", "release", "feedback"]), text: z.string().optional(), next: z.string().optional() },
   }, async (a) => text(await h.cell_signal(a)));
+
+  server.registerTool("steward_next", {
+    description: "STEWARD ONLY (needs admin_key): the first call of a chat the owner told 'you are the Steward' (every other chat starts with next_cell). First call returns STEWARD_STARTED with a session to pass on every later call, plus the briefing; later calls with the session refresh the lease and return the new briefing and what changed; a dead Steward is resumed (STEWARD_RESUMED); a live one gives STEWARD_BUSY.",
+    inputSchema: { repo, admin_key: z.string().optional(), who: z.string().optional(), session: z.string().optional() },
+  }, async (a) => text(await h.steward_next(a)));
+
+  server.registerTool("steward_note", {
+    description: "STEWARD ONLY (needs admin_key): leave a short note on a cell that has a branch; the next chat that resumes it sees the note first. Only for dead, released or feedback cells, never a live one.",
+    inputSchema: { repo, admin_key: z.string().optional(), cell_id: z.string(), note: z.string() },
+  }, async (a) => text(await h.steward_note(a)));
+
+  server.registerTool("steward_release", {
+    description: "STEWARD ONLY (needs admin_key): give up the Steward role (handoff: true when a fresh chat should take over). Needs the session of steward_next.",
+    inputSchema: { repo, admin_key: z.string().optional(), session: z.string(), handoff: z.boolean().optional() },
+  }, async (a) => text(await h.steward_release(a)));
 
   return server;
 }
