@@ -150,7 +150,7 @@ describe("Inspector", () => {
   });
 
   it("sends the typed admin key once, never persists it, and toasts the result", async () => {
-    vi.mocked(release).mockResolvedValue("released C-006");
+    vi.mocked(release).mockResolvedValue({ text: "released C-006" });
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const fns = setup([cell("C-006", "running")], ["C-006"]);
     render(<Inspector />);
@@ -223,5 +223,183 @@ describe("Inspector", () => {
     setup([cell("C-006", "running")], []);
     render(<Inspector />);
     expect(screen.getByText("Select a cell to see its details.")).toBeTruthy();
+  });
+});
+
+
+// ---- C-031: refreshAfterAction + ReleaseDialog ----
+import { QueryClient as C031QC, QueryClientProvider as C031QCP } from "@tanstack/react-query";
+import { cleanup as c031Cleanup, render as c031Render, screen as c031Screen, waitFor as c031WaitFor, act as c031Act } from "@testing-library/react";
+import { afterEach as c031After, beforeEach as c031Before, describe as c031Describe, expect as c031Expect, it as c031It, vi as c031Vi } from "vitest";
+import { isMock as c031IsMock, setMockMode as c031SetMock } from "../core/api";
+import type { PanelContextValue as C031Ctx } from "../core/store";
+import { ReleaseDialog } from "./ReleaseDialog";
+
+c031Describe("refreshAfterAction (C-031)", () => {
+  const wasMock = c031IsMock();
+  let savedRetry: number[] = [];
+  let real: typeof import("../core/store");
+  let serverStatus = "running";
+  let stateCalls = 0;
+  let bodies: string[] = [];
+  let panel: C031Ctx;
+  let qc: C031QC;
+
+  function Probe() {
+    panel = real.usePanel();
+    return (
+      <div>
+        <div data-testid="st">{panel.state?.cells[0]?.status ?? "none"}</div>
+        <div data-testid="owner">{String(panel.state?.cells[0]?.reservedBy ?? "nobody")}</div>
+        <div data-testid="toasts">{panel.toasts.map((t) => t.msg).join("|")}</div>
+      </div>
+    );
+  }
+
+  function mount(extra?: JSX.Element) {
+    qc = new C031QC({ defaultOptions: { queries: { retry: false } } });
+    return c031Render(
+      <C031QCP client={qc}>
+        <real.PanelProvider>
+          <Probe />
+          {extra}
+        </real.PanelProvider>
+      </C031QCP>,
+    );
+  }
+
+  c031Before(async () => {
+    real = await c031Vi.importActual<typeof import("../core/store")>("../core/store");
+    savedRetry = [...real.ACTION_RETRY_MS];
+    c031SetMock(false);
+    serverStatus = "running";
+    stateCalls = 0;
+    bodies = [];
+    real.ACTION_RETRY_MS.splice(0, real.ACTION_RETRY_MS.length, 0, 30, 60, 90);
+    window.history.replaceState(null, "", "/?repo=a/b");
+    c031Vi.stubGlobal(
+      "fetch",
+      c031Vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.body) bodies.push(String(init.body));
+        if (String(url).includes("/state")) {
+          stateCalls++;
+          return new Response(
+            JSON.stringify({ repo: "a/b", cells: [{ id: "C-031", status: serverStatus, resumable: false, reservedBy: "alice" }] }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ result: "Released. Ready to resume.", cell: { id: "C-031", status: "ready", resumable: true } }),
+          { status: 200 },
+        );
+      }),
+    );
+  });
+  c031After(() => {
+    c031Cleanup();
+    c031Vi.unstubAllGlobals();
+    real.ACTION_RETRY_MS.splice(0, real.ACTION_RETRY_MS.length, ...savedRetry);
+    c031SetMock(wasMock);
+    window.history.replaceState(null, "", "/");
+  });
+
+  c031It("patches at once and a stale refetch does not flip it back", async () => {
+    mount();
+    await c031WaitFor(() => c031Expect(c031Screen.getByTestId("st").textContent).toBe("running"));
+    let p: Promise<void> = Promise.resolve();
+    c031Act(() => {
+      p = panel.refreshAfterAction("C-031", { status: "ready", resumable: true, clearOwner: true });
+    });
+    // the cache is patched synchronously; React Query tells the component a tick later
+    await c031WaitFor(() => c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready"));
+    c031Expect(qc.getQueryData<{ cells: { status: string }[] }>(["panel-state", "a/b"])?.cells[0]?.status).toBe("ready");
+    await c031WaitFor(() => c031Expect(c031Screen.getByTestId("owner").textContent).toBe("nobody"));
+    // the server keeps answering with the old status: the retries run but the patch stays
+    await c031WaitFor(() => c031Expect(stateCalls).toBeGreaterThanOrEqual(3));
+    c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready");
+    await c031Act(async () => {
+      await p;
+    });
+    c031Expect(stateCalls).toBe(5); // 1 initial + 4 retries
+  });
+
+  c031It("stops retrying as soon as the status matches", async () => {
+    mount();
+    await c031WaitFor(() => c031Expect(stateCalls).toBe(1));
+    serverStatus = "ready";
+    await c031Act(async () => {
+      await panel.refreshAfterAction("C-031", { status: "ready", resumable: true });
+    });
+    c031Expect(stateCalls).toBe(2);
+    await c031Act(async () => {
+      await new Promise((r) => setTimeout(r, 150));
+    });
+    c031Expect(stateCalls).toBe(2);
+    c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready");
+  });
+  c031It("unmount stops the retries", async () => {
+    const view = mount();
+    await c031WaitFor(() => c031Expect(stateCalls).toBe(1));
+    real.ACTION_RETRY_MS.splice(0, real.ACTION_RETRY_MS.length, 0, 60, 120);
+    c031Act(() => {
+      void panel.refreshAfterAction("C-031", { status: "ready" });
+    });
+    await c031WaitFor(() => c031Expect(stateCalls).toBe(2));
+    view.unmount();
+    await new Promise((r) => setTimeout(r, 200));
+    c031Expect(stateCalls).toBe(2);
+  });
+});
+
+describe("ReleaseDialog after an action (C-031)", () => {
+  const type = () => {
+    fireEvent.change(screen.getByLabelText(/admin key/i), { target: { value: "topsecret" } });
+  };
+
+  it("patches the cached cell before the dialog closes and toasts the answer", async () => {
+    const order: string[] = [];
+    const refreshAfterAction = vi.fn(async (_id: string, _e: unknown) => {
+      order.push("patch");
+    });
+    const onClose = vi.fn(() => {
+      order.push("close");
+    });
+    const fns = setup([cell("C-006", "running")], ["C-006"], { refreshAfterAction });
+    vi.mocked(release).mockResolvedValue({ text: "Released. Ready to resume.", cell: { id: "C-006", status: "ready", resumable: true } });
+    render(<ReleaseDialog action="release" cellId="C-006" onClose={onClose} />);
+    type();
+    fireEvent.click(btn("Release C-006"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(order).toEqual(["patch", "close"]);
+    expect(refreshAfterAction).toHaveBeenCalledWith("C-006", { status: "ready", resumable: true, clearOwner: true });
+    expect(fns.toast).toHaveBeenCalledWith("Released. Ready to resume.", "success");
+    expect(JSON.stringify([fns.toast.mock.calls, refreshAfterAction.mock.calls])).not.toContain("topsecret");
+  });
+
+  it("clear feedback falls back to its own text and keeps the owner", async () => {
+    const refreshAfterAction = vi.fn(async (_id: string, _e: unknown) => {});
+    const onClose = vi.fn();
+    const fns = setup([cell("C-006", "needs_human")], ["C-006"], { refreshAfterAction });
+    vi.mocked(clearFeedback).mockResolvedValue({ text: "", cell: { id: "C-006", status: "ready", resumable: false } });
+    render(<ReleaseDialog action="clear-feedback" cellId="C-006" onClose={onClose} />);
+    type();
+    fireEvent.click(btn("Clear feedback C-006"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(fns.toast).toHaveBeenCalledWith("Feedback cleared.", "success");
+    expect(refreshAfterAction).toHaveBeenCalledWith("C-006", { status: "ready", resumable: false, clearOwner: false });
+  });
+
+  it("an older Worker without a cell falls back to a plain refresh", async () => {
+    const refreshAfterAction = vi.fn(async (_id: string, _e: unknown) => {});
+    const onClose = vi.fn();
+    const fns = setup([cell("C-006", "running")], ["C-006"], { refreshAfterAction });
+    vi.mocked(release).mockResolvedValue({ text: "done" });
+    render(<ReleaseDialog action="release" cellId="C-006" onClose={onClose} />);
+    type();
+    fireEvent.click(btn("Release C-006"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(refreshAfterAction).not.toHaveBeenCalled();
+    expect(fns.refresh).toHaveBeenCalled();
+    expect(fns.toast).toHaveBeenCalledWith("done", "success");
   });
 });

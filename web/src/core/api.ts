@@ -1,5 +1,5 @@
 import { buildMockState, mockClearFeedback, mockRelease, mockReserve } from "./mock";
-import type { PanelState, ReserveResult } from "./types";
+import type { PanelState, PanelStatus, ReserveResult } from "./types";
 
 // Typed client for the Worker. Same origin, cookie auth (bp_panel), no CORS. See docs/panel-contracts.md section 3.
 
@@ -42,17 +42,41 @@ async function call(path: string, init?: RequestInit): Promise<Response> {
 const post = (path: string, body: unknown) =>
   call(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-/** Text of an action reply: plain text, or JSON with result / detail. At most 200 chars. */
-async function resultText(res: Response): Promise<string> {
+/** The cell as the Worker reports it right after an action. */
+export interface ActionCell {
+  id: string;
+  status: PanelStatus;
+  resumable: boolean;
+}
+
+/** Parsed answer of release / clear-feedback: text for toasts (max 200 chars) and, from a newer Worker, the new cell state. */
+export interface ActionResult {
+  text: string;
+  cell?: ActionCell;
+}
+
+/** Reads the cell object of an answer; undefined for an older Worker that sends none or a malformed one. */
+function parseCell(v: unknown): ActionCell | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const c = v as { id?: unknown; status?: unknown; resumable?: unknown };
+  if (typeof c.id !== "string" || typeof c.status !== "string") return undefined;
+  return { id: c.id, status: c.status as PanelStatus, resumable: c.resumable === true };
+}
+
+/** Answer of an action: plain text, or JSON with result / detail / message and optionally cell. */
+async function actionResult(res: Response): Promise<ActionResult> {
   const raw = await res.text();
   try {
-    const j = JSON.parse(raw) as { result?: unknown; detail?: unknown; message?: unknown };
-    const v = j.result ?? j.detail ?? j.message;
-    if (typeof v === "string") return v.slice(0, 200);
+    const j = JSON.parse(raw) as { result?: unknown; detail?: unknown; message?: unknown; cell?: unknown };
+    if (typeof j === "object" && j !== null) {
+      const v = j.result ?? j.detail ?? j.message;
+      const cell = parseCell(j.cell);
+      return { text: typeof v === "string" ? v.slice(0, 200) : "", ...(cell ? { cell } : {}) };
+    }
   } catch {
     /* plain text */
   }
-  return raw.slice(0, 200);
+  return { text: raw.slice(0, 200) };
 }
 
 /** In dev, a network failure (no Worker running) switches to the mock data instead of showing an error. */
@@ -81,19 +105,23 @@ export async function getState(repo: string): Promise<PanelState> {
   return { ...buildMockState(), repo };
 }
 
-export async function reserve(repo: string, cellId: string, who: string): Promise<ReserveResult> {
+export async function reserve(repo: string, cellId: string, who: string): Promise<ReserveResult & { cell?: ActionCell }> {
   if (mock) return mockReserve(cellId, who);
   const res = await post("/reserve", { repo, cell_id: cellId, who });
-  return (await res.json()) as ReserveResult;
+  const raw = (await res.json()) as ReserveResult & { cell?: unknown };
+  const cell = parseCell(raw.cell);
+  const { cell: _ignored, ...rest } = raw;
+  void _ignored;
+  return { ...(rest as ReserveResult), ...(cell ? { cell } : {}) };
 }
 
 /** Admin action: `adminKey` is typed by the user per action; never store it. */
-export async function release(repo: string, cellId: string, adminKey: string): Promise<string> {
-  if (mock) return mockRelease(cellId);
-  return resultText(await post("/release", { repo, cell_id: cellId, admin_key: adminKey }));
+export async function release(repo: string, cellId: string, adminKey: string): Promise<ActionResult> {
+  if (mock) return { text: await mockRelease(cellId) };
+  return actionResult(await post("/release", { repo, cell_id: cellId, admin_key: adminKey }));
 }
 
-export async function clearFeedback(repo: string, cellId: string, adminKey: string): Promise<string> {
-  if (mock) return mockClearFeedback(cellId);
-  return resultText(await post("/clear-feedback", { repo, cell_id: cellId, admin_key: adminKey }));
+export async function clearFeedback(repo: string, cellId: string, adminKey: string): Promise<ActionResult> {
+  if (mock) return { text: await mockClearFeedback(cellId) };
+  return actionResult(await post("/clear-feedback", { repo, cell_id: cellId, admin_key: adminKey }));
 }
