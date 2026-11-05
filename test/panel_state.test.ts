@@ -4,6 +4,8 @@ import type { GitHubApi, Snapshot } from "../src/api.ts";
 import { clearPlanCache } from "../src/common.ts";
 import { claimsFromBranches, computeState, loadCells, loadConfig } from "../src/plan.ts";
 import { buildPanelState, clearPanelCache } from "../src/panel/state.ts";
+import { handlePanelAction } from "../src/panel/actions.ts";
+import { COOKIE, makeSession } from "../src/panel/auth.ts";
 
 const NOW = Date.parse("2026-11-04T12:00:00Z");
 const opts = { mainBranch: "main", historyPages: 0, now: () => NOW, sleep: async () => {}, uuid: () => "u" };
@@ -123,4 +125,62 @@ test("lease, shas, last commit, pr and reservation", async () => {
   assert.equal(by["C-001"].pr, null);
   assert.equal(by["C-001"].reservedBy, "Ann");
   assert.equal(by["C-000"].reservedBy, null);
+});
+
+function liveKv() {
+  const m = new Map<string, string>();
+  return { m, get: async (k: string) => m.get(k) ?? null, put: async (k: string, v: string) => void m.set(k, v), delete: async (k: string) => void m.delete(k) };
+}
+const reservedOf = (s: any, id: string) => s.cells.find((c: any) => c.id === id).reservedBy;
+
+test("reservedBy is read outside the cache: reserve and release show at once", async () => {
+  const k = liveKv();
+  const e = { OAUTH_KV: k, GITHUB_TOKEN: "t" } as any;
+  const api = fakeApi(snapshot());
+  assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), null);
+  k.m.set("reserve:o/r:C-001", JSON.stringify({ who: "Bob", at: NOW }));
+  assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), "Bob");
+  k.m.delete("reserve:o/r:C-001");
+  assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), null);
+});
+
+test("resumable: expired and released cells are resumable, running and fresh ready are not", async () => {
+  const snap = snapshot();
+  snap.branches["cell/C-001"] = { oid: oid("1"), treeOid: oid("2"), committedDate: iso(5), message: "release(C-001): handoff\n\nnext: continue" };
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snap), opts });
+  const by = Object.fromEntries(s.cells.map((c) => [c.id, c]));
+  assert.ok(["ready", "expired"].includes(by["C-001"].status));
+  assert.equal(by["C-001"].resumable, true);
+  assert.equal(by["C-003"].resumable, true);
+  assert.equal(by["C-002"].resumable, false);
+  assert.equal(by["C-000"].resumable, false);
+  assert.equal(by["C-005"].resumable, false);
+  clearPanelCache();
+  clearPlanCache();
+  const plain = await buildPanelState(env, "o/r", { api: fakeApi(snapshot()), opts });
+  assert.equal(plain.cells.find((c) => c.id === "C-001")!.resumable, false);
+});
+
+test("an action clears the panel cache so the next state is rebuilt", async () => {
+  const e = { OAUTH_KV: liveKv(), GITHUB_TOKEN: "t", PANEL_TOKEN: "pw", ADMIN_TOKEN: "adm", ALLOWED_REPOS: "o/r" } as any;
+  let builds = 0;
+  const base: any = fakeApi(snapshot());
+  const api = { ...base, findPr: async (...a: any[]) => (builds++, base.findPr(...a)) } as unknown as GitHubApi;
+  await buildPanelState(e, "o/r", { api, opts });
+  const n1 = builds;
+  assert.ok(n1 > 0);
+  await buildPanelState(e, "o/r", { api, opts });
+  assert.equal(builds, n1);
+  const req = new Request("https://x.test/panel/api/release", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: `${COOKIE}=${await makeSession(e)}` },
+    body: JSON.stringify({ repo: "o/r", cell_id: "C-003", admin_key: "adm" }),
+  });
+  const res = await handlePanelAction(req, e, {} as any, "/panel/api/release", {
+    takeover: async () => "RELEASED C-003",
+    cellInfo: async () => ({ id: "C-003", status: "ready", resumable: true }),
+  });
+  assert.equal(res!.status, 200);
+  await buildPanelState(e, "o/r", { api, opts });
+  assert.ok(builds > n1);
 });
