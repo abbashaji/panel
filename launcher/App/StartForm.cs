@@ -12,6 +12,7 @@ internal sealed class StartForm : Form
     private const int ContentWidth = 716;
 
     private readonly ParseResult _req;
+    private readonly bool _steward;
     private readonly CellRecords _records;
     private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly ToolTip _tip = new();
@@ -22,6 +23,7 @@ internal sealed class StartForm : Form
     {
         _req = req;
         _records = records;
+        _steward = req.Kind == CommandKind.Steward;
 
         Text = "Blueprint Launcher \u00B7 local window on your PC";
         BackColor = Theme.Window;
@@ -36,12 +38,12 @@ internal sealed class StartForm : Form
 
         var idFont = Theme.Mono(13, FontStyle.Bold);
         var idWidth = TextRenderer.MeasureText(req.Cell, idFont, Size.Empty, TextFormatFlags.NoPadding).Width + 14;
-        Controls.Add(Labels.Create(req.Cell, idFont, Theme.Ready, Pad, 32, idWidth, 20));
+        if (!_steward) Controls.Add(Labels.Create(req.Cell, idFont, Theme.Ready, Pad, 32, idWidth, 20));
         var pill = new PillLabel { Text = "Ready", Accent = Theme.Ready, Location = new Point(Pad + idWidth, 30) };
-        Controls.Add(pill);
+        if (!_steward) Controls.Add(pill);
 
-        Controls.Add(Labels.Create("Start " + req.Cell, Theme.Ui(22, FontStyle.Bold), Theme.Text, Pad, 64, ContentWidth, 32));
-        Controls.Add(Labels.Create(req.Repo + " \u00B7 reserved for you for 10 minutes", Theme.Ui(13), Theme.Muted, Pad, 100, ContentWidth, 20));
+        Controls.Add(Labels.Create(_steward ? "Start the Steward" : "Start " + req.Cell, Theme.Ui(22, FontStyle.Bold), Theme.Text, Pad, 64, ContentWidth, 32));
+        Controls.Add(Labels.Create(_steward ? req.Repo : req.Repo + " \u00B7 reserved for you for 10 minutes", Theme.Ui(13), Theme.Muted, Pad, 100, ContentWidth, 20));
 
         Controls.Add(new StepCaption { Number = 1, Text = "OPEN IN WHICH BROWSER PROFILE?", Location = new Point(Pad, 142) });
         _cards.Bounds = new Rectangle(Pad, 176, ContentWidth, 172);
@@ -52,12 +54,14 @@ internal sealed class StartForm : Form
         {
             Bounds = new Rectangle(Pad, 398, ContentWidth, 100),
             ReadOnly = true,
-            Text = PromptBuilder.BuildPrompt(req.Repo, req.Cell).Replace("\r\n", "\n").Replace("\n", "\r\n"),
+            Text = (_steward ? PromptBuilder.BuildStewardPrompt(req.Repo) : PromptBuilder.BuildPrompt(req.Repo, req.Cell)).Replace("\r\n", "\n").Replace("\n", "\r\n"),
         };
         Controls.Add(promptBox);
 
         Controls.Add(Labels.Create(
-            "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You press Send in the chat.",
+            _steward
+                ? "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You type the admin key yourself in the chat; it never passes through the launcher."
+                : "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You press Send in the chat.",
             Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, 36));
 
         _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 566, 260, 44);
@@ -65,6 +69,7 @@ internal sealed class StartForm : Form
         Controls.Add(_cancel);
         Controls.Add(_confirm);
 
+        if (_steward) _confirm.Text = "Open Steward chat";
         LoadProfiles();
         _confirm.Click += (_, _) => Confirm();
     }
@@ -148,8 +153,9 @@ internal sealed class StartForm : Form
         }
         try
         {
-            var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, PromptBuilder.BuildUrl(_req.Repo, _req.Cell));
-            _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
+            var url = _steward ? PromptBuilder.BuildStewardUrl(_req.Repo) : PromptBuilder.BuildUrl(_req.Repo, _req.Cell);
+            var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
+            if (!_steward) _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
             Program.SaveLastChoice(p.Browser, p.Folder);
             Program.Run(cmd);
             Close();

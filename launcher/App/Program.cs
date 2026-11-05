@@ -40,6 +40,9 @@ internal static class Program
             case CommandKind.Open:
                 Application.Run(new OpenForm(parsed, records));
                 return 0;
+            case CommandKind.Steward:
+                Application.Run(new StartForm(parsed, records));
+                return 0;
             case CommandKind.StartMany:
                 Application.Run(new StartManyForm(parsed, records));
                 return 0;
