@@ -37,8 +37,8 @@ describe("mock mode", () => {
   });
 
   it("admin actions answer with text", async () => {
-    expect(await release("o/r", "C-004", "key")).toContain("C-004");
-    expect(await clearFeedback("o/r", "C-004", "key")).toContain("C-004");
+    expect((await release("o/r", "C-004", "key")).text).toContain("C-004");
+    expect((await clearFeedback("o/r", "C-004", "key")).text).toContain("C-004");
   });
 });
 

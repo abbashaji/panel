@@ -310,8 +310,10 @@ c031Describe("refreshAfterAction (C-031)", () => {
     c031Act(() => {
       p = panel.refreshAfterAction("C-031", { status: "ready", resumable: true, clearOwner: true });
     });
-    c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready");
-    c031Expect(c031Screen.getByTestId("owner").textContent).toBe("nobody");
+    // the cache is patched synchronously; React Query tells the component a tick later
+    await c031WaitFor(() => c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready"));
+    c031Expect(qc.getQueryData<{ cells: { status: string }[] }>(["panel-state", "a/b"])?.cells[0]?.status).toBe("ready");
+    await c031WaitFor(() => c031Expect(c031Screen.getByTestId("owner").textContent).toBe("nobody"));
     // the server keeps answering with the old status: the retries run but the patch stays
     await c031WaitFor(() => c031Expect(stateCalls).toBeGreaterThanOrEqual(3));
     c031Expect(c031Screen.getByTestId("st").textContent).toBe("ready");
