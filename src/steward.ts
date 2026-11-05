@@ -7,16 +7,18 @@
 import type { GitHubApi, Snapshot } from "./api.ts";
 import {
   ID_RE,
+  RUN_TITLE_RE,
   claimsFromBranches,
   computeState,
   directDependents,
   hardGraph,
   loadConfig,
+  parseRuns,
   transitiveDependents,
   type Cell,
   type Config,
 } from "./plan.ts";
-import { branchOf, oneLine, short } from "./common.ts";
+import { NOT_INIT, branchOf, errText, freshSnapshot, invalidText, loadPlan, mergedOf, oneLine, short, type EngineOptions } from "./common.ts";
 import { carry, isFeedback, isRelease, parseTrailers, stateSubject, subjectOf, withHeld } from "./trailers.ts";
 
 export const STEWARD_BRANCH = "steward/lease";
@@ -356,4 +358,141 @@ export function findProblems(inp: ProblemInput): Problem[] {
   }
   out.sort((a, b) => b.dependents - a.dependents || Number(b.critical) - Number(a.critical) || b.ageMinutes - a.ageMinutes || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
+}
+
+// ---------------------------------------------------------------- briefing
+export const MAX_PROBLEMS_SHOWN = 12;
+const DOC_MAX = 800;
+const BLUEPRINT_MAX = 2500;
+const DOCS_TOTAL_MAX = 6000;
+
+/** Remove secrets: the given values (an env, for instance) and anything shaped like a GitHub token or a token assignment. */
+export function redact(text: string, secrets: string[] = []): string {
+  let out = text;
+  for (const s of secrets) if (typeof s === "string" && s.length >= 4) out = out.split(s).join("[redacted]");
+  out = out.replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, "[redacted]");
+  out = out.replace(/\b(GITHUB_TOKEN|ADMIN_TOKEN|ADMIN_KEY)\b(\s*[=:]\s*)\S+/g, "$1$2[redacted]");
+  return out;
+}
+
+function excerpt(text: string, max: number): string {
+  const t = text.replace(/\r/g, "").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const nl = cut.lastIndexOf("\n");
+  return (nl > max * 0.6 ? cut.slice(0, nl) : cut) + "\n[...truncated]";
+}
+
+export interface BriefingInput extends ProblemInput {
+  repo: string;
+  project?: string;
+  docs?: { path: string; text: string }[];
+  /** values that must never appear in the text (env values) */
+  secrets?: string[];
+  status?: StewardStatus;
+}
+
+export const WORKING_RULES = [
+  "WORKING RULES",
+  "1. Always take the first problem on the list, resolve it with the actions above, then take the next one. Do not skip ahead.",
+  "2. You are not a cell: never merge, never open a PR for yourself, never edit cells/*.yaml in place (cells are immutable). Fix problems through a note, takeover, a superseding cell (publish_plan) or a fix on the branch (apply_changes).",
+  "3. Never write a note on a cell whose chat is alive (its lease is running): a note moves the branch and would fence its owner out.",
+  "4. Keep every note short and concrete: what failed and what to do differently (at most 2000 characters).",
+  "5. Never print, store or repeat any secret (tokens, keys).",
+  "6. When the list is empty, say so, and call steward_next again in 45 seconds (at most 8 times in a row), then stop.",
+].join("\n");
+
+/** The text a chat gets first when it takes the Steward role. Bounded, and redacted at the end. */
+export function buildBriefing(inp: BriefingInput): string {
+  const problems = findProblems(inp);
+  const total = Object.keys(inp.cells).length;
+  const mergedCount = Object.keys(inp.cells).filter((id) => inp.merged.has(id)).length;
+  const inFlight = Object.keys(inp.snap.branches).filter((n) => {
+    const m = /^cell\/(C-\d+)$/.exec(n);
+    return !!m && !inp.merged.has(m[1]);
+  }).length;
+
+  const L: string[] = [];
+  L.push(`STEWARD BRIEFING for ${inp.project || inp.cfg.project || inp.repo} (repo=${inp.repo})`);
+  L.push("You are the Steward: a role, not a cell. You hold the admin tools and solve the problems of other cells so that no human is needed. You never merge.");
+  if (inp.status && inp.status.state === "active") L.push(`Your lease: ${inp.status.minutesLeft} min left (renewed by every steward call).`);
+
+  L.push("", "PROJECT RULES (excerpts)");
+  let budget = DOCS_TOTAL_MAX;
+  const docs = inp.docs ?? [];
+  if (!docs.length) L.push("(no BLUEPRINT.md or docs/*.md found)");
+  for (const d of docs) {
+    if (budget <= 0) break;
+    const max = Math.min(d.path === "BLUEPRINT.md" ? BLUEPRINT_MAX : DOC_MAX, budget);
+    const text = excerpt(d.text, max);
+    budget -= text.length;
+    L.push(`--- ${d.path}`, text);
+  }
+
+  L.push("", `COUNTS: ${total} cells, ${mergedCount} merged, ${inFlight} with a branch, ${total - mergedCount} open, ${problems.length} problems`);
+
+  L.push("", "PROBLEM LIST (most impact first: cells waiting behind it, then critical, then age)");
+  if (!problems.length) L.push("EMPTY: no open problems.");
+  problems.slice(0, MAX_PROBLEMS_SHOWN).forEach((p, i) => {
+    L.push(`${i + 1}. ${p.id} "${p.title}"${p.critical ? " [critical]" : ""} (${p.kind})`);
+    L.push(`   why: ${p.why}`);
+    L.push(`   attempts: ${p.attempts}; last commit: ${p.lastCommit}; dependents: ${p.dependents}; age: ${p.ageMinutes} min`);
+    for (const a of p.actions) L.push(`   allowed: ${a}`);
+  });
+  if (problems.length > MAX_PROBLEMS_SHOWN) L.push(`(+${problems.length - MAX_PROBLEMS_SHOWN} more; they are listed again after you resolve these)`);
+
+  L.push("", "TOOLS YOU MAY USE: note a cell (an empty commit steward(C-NNN): text that the next chat sees first), takeover (clear_feedback, handoff, force), publish_plan (a superseding cell), apply_changes (fix a branch you hold).");
+  L.push("", WORKING_RULES);
+  return redact(L.join("\n"), inp.secrets);
+}
+
+/** Read everything buildBriefing needs from GitHub and build it. Returns an engine message (NOT_INITIALIZED, ...) when no briefing can be made. */
+export async function gatherBriefing(api: GitHubApi, repo: string, opts: EngineOptions, extra: { secrets?: string[]; status?: StewardStatus } = {}): Promise<string> {
+  const snap = await freshSnapshot(api, repo, opts, opts.historyPages);
+  if (typeof snap === "string") return snap;
+  if (snap.blueprint === null) return NOT_INIT;
+  const plan = loadPlan(repo, snap, opts);
+  if (plan.errors.length) return invalidText(plan);
+  const now = opts.now();
+
+  let ci: Record<string, number> = {};
+  try {
+    ci = parseRuns(await api.activeRuns(repo), now);
+  } catch {
+    /* the CI signal is optional */
+  }
+  const failedCi = new Set<string>();
+  try {
+    const seen = new Set<string>();
+    const runs = (await api.workflowRuns(repo, "cell-gate.yml", 50)).slice().sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    for (const r of runs) {
+      const id = RUN_TITLE_RE.exec(r.displayTitle || "")?.[1];
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (r.status === "completed" && (r.conclusion === "failure" || r.conclusion === "timed_out")) failedCi.add(id);
+    }
+  } catch {
+    /* the CI signal is optional */
+  }
+  let mainAgeMinutes: number | undefined;
+  try {
+    const tip = await api.branchTip(repo, opts.mainBranch);
+    const ts = tip ? Date.parse(tip.committedDate) : NaN;
+    if (!Number.isNaN(ts)) mainAgeMinutes = Math.max(0, (now - ts) / 60000);
+  } catch {
+    /* optional */
+  }
+  const docs: { path: string; text: string }[] = [];
+  try {
+    const names = ((await api.listDir(repo, opts.mainBranch, "docs")) ?? [])
+      .filter((n) => n.endsWith(".md"))
+      .sort()
+      .slice(0, 6)
+      .map((n) => `docs/${n}`);
+    const files = await api.readFiles(repo, opts.mainBranch, ["BLUEPRINT.md", ...names]);
+    for (const p of ["BLUEPRINT.md", ...names]) if (files[p]) docs.push({ path: p, text: files[p] as string });
+  } catch (e) {
+    docs.push({ path: "docs", text: `(could not read the docs: ${errText(e)})` });
+  }
+  return buildBriefing({ cells: plan.cells, cfg: plan.cfg, snap, merged: mergedOf(snap), now, ci, failedCi, mainAgeMinutes, repo, docs, secrets: extra.secrets, status: extra.status });
 }
