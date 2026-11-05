@@ -45,6 +45,6 @@ export async function handlePanelRequest(req: Request, env: PanelEnv, ctx: Execu
     }
   }
 
-  const res = await handlePanelAction(r, env, ctx, path);
+  const res = await handlePanelAction(r, env, ctx, path, { api: deps.api, opts: deps.opts });
   return res ?? json(404, { error: "not_found" });
 }
