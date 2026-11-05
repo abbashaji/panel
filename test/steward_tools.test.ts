@@ -117,3 +117,90 @@ test("a dead Steward (lease expired) is resumed by a fresh chat", async () => {
   assert.ok(out.startsWith("STEWARD_RESUMED session="), out);
   assert.notEqual(sessionOf(out), first);
 });
+
+test("another live Steward: STEWARD_BUSY, and the lease does not move", async () => {
+  const fx = seed();
+  const h = steward(fx, envOf({ ADMIN_TOKEN: KEY }));
+  await h.steward_next({ admin_key: KEY, who: "alice" });
+  const tip = fx.refs.get("steward/lease");
+  for (const session of [undefined, "steward-other"]) {
+    const out = await h.steward_next({ admin_key: KEY, session, who: "mallory" });
+    assert.ok(out.startsWith("STEWARD_BUSY"), out);
+    assert.ok(!out.includes("STEWARD BRIEFING"));
+  }
+  assert.equal(fx.refs.get("steward/lease"), tip);
+  const rel = await h.steward_release({ admin_key: KEY, session: "steward-other", handoff: true });
+  assert.ok(rel.startsWith("NOT_STEWARD"), rel);
+  assert.ok((await h.steward_release({ admin_key: KEY, handoff: true })).startsWith("NOT_STEWARD"));
+  assert.equal(fx.refs.get("steward/lease"), tip);
+});
+
+test("steward_note writes on a cell with a branch and refuses the rest", async () => {
+  const fx = seed();
+  await engine.nextCell(fx, "o/r", opts(fx), "claim"); // C-000 has a branch
+  const h = steward(fx, envOf({ ADMIN_TOKEN: KEY }));
+  const tip = fx.refs.get("cell/C-000");
+  const out = await h.steward_note({ admin_key: KEY, cell_id: "C-000", note: "the last chat got stuck on the import; start with the types" });
+  assert.ok(out.startsWith("NOTED C-000"), out);
+  assert.notEqual(fx.refs.get("cell/C-000"), tip);
+  const tip2 = fx.refs.get("cell/C-000");
+  assert.ok((await h.steward_note({ admin_key: KEY, cell_id: "C-900", note: "x" })).startsWith("NOT_RUNNING C-900"));
+  assert.ok((await h.steward_note({ admin_key: KEY, cell_id: "not-a-cell", note: "x" })).startsWith("UNKNOWN_CELL"));
+  assert.ok((await h.steward_note({ admin_key: KEY, cell_id: "C-000", note: "   " })).startsWith("EMPTY_NOTE C-000"));
+  assert.ok((await h.steward_note({ admin_key: KEY, cell_id: "C-000" })).startsWith("BAD_ARGS"));
+  assert.equal(fx.refs.get("cell/C-000"), tip2);
+});
+
+test("the admin key never appears in any answer", async () => {
+  const fx = seed();
+  await engine.nextCell(fx, "o/r", opts(fx), "claim");
+  const h = steward(fx, envOf({ ADMIN_TOKEN: KEY }));
+  const outs: string[] = [];
+  const first = await h.steward_next({ admin_key: KEY });
+  outs.push(first);
+  const session = sessionOf(first);
+  outs.push(await h.steward_next({ admin_key: KEY, session }));
+  outs.push(await h.steward_next({ admin_key: "guess-" + KEY }));
+  outs.push(await h.steward_next({ admin_key: KEY, session: "steward-other" }));
+  outs.push(await h.steward_note({ admin_key: KEY, cell_id: "C-000", note: "the key is " + KEY }));
+  outs.push(await h.steward_note({ admin_key: KEY, cell_id: "C-900", note: "x" }));
+  outs.push(await h.steward_note({ admin_key: "nope-" + KEY, cell_id: "C-000", note: "x" }));
+  outs.push(await h.steward_release({ admin_key: KEY, session: "steward-other" }));
+  outs.push(await h.steward_release({ admin_key: KEY, session, handoff: true }));
+  outs.push(await steward(fx, envOf()).steward_next({ admin_key: KEY }));
+  // the project's own BLUEPRINT.md contains the key: the briefing must hide it
+  assert.ok(first.includes("[redacted]"));
+  // an error that carries the key is redacted too
+  const boom = stewardToolHandlers(envOf({ ADMIN_TOKEN: KEY }), opts(fx), () => {
+    throw new Error("boom " + KEY);
+  });
+  const err = await boom.steward_next({ admin_key: KEY });
+  assert.ok(err.startsWith("ERROR:") && err.includes("[redacted]"), err);
+  outs.push(err);
+  for (const o of outs) assert.ok(!o.includes(KEY), o);
+});
+
+test("a refresh tells what changed since the last call (advisory KV)", async () => {
+  const fx = seed();
+  const claimed = await engine.nextCell(fx, "o/r", opts(fx), "claim");
+  const base = /base=([0-9a-f]{7})/.exec(claimed)![1];
+  const store = new Map<string, string>();
+  const kv = {
+    get: async (k: string) => store.get(k) ?? null,
+    put: async (k: string, v: string) => {
+      store.set(k, v);
+    },
+    delete: async (k: string) => {
+      store.delete(k);
+    },
+  };
+  const env = envOf({ ADMIN_TOKEN: KEY, OAUTH_KV: kv as any });
+  const h = steward(fx, env);
+  const first = await h.steward_next({ admin_key: KEY });
+  assert.ok(!first.includes("CHANGES since"));
+  const session = sessionOf(first);
+  await toolHandlers(env, opts(fx), () => fx).cell_signal({ cell_id: "C-000", base, kind: "feedback", text: "I need a decision on the schema" });
+  const second = await h.steward_next({ admin_key: KEY, session });
+  assert.ok(second.startsWith("STEWARD_REFRESHED"), second);
+  assert.ok(second.includes("CHANGES since your last steward_next: new problems: C-000"), second);
+});
