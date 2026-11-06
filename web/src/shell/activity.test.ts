@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PanelCell } from "../core/types";
-import { deriveActivity, initials, progress } from "./activity";
+import { deriveActivity, healWords, initials, progress } from "./activity";
 
 const NOW = Date.parse("2026-11-04T12:00:00Z");
 const iso = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
@@ -93,5 +93,38 @@ describe("initials", () => {
     expect(initials("sara.k")).toBe("SK");
     expect(initials("omar")).toBe("OM");
     expect(initials("")).toBe("Y");
+  });
+});
+
+describe("deriveActivity heal events", () => {
+  const run = cell("C-002", "running", { lastCommit: { subject: "work", next: null, at: iso(5) } });
+  const log = [
+    { cell: "C-032", kind: "sync_main", at: iso(10), note: "n1" },
+    { cell: "C-033", kind: "replacement_published", at: iso(2), note: "n2" },
+    { cell: "C-034", kind: "note_added", at: "not a date", note: "bad" },
+  ];
+
+  it("mixes heal rows into the list by time, newest first", () => {
+    const rows = deriveActivity([run], NOW, 30, log);
+    expect(rows.map((r) => r.text)).toEqual([
+      "C-033 self-healed: replacement published",
+      "C-002 work",
+      "C-032 self-healed: sync main",
+    ]);
+    expect(rows[0]?.time).toMatch(/^\d\d:\d\d$/);
+  });
+
+  it("maps every kind to plain words", () => {
+    expect(healWords("sync_main")).toBe("sync main");
+    expect(healWords("note_added")).toBe("note added");
+    expect(healWords("feedback_cleared")).toBe("feedback cleared");
+    expect(healWords("fix_cell_published")).toBe("fix cell published");
+    expect(healWords("replacement_published")).toBe("replacement published");
+    expect(healWords("some_new_kind")).toBe("some new kind");
+  });
+
+  it("shows nothing and does not throw without a healLog", () => {
+    expect(deriveActivity([run], NOW, 30, undefined)).toHaveLength(1);
+    expect(deriveActivity([run], NOW, 30, null as never)).toHaveLength(1);
   });
 });

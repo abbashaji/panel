@@ -1,11 +1,12 @@
 import { StatusIcon } from "../core/Icon";
 import { STATUS_META, STATUS_ORDER, displayMeta, isResumable } from "../core/status";
 import { usePanel } from "../core/store";
-import type { PanelCell } from "../core/types";
+import type { PanelCell, PanelState } from "../core/types";
 import type { AdminAction } from "./ReleaseDialog";
 import { ago, Field, LeaseBar, StatusChip } from "./parts";
 
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
+const HEAL_BUDGET = 3;
 const DASH = "\u2014";
 const HELP =
   "Click selects. Double-click opens details. Release writes one empty commit so any chat can adopt the cell at once.";
@@ -45,7 +46,17 @@ export function MultiSummary({ cells }: { cells: PanelCell[] }) {
   );
 }
 
-export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: string; onAdmin(a: AdminAction): void }) {
+export function CellDetails({
+  cell,
+  repo,
+  onAdmin,
+  healLog,
+}: {
+  cell: PanelCell;
+  repo: string;
+  onAdmin(a: AdminAction): void;
+  healLog?: PanelState["healLog"];
+}) {
   const { launcher } = usePanel();
   const branch = `cell/${cell.id}`;
   const gh = REPO_OK.test(repo) ? `https://github.com/${repo}` : null;
@@ -59,6 +70,15 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
   const subline = cell.critical ? `Critical cell \u00b7 ${direct}` : direct;
   const when = ago(cell.lastCommit?.at);
   const n = cell.allowedPaths.length;
+  const heals = cell.heals ?? 0;
+  const lastHeal = Array.isArray(healLog)
+    ? healLog
+        .filter((h) => h?.cell === cell.id)
+        .reduce<{ at: number; note: string } | null>((best, h) => {
+          const at = Date.parse(h.at);
+          return Number.isNaN(at) || (best && best.at >= at) ? best : { at, note: h.note };
+        }, null)
+    : null;
 
   return (
     <div data-testid="cell-details">
@@ -85,6 +105,18 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
         <p data-testid="resume-note" className="mb-0 mt-2 text-[12.5px] font-semibold text-[#FFC857]">
           Ready to resume, the last chat left a handoff
         </p>
+      )}
+
+      {heals > 0 && (
+        <div data-testid="heal-note" className="mt-2 text-[12.5px] font-medium text-[#A9B2C6]">
+          <p className="m-0">{`Self-healed ${heals} ${heals === 1 ? "time" : "times"}`}</p>
+          {lastHeal?.note ? <p className="m-0 mt-0.5 text-[11.5px] text-[#8A93A8]">{lastHeal.note}</p> : null}
+          {heals >= HEAL_BUDGET && (
+            <p data-testid="heal-budget" className="m-0 mt-0.5 font-semibold text-[#FFC857]">
+              Self-heal budget used, the Steward takes over
+            </p>
+          )}
+        </div>
       )}
 
       <LeaseBar lease={cell.lease} expired={cell.status === "expired"} attempts={cell.attempts} maxAttempts={cell.maxAttempts} />
