@@ -5,7 +5,7 @@ import { reserve } from "../core/api";
 import { usePanel } from "../core/store";
 import LaunchProvider from "./index";
 import RunReadyDialog from "./RunReadyDialog";
-import { openUrl, startManyUrl, startUrl, syncUrl, transport } from "./protocol";
+import { openUrl, startManyUrl, startUrl, stewardUrl, syncUrl, transport } from "./protocol";
 
 vi.mock("../core/store", () => ({ usePanel: vi.fn() }));
 vi.mock("../core/api", () => ({ reserve: vi.fn() }));
@@ -445,5 +445,93 @@ describe("LaunchProvider refreshes after every start path", () => {
     vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
     registered.start!("C-010");
     await screen.findByRole("dialog");
+  });
+});
+
+describe("stewardUrl", () => {
+  it("builds the steward link from valid input", () => {
+    expect(stewardUrl(REPO, "Ann B")).toBe("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann%20B");
+  });
+
+  it("refuses bad input", () => {
+    for (const repo of ["", "x", "a b/c", "a/b/c", "a/b&x=1", "a/b\n"]) expect(() => stewardUrl(repo, "Ann")).toThrow();
+    for (const who of ["", "a&b", "a=b", "x".repeat(41), "x\ny", "<b>"]) expect(() => stewardUrl(REPO, who)).toThrow();
+    const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
+    expect(() => stewardUrl(repo, "x".repeat(40))).not.toThrow();
+  });
+});
+
+describe("startSteward", () => {
+  const toast = vi.fn();
+  const refreshAfterAction = vi.fn();
+  let registered: { startSteward?: () => void } = {};
+  const panel = {
+    repo: REPO,
+    state: { cells: [] },
+    toast,
+    refreshAfterAction,
+    registerLauncher: (part: typeof registered) => {
+      registered = part;
+      return () => {};
+    },
+  };
+  let go: ReturnType<typeof vi.spyOn>;
+  let watch: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    toast.mockReset();
+    refreshAfterAction.mockReset();
+    registered = {};
+    vi.mocked(usePanel).mockReturnValue(panel as never);
+    vi.mocked(reserve).mockReset();
+    go = vi.spyOn(transport, "go").mockImplementation(() => {});
+    vi.spyOn(transport, "silent").mockImplementation(() => {});
+    watch = vi.spyOn(transport, "watch").mockImplementation(() => {});
+    render(
+      <LaunchProvider>
+        <div>child</div>
+      </LaunchProvider>,
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("registers startSteward", () => {
+    expect(registered.startSteward).toBeTypeOf("function");
+  });
+
+  it("fires the steward URL once, without reserving, then refreshes", () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the launcher hint when the launcher is missing", () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    watch.mockImplementation((onMissing: () => void) => onMissing());
+    registered.startSteward!();
+    expect(toast).toHaveBeenCalledWith("Nothing opened? Install the launcher first: run launcher/install.ps1, then try again.", "info");
+  });
+
+  it("asks for a name first when none is saved", async () => {
+    registered.startSteward!();
+    const input = await screen.findByLabelText("Display name");
+    expect(go).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "a&b" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(go).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "Ann" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
+    expect(window.localStorage.getItem("bp_who")).toBe("Ann");
+    expect(reserve).not.toHaveBeenCalled();
   });
 });

@@ -41,6 +41,13 @@ export function startManyUrl(repo: string, who: string, cells: readonly string[]
   return fit(`blueprint://startmany?repo=${enc(repo)}&who=${enc(who)}&cells=${cells.join(",")}`);
 }
 
+/** blueprint://steward?repo=&who=  (same checks as startUrl; no cell) */
+export function stewardUrl(repo: string, who: string): string {
+  need(REPO_RE, repo, "repo");
+  need(WHO_RE, who, "name");
+  return fit(`blueprint://steward?repo=${enc(repo)}&who=${enc(who)}`);
+}
+
 /** blueprint://open?repo=&cell= */
 export function openUrl(repo: string, cell: string): string {
   need(REPO_RE, repo, "repo");

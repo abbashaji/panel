@@ -4,7 +4,7 @@ import { reserve } from "../core/api";
 import { readStore, writeStore } from "../core/storage";
 import { usePanel } from "../core/store";
 import type { PanelState, ReserveResult } from "../core/types";
-import { CELL_RE, MAX_CELLS, WHO_RE, openUrl, startManyUrl, startUrl, syncUrl, transport } from "./protocol";
+import { CELL_RE, MAX_CELLS, WHO_RE, openUrl, startManyUrl, startUrl, stewardUrl, syncUrl, transport } from "./protocol";
 
 const WHO_KEY = "bp_who";
 const OWN_KEY = "bp_own";
@@ -67,7 +67,7 @@ function makeRefresh(panel: object): () => void {
   };
 }
 
-type Dlg = { phase: "name"; id?: string; many?: string[] } | { phase: "confirm"; id: string; url: string; who: string } | null;
+type Dlg = { phase: "name"; id?: string; many?: string[]; steward?: boolean } | { phase: "confirm"; id: string; url: string; who: string } | null;
 
 /** Registers the launcher hooks with usePanel().registerLauncher and renders the start dialog. */
 export default function LaunchProvider({ children }: { children?: ReactNode }) {
@@ -252,6 +252,32 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     [sendSync],
   );
 
+  /** open blueprint://steward; no reservation, the Worker lease decides who wins (a second chat gets STEWARD_BUSY) */
+  const doSteward = useCallback((who: string) => {
+    const { repo: r, toast: say, refresh: again } = live.current;
+    let url: string;
+    try {
+      url = stewardUrl(r, who);
+    } catch (e) {
+      say(`Cannot build the launcher link: ${errText(e)}`, "error");
+      return;
+    }
+    transport.go(url);
+    transport.watch(() => live.current.toast(HINT, "info"));
+    again();
+  }, []);
+
+  const startSteward = useCallback(() => {
+    const who = readWho();
+    if (!who) {
+      setName("");
+      setNameErr("");
+      setDlg({ phase: "name", steward: true });
+      return;
+    }
+    doSteward(who);
+  }, [doSteward]);
+
   /** my name for my own cells; for others' cells their name */
   const owner = useCallback((id: string): string | null => {
     if (isMine(id)) return readWho() || null;
@@ -259,8 +285,8 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   }, [isMine]);
 
   useEffect(
-    () => registerLauncher({ start, startMany, open, owner, sync: (ids: string[]) => sendSync(ids, true) }),
-    [registerLauncher, start, startMany, open, owner, sendSync],
+    () => registerLauncher({ start, startMany, startSteward, open, owner, sync: (ids: string[]) => sendSync(ids, true) }),
+    [registerLauncher, start, startMany, startSteward, open, owner, sendSync],
   );
 
   // when the state changes: tell the launcher which cells are merged, and forget merged cells as mine
@@ -282,9 +308,10 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
       return;
     }
     writeStore(WHO_KEY, v);
-    const { id, many } = dlg;
+    const { id, many, steward } = dlg;
     setDlg(null);
-    if (many) void doStartMany(many, v);
+    if (steward) doSteward(v);
+    else if (many) void doStartMany(many, v);
     else if (id) void doStart(id, v);
   };
 
