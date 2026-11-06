@@ -10,6 +10,8 @@ import { ID_RE } from "./plan.ts";
 import { nextCellWait } from "./longpoll.ts";
 import { SERVER_INSTRUCTIONS } from "./protocol.ts";
 import { cellSignal } from "./signal.ts";
+import { cellClear, cellHelp, cellNote, cellSync, type HealOptions } from "./selfheal.ts";
+import { cellFix } from "./selfheal_fix.ts";
 import { claimSteward, gatherBriefing, leaseMinutesOf, noteCell, redact, releaseSteward } from "./steward.ts";
 import type { ClaimOptions, ReserveKv } from "./claim.ts";
 
@@ -158,8 +160,27 @@ export function stewardToolHandlers(env: Env, opts: engine.EngineOptions, apiFac
   return withWarning(env, raw);
 }
 
+/**
+ * The self-heal tools: cell_help, cell_note, cell_sync, cell_clear, cell_fix. No admin key: the proof is cell_id + base (the tip of
+ * cell/<id>) and a live lease, checked inside selfheal.ts / selfheal_fix.ts. Kept apart from toolHandlers, whose tool list (the 11
+ * cell tools) is asserted exactly by test/tools.test.ts; buildServer registers all sets.
+ */
+export function selfhealToolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: ApiFactory = createGitHubApi): Record<string, (args: any) => Promise<string>> {
+  const run = makeRun(env, apiFactory);
+  const hopts: HealOptions = { ...opts, secrets: [env.GITHUB_TOKEN, env.MCP_AUTH_TOKEN, env.ADMIN_TOKEN, env.EXT_TOKEN].filter((s): s is string => typeof s === "string" && s.length > 0) };
+  const who = (a: any) => ({ cell_id: a?.cell_id, base: a?.base });
+  const raw = {
+    cell_help: run((api, r, a) => cellHelp(api, r, hopts, { ...who(a), problem: a?.problem })),
+    cell_note: run((api, r, a) => cellNote(api, r, hopts, { ...who(a), text: a?.note })),
+    cell_sync: run((api, r, a) => cellSync(api, r, hopts, who(a))),
+    cell_clear: run((api, r, a) => cellClear(api, r, hopts, who(a))),
+    cell_fix: run((api, r, a) => cellFix(api, r, hopts, { ...who(a), kind: a?.kind, cells: a?.cells } as any)),
+  };
+  return withWarning(env, raw);
+}
+
 const NO_WARN = /^(CONFLICT|NOT_CLAIMED|CELL_DONE)/;
-const WARNED_TOOLS = new Set(["apply_changes", "cell_signal", "read_files", "submit_cell", "ci_result", "preflight"]);
+const WARNED_TOOLS = new Set(["apply_changes", "cell_signal", "read_files", "submit_cell", "ci_result", "preflight", "cell_help", "cell_note", "cell_sync", "cell_clear", "cell_fix"]);
 
 /** C5: append LIMIT_WARNING_TEXT while the advisory KV flag of the cell exists; delete the flag on next_cell CLAIMED/RESUME, cell_signal release and takeover. No OAUTH_KV or any KV error = the reply is returned unchanged. */
 function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>): Record<string, (args: any) => Promise<string>> {
@@ -204,7 +225,7 @@ function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>
 
 export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi): McpServer {
   const server = new McpServer({ name: "blueprint-mcp", version: "1.0.0" }, { instructions: SERVER_INSTRUCTIONS } as any);
-  const h = { ...toolHandlers(env, engineOptions(env), apiFactory), ...stewardToolHandlers(env, engineOptions(env), apiFactory) };
+  const h = { ...toolHandlers(env, engineOptions(env), apiFactory), ...stewardToolHandlers(env, engineOptions(env), apiFactory), ...selfhealToolHandlers(env, engineOptions(env), apiFactory) };
   const repo = z.string().optional().describe("owner/name; omit to use the default repository");
 
   server.registerTool("next_cell", {
@@ -273,6 +294,34 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
     description: "Heartbeat, release (hand the cell to another chat) or feedback for your cell.",
     inputSchema: { repo, cell_id: z.string(), base: z.string(), kind: z.enum(["heartbeat", "release", "feedback"]), text: z.string().optional(), next: z.string().optional() },
   }, async (a) => text(await h.cell_signal(a)));
+
+  const cellId = z.string();
+  const baseSha = z.string().optional().describe("7-char sha from your last CLAIMED/RESUME/ok/HEALED");
+
+  server.registerTool("cell_help", {
+    description: "Blocked? Call this BEFORE cell_signal feedback: a short briefing with the problem class and the exact next calls. Read-only, free, no admin key needed.",
+    inputSchema: { repo, cell_id: cellId, base: baseSha, problem: z.string().optional().describe("what is wrong, in a few lines") },
+  }, async (a) => text(await h.cell_help(a)));
+
+  server.registerTool("cell_note", {
+    description: "Record a decision or assumption on your own cell; it becomes AMENDMENTS (binding) for every chat on it. One of 3 heals; no admin key needed.",
+    inputSchema: { repo, cell_id: cellId, base: baseSha, note: z.string() },
+  }, async (a) => text(await h.cell_note(a)));
+
+  server.registerTool("cell_sync", {
+    description: "Merge main into your cell branch when it is behind (main is never changed). Free when up to date; no admin key needed.",
+    inputSchema: { repo, cell_id: cellId, base: baseSha },
+  }, async (a) => text(await h.cell_sync(a)));
+
+  server.registerTool("cell_clear", {
+    description: "Clear a feedback you filed by mistake on your own cell. One of 3 heals; no admin key needed.",
+    inputSchema: { repo, cell_id: cellId, base: baseSha },
+  }, async (a) => text(await h.cell_clear(a)));
+
+  server.registerTool("cell_fix", {
+    description: "Publish a corrected cell for your own cell (kind replace) or a small fix cell for a broken main (kind blocker). At most 2 cells; no admin key needed.",
+    inputSchema: { repo, cell_id: cellId, base: baseSha, kind: z.string(), cells: z.array(z.any()).optional() },
+  }, async (a) => text(await h.cell_fix(a)));
 
   server.registerTool("steward_next", {
     description: "STEWARD ONLY (needs admin_key): the first call of a chat the owner told 'you are the Steward' (every other chat starts with next_cell). First call returns STEWARD_STARTED with a session to pass on every later call, plus the briefing; later calls with the session refresh the lease and return the new briefing and what changed; a dead Steward is resumed (STEWARD_RESUMED); a live one gives STEWARD_BUSY.",

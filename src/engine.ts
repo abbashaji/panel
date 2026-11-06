@@ -15,6 +15,7 @@ export { nextCell, reserveKey, getReservation, setReservation, clearReservation,
 export { takeoverCell } from "./takeover.ts";
 export { applyChanges, type Op } from "./apply.ts";
 import { bytes } from "./apply.ts";
+import { carry } from "./trailers.ts";
 
 // ---------------------------------------------------------------- init_blueprint (zero-setup per repo)
 const KIT_MARKER = ".github/blueprint-kit.version";
@@ -129,6 +130,34 @@ export async function readFiles(
   return out.join("\n");
 }
 
+// ---------------------------------------------------------------- automatic main sync (submit_cell, preflight)
+/**
+ * When cell/<id> is behind main, merge main into it first (main itself is never touched). A conflict stops with the CONFLICT text,
+ * up to date changes nothing. A failed compare means no claim about being behind: carry on without syncing.
+ */
+async function syncBehind(api: GitHubApi, repo: string, opts: EngineOptions, id: string, tipMessage: string): Promise<{ stop?: string; note: string }> {
+  let behind = 0;
+  try {
+    behind = (await api.compare(repo, opts.mainBranch, branchOf(id))).behind;
+  } catch {
+    return { note: "" };
+  }
+  if (!(behind > 0)) return { note: "" };
+  let res;
+  try {
+    res = await api.mergeBranch(repo, branchOf(id), opts.mainBranch, carry(tipMessage, `sync(${id}): merge ${opts.mainBranch}`));
+  } catch (e) {
+    return { stop: `ERROR: ${branchOf(id)} is behind ${opts.mainBranch} and the automatic sync failed: ${errText(e)}. Call cell_help.`, note: "" };
+  }
+  if (res.status === "up_to_date") return { note: "" };
+  if (res.status === "conflict") {
+    const files = (res.files ?? []).slice(0, 12).join(", ");
+    return { stop: `CONFLICT ${id} (sync): ${opts.mainBranch} and your branch changed the same file(s)${files ? `: ${files}` : ""}. This is NOT a takeover: the cell is still yours and nothing was changed. Resolve those files inside allowed_paths with apply_changes (or call cell_help), then submit again.`, note: "" };
+  }
+  const tip = res.oid ?? (await api.branchTip(repo, branchOf(id)))?.oid;
+  return { note: `synced ${opts.mainBranch} into ${branchOf(id)}${tip ? ` (new base=${short(tip)})` : ""}; ` };
+}
+
 // ---------------------------------------------------------------- submit_cell
 export async function submitCell(
   api: GitHubApi,
@@ -150,11 +179,14 @@ export async function submitCell(
   const files = await api.changedFiles(repo, opts.mainBranch, branchOf(id));
   if (files.length === 0) return `NOTHING_TO_SUBMIT ${id}: the branch has no changes compared with ${opts.mainBranch}`;
 
+  const sync = await syncBehind(api, repo, opts, id, snap.branches[branchOf(id)].message ?? "");
+  if (sync.stop) return sync.stop;
+
   const title = `cell(${id}): ${oneLine(String(cell.title ?? id), 120)}`;
   const body = String(args.summary ?? "").slice(0, 2000);
   try {
     const pr = await api.createPr(repo, { title, head: branchOf(id), base: opts.mainBranch, body });
-    return `PR #${pr.number} opened (${files.length} files); call ci_result`;
+    return `${sync.note}PR #${pr.number} opened (${files.length} files); call ci_result`;
   } catch (e) {
     const again = await api.findPr(repo, branchOf(id));
     if (again?.state === "open") return `PR #${again.number} already open; call ci_result`;
@@ -167,12 +199,14 @@ export async function preflight(api: GitHubApi, repo: string, opts: EngineOption
   if (!ID_RE.test(id)) return `BAD_CELL_ID ${id}`;
   const tip = await api.branchTip(repo, branchOf(id));
   if (!tip) return `NOT_CLAIMED ${id}: there is no branch ${branchOf(id)}. Call next_cell first.`;
+  const sync = await syncBehind(api, repo, opts, id, (tip as { message?: string }).message ?? "");
+  if (sync.stop) return sync.stop;
   try {
     await api.dispatch(repo, "cell-preflight.yml", opts.mainBranch, { cell_id: id });
   } catch (e) {
     return `ERROR: could not start the preflight: ${errText(e)}`;
   }
-  return `started preflight ${id}; keep working, then call ci_result once`;
+  return `${sync.note}started preflight ${id}; keep working, then call ci_result once`;
 }
 
 // ---------------------------------------------------------------- ci_result
