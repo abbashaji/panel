@@ -1,0 +1,23 @@
+# Sample cell for the end to end test. Rename ids as described in docs/e2e-runbook.md before publishing.
+id: E-002
+title: Parallel cell A, add parts/a.txt
+type: normal
+goal: |
+  Create parts/a.txt with exactly one line: a
+  Runs in parallel with the other cells that depend only on the skeleton.
+inputs: []
+after:
+  - E-001
+provides:
+  - parts/a.txt
+read:
+  - hello.txt
+allowed_paths:
+  - parts/a.txt
+outputs:
+  - parts/a.txt
+acceptance:
+  - cmd: test -f parts/a.txt
+  - cmd: grep -qx a parts/a.txt
+notes: |
+  Happy path, parallel with E-003 and E-004.

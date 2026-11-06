@@ -1,0 +1,25 @@
+# Sample cell for the end to end test. Rename ids as described in docs/e2e-runbook.md before publishing.
+# DELIBERATE SPEC GAP: the goal refers to a contract that this cell does not list under inputs.
+id: E-003
+title: Parallel cell B, add parts/b.txt (spec gap)
+type: normal
+goal: |
+  Create parts/b.txt with exactly one line. The line must follow the line format defined by the
+  contract of the cell this one reads from.
+inputs: []
+after:
+  - E-001
+provides:
+  - parts/b.txt
+read:
+  - hello.txt
+allowed_paths:
+  - parts/b.txt
+outputs:
+  - parts/b.txt
+acceptance:
+  - cmd: test -f parts/b.txt
+  - cmd: grep -qx b parts/b.txt
+notes: |
+  Expected: the chat finds that no contract is given and reports it with cell_note instead of guessing.
+  The runbook tells the owner what to answer: the line is just the letter b.
