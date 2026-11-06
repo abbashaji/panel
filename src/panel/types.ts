@@ -61,6 +61,8 @@ export interface PanelCell {
   inputs: string[];
   /** true for a ready or expired cell whose branch tip is a release/handoff commit, and for a branch whose lease expired */
   resumable?: boolean;
+  /** sorted ids of the cells that replace this one; set only when it never merged. It stays 'waiting' and is left out of counts. */
+  supersededBy?: string[];
 }
 
 export interface PanelCounts {
