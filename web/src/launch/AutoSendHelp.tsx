@@ -42,7 +42,7 @@ export default function AutoSendHelp() {
             <li>From the manager menu, set the allowed repos to this repo.</li>
           </ol>
           <p className="mt-2" style={muted}>
-            The launcher checkbox \u201CAuto-send in the browser\u201D must also be on. Steward chats never auto-send.
+            The launcher checkbox &ldquo;Auto-send in the browser&rdquo; must also be on. Steward chats never auto-send.
           </p>
         </div>
       )}
