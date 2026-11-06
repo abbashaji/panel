@@ -1,0 +1,21 @@
+id: E-003
+title: Parallel B - add b.txt
+type: normal
+goal: |
+  Create e2e-out/b.txt containing exactly one line: beta from E-003
+inputs: []
+after:
+  - E-001
+provides:
+  - e2e-out/b.txt
+read:
+  - hello.txt
+allowed_paths:
+  - e2e-out/b.txt
+outputs:
+  - e2e-out/b.txt
+acceptance:
+  - cmd: test -f e2e-out/b.txt
+  - cmd: grep -q "beta from E-003" e2e-out/b.txt
+notes: |
+  Runs in parallel with E-002 and E-004 once E-001 is merged.
