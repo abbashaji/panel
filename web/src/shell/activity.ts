@@ -1,4 +1,4 @@
-import type { PanelCell } from "../core/types";
+import type { PanelCell, PanelState } from "../core/types";
 
 export type ActivityKind = "heartbeat" | "warning" | "merged";
 
@@ -18,8 +18,31 @@ const hhmm = (ms: number): string => {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
-/** Activity rows derived from the panel state (no separate event feed exists), newest first. */
-export function deriveActivity(cells: PanelCell[], now: number = Date.now(), limit = 30): ActivityRow[] {
+const HEAL_WORDS: Record<string, string> = {
+  sync_main: "sync main",
+  note_added: "note added",
+  feedback_cleared: "feedback cleared",
+  fix_cell_published: "fix cell published",
+  fix_published: "fix cell published",
+  replacement_published: "replacement published",
+};
+
+/** Plain words for a heal kind; an unknown kind falls back to itself with separators turned into spaces. */
+export function healWords(kind: string): string {
+  const k = String(kind ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  return HEAL_WORDS[k] ?? (String(kind ?? "").replace(/[_-]+/g, " ").trim() || "unknown");
+}
+
+/**
+ * Activity rows derived from the panel state (no separate event feed exists), newest first.
+ * healLog (PanelState.healLog) is optional: when missing (old Worker) no heal rows are added.
+ */
+export function deriveActivity(
+  cells: PanelCell[],
+  now: number = Date.now(),
+  limit = 30,
+  healLog?: PanelState["healLog"],
+): ActivityRow[] {
   const rows: ActivityRow[] = [];
   const add = (c: PanelCell, at: number, kind: ActivityKind, text: string, tag: string) => {
     if (Number.isNaN(at)) return;
@@ -43,6 +66,13 @@ export function deriveActivity(cells: PanelCell[], now: number = Date.now(), lim
     if (c.status === "expired" && c.lastCommit) {
       add(c, commitAt, "heartbeat", `${c.id} ${c.lastCommit.subject}`, "commit");
     }
+  }
+  if (Array.isArray(healLog)) {
+    healLog.forEach((h, i) => {
+      const at = Date.parse(h?.at);
+      if (!h || Number.isNaN(at)) return;
+      rows.push({ key: `${h.cell}:heal:${i}`, at, time: hhmm(at), kind: "heartbeat", text: `${h.cell} self-healed: ${healWords(h.kind)}`, cellId: h.cell });
+    });
   }
   return rows.sort((a, b) => b.at - a.at).slice(0, limit);
 }
