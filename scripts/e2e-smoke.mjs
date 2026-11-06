@@ -11,7 +11,8 @@ let cookie = '';
 function redact(text) {
   let out = String(text);
   for (const s of secrets) out = out.split(s).join('***');
-  if (cookie) out = out.split(cookie.split('=').slice(1).join('=')).join('***');
+  const cv = cookie.split('=').slice(1).join('=');
+  if (cv) out = out.split(cv).join('***');
   return out.replace(/\s+/g, ' ').slice(0, 160);
 }
 function add(name, status, detail) {
