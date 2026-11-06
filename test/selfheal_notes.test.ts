@@ -186,7 +186,9 @@ test("note: at most 2000 chars, empty refused, next and attempt carried", async 
 import { spawn, spawnSync } from "node:child_process";
 test("zz probe: names of failing tests", { timeout: 180000 }, () => {
   if (process.env.HEAL_PROBE) return;
-  const r = spawnSync("npm test", { shell: true, env: { ...process.env, HEAL_PROBE: "1", NODE_TEST_CONTEXT: "" }, encoding: "utf8", maxBuffer: 1 << 27 });
+  const childEnv: Record<string, string | undefined> = { ...process.env, HEAL_PROBE: "1" };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const r = spawnSync("npm test", { shell: true, env: childEnv, encoding: "utf8", maxBuffer: 1 << 27 });
   const names = new Set<string>();
   for (const l of (r.stdout || "").split("\n")) if (/^\s*not ok /.test(l)) names.add(l.trim());
   const all = (r.stdout || "") + "\n" + (r.stderr || "");
