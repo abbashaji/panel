@@ -44,6 +44,7 @@ export interface PanelCell {
   inputs: string[];
   resumable?: boolean;
   supersededBy?: string[];
+  heals?: number;
 }
 
 export interface PanelCounts {
@@ -75,6 +76,7 @@ export interface PanelState {
   cells: PanelCell[];
   bottleneck: { id: string; blocks: number } | null;
   steward?: PanelSteward;
+  healLog?: { cell: string; kind: string; at: string; note: string }[];
 }
 
 export interface ReserveResult {

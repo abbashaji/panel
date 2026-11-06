@@ -63,6 +63,8 @@ export interface PanelCell {
   resumable?: boolean;
   /** sorted ids of the cells that replace this one; set only when it never merged. It stays 'waiting' and is left out of counts. */
   supersededBy?: string[];
+  /** number of heal commits (subject 'heal(<id>): <kind>' plus trailer 'heal: <kind>') on the cell branch; set only when > 0 */
+  heals?: number;
 }
 
 export interface PanelCounts {
@@ -103,6 +105,8 @@ export interface PanelState {
   bottleneck: { id: string; blocks: number } | null;
   /** optional so older fixtures and an older Worker still compile; the UI treats a missing steward as "none" */
   steward?: PanelSteward;
+  /** self-heal events across all cell branches, newest first, at most 20, note cut to 160 chars; set only when there are any */
+  healLog?: { cell: string; kind: string; at: string; note: string }[];
 }
 
 export interface ReserveResult {

@@ -43,19 +43,80 @@ function defaultOptions(env: PanelEnv): EngineOptions {
   };
 }
 
-async function lockSha(api: GitHubApi, repo: string, id: string): Promise<string | null> {
+type PanelHeal = NonNullable<PanelState["healLog"]>[number];
+
+/** The part of a commit the heal reader needs. committedDate is used when the API provides it. */
+export interface HealCommit {
+  message: string;
+  committedDate?: string;
+}
+
+const HEAL_SUBJECT = /^heal\((C-\d+)\):[ \t]*(.+?)[ \t]*$/;
+const HEAL_TRAILER = /^heal:[ \t]*(.*?)[ \t]*$/;
+const TRAILER_LINE = /^[A-Za-z][A-Za-z0-9-]*:(?:[ \t]|$)/;
+const NOTE_MAX = 160;
+const LOG_MAX = 20;
+
+/** One heal commit of <cell>, or null. Needs subject 'heal(<cell>): <kind>' and a trailer 'heal: <kind>' with the same kind. */
+export function parseHeal(cell: string, c: HealCommit, fallbackAt = ""): PanelHeal | null {
+  const lines = (typeof c?.message === "string" ? c.message : "").split(/\r?\n/);
+  const m = HEAL_SUBJECT.exec(lines[0] ?? "");
+  if (!m || m[1] !== cell) return null;
+  const kind = m[2];
+  const rest = lines.slice(1);
+  const trailer = rest.map((l) => HEAL_TRAILER.exec(l)).find((x) => x !== null);
+  if (!trailer || trailer[1] !== kind) return null;
+  let end = rest.length;
+  while (end > 0 && (rest[end - 1].trim() === "" || TRAILER_LINE.test(rest[end - 1]))) end--;
+  const note = rest.slice(0, end).join(" ").replace(/\s+/g, " ").trim().slice(0, NOTE_MAX);
+  const at = typeof c.committedDate === "string" && c.committedDate ? c.committedDate : fallbackAt;
+  return { cell, kind, at, note };
+}
+
+/** Heal commits of one branch, in the order given (newest first). */
+export function healsOf(cell: string, commits: HealCommit[], fallbackAt = ""): PanelHeal[] {
+  const out: PanelHeal[] = [];
+  for (const c of commits) {
+    const h = parseHeal(cell, c, fallbackAt);
+    if (h) out.push(h);
+  }
+  return out;
+}
+
+/** Newest first (stable for equal or unreadable times), at most 20. */
+export function buildHealLog(entries: PanelHeal[]): PanelHeal[] {
+  const t = (h: PanelHeal): number => {
+    const n = Date.parse(h.at);
+    return Number.isNaN(n) ? -Infinity : n;
+  };
+  return [...entries]
+    .sort((a, b) => {
+      const ta = t(a);
+      const tb = t(b);
+      return ta === tb ? 0 : ta < tb ? 1 : -1;
+    })
+    .slice(0, LOG_MAX);
+}
+
+/**
+ * The lock sha and the heal commits of one branch from the same commit pages (no extra API call). Heal commits come after
+ * the claim, so every page walked up to the claim covers them. tipAt is the fallback time when a commit has no date.
+ */
+async function lockAndHeals(api: GitHubApi, repo: string, id: string, tipAt: string): Promise<{ lock: string | null; heals: PanelHeal[] }> {
   const re = new RegExp(`^(claim|takeover|adopt)\\(${id}\\):`);
+  const heals: PanelHeal[] = [];
   try {
     for (let page = 1; page <= LOCK_PAGES; page++) {
       const commits = await api.branchCommits(repo, branchOf(id), page, 100);
-      if (!commits || commits.length === 0) return null;
+      if (!commits || commits.length === 0) return { lock: null, heals };
+      heals.push(...healsOf(id, commits as HealCommit[], tipAt));
       const hit = commits.find((c) => re.test(subjectOf(c.message)));
-      if (hit) return short(hit.oid);
+      if (hit) return { lock: short(hit.oid), heals };
     }
   } catch {
-    /* the lock sha is optional */
+    /* the lock sha and the heals are optional */
   }
-  return null;
+  return { lock: null, heals };
 }
 
 async function reservedBy(env: PanelEnv, repo: string, id: string): Promise<string | null> {
@@ -207,6 +268,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
     return "waiting";
   };
 
+  const healsByCell: Record<string, PanelHeal[]> = {};
   const cellsOut: PanelCell[] = await Promise.all(
     ids.map(async (id) => {
       const c = cells[id];
@@ -233,11 +295,12 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
       let pr: PanelCell["pr"] = null;
       let lock: string | null = null;
       if (b) {
-        const [p, l] = await Promise.all([
+        const [p, li] = await Promise.all([
           api.findPr(repo, branchOf(id)).catch(() => null),
-          lockSha(api, repo, id),
+          lockAndHeals(api, repo, id, b.committedDate),
         ]);
-        lock = l;
+        lock = li.lock;
+        healsByCell[id] = li.heals;
         if (p) pr = { number: p.number, state: p.merged ? "merged" : p.state === "open" ? "open" : "closed" };
       }
       // Ready again after a release/handoff, or a branch whose lease ran out: the next claim resumes it.
@@ -267,6 +330,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         provides: slist(c, "provides"),
         inputs: inputsOf(c).map((i) => String(i.from)),
         ...(replaced(id) ? { supersededBy: [...sup[id]].sort() } : {}),
+        ...(healsByCell[id]?.length ? { heals: healsByCell[id].length } : {}),
       };
     }),
   );
@@ -279,6 +343,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
     if (!bottleneck || c.transitiveDependents > bottleneck.blocks) bottleneck = { id: c.id, blocks: c.transitiveDependents };
   }
 
+  const healLog = buildHealLog(ids.flatMap((id) => healsByCell[id] ?? []));
   const out: PanelState = {
     repo,
     project: String(cfg.project ?? repo.split("/")[1] ?? repo),
@@ -288,6 +353,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
     cells: cellsOut,
     bottleneck,
     steward: await stewardOf(api, repo, snap, leaseMinutes, now, human.size + split.size),
+    ...(healLog.length ? { healLog } : {}),
   };
   cache.set(ck, { key, at: now, state: out });
   return out;
