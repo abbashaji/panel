@@ -1,0 +1,25 @@
+id: E-004
+title: Spec gap - add c.txt with the agreed greeting
+type: normal
+goal: |
+  Create e2e-out/c.txt containing the greeting in the format agreed with the
+  other cells.
+inputs: []
+after:
+  - E-001
+provides:
+  - e2e-out/c.txt
+read:
+  - hello.txt
+allowed_paths:
+  - e2e-out/c.txt
+outputs:
+  - e2e-out/c.txt
+acceptance:
+  - cmd: test -f e2e-out/c.txt
+notes: |
+  DELIBERATE SPEC GAP, for the cell_note test. The goal refers to an agreed
+  greeting format, but no input contract and no text in this cell defines it.
+  Expected: the worker chat reports the missing contract with cell_note and
+  does not invent a format. To heal: the owner adds the format to the goal,
+  for example the exact line gamma from E-004, and the cell is retried.

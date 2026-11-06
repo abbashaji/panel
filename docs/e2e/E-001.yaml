@@ -1,0 +1,22 @@
+id: E-001
+title: Skeleton - add hello.txt
+type: normal
+goal: |
+  Skeleton cell for the end to end test. Create hello.txt in the repo root
+  containing exactly one line: hello from E-001
+inputs: []
+after: []
+provides:
+  - hello.txt
+read: []
+allowed_paths:
+  - hello.txt
+outputs:
+  - hello.txt
+acceptance:
+  - cmd: test -f hello.txt
+  - cmd: grep -q "hello from E-001" hello.txt
+notes: |
+  Everything else depends on this cell, so it is the first and only ready cell
+  at the start. If your plan uses a dedicated skeleton cell type, set type
+  accordingly when you rename the id.
