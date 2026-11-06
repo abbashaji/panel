@@ -74,14 +74,14 @@ The five sample cells are in `docs/e2e/`. Their ids `E-001` to `E-005` are place
 Bash example (run in a copy of `docs/e2e/`):
 
 ```bash
-for n in 1 2 3 4 5; do
-  sed -i "s/E-00$n/C-00$n/g" E-00$n.yaml
+mkdir -p out/cells
+for f in E-00*.yaml; do
+  n=${f#E-}
+  sed 's/E-00/C-00/g' "$f" > "out/cells/C-$n"
 done
-sed -i 's/E-00\([1-5]\)/C-00\1/g' C-00*.yaml 2>/dev/null || true
-for n in 1 2 3 4 5; do mv E-00$n.yaml cells/C-00$n.yaml 2>/dev/null || true; done
 ```
 
-Simpler: rename by hand with a text editor search and replace of `E-00` with `C-00`, then save the files as `cells/C-001.yaml` and so on.
+This writes `out/cells/C-001.yaml` to `C-005.yaml` with every `E-00` replaced by `C-00`. If the test repo already uses those ids, pick another prefix and number range, and change `after:` to match. A text editor search and replace works as well.
 
 Then, in a chat, ask it to call `publish_plan` with the five cells (it needs the `ADMIN_TOKEN` as `admin_key`; type it yourself when asked, never put it in a prompt you save).
 
