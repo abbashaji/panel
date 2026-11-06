@@ -13,7 +13,8 @@ import { ADMIN_KEY, NOW, REPO, createFakeWorker, type FakeWorker } from "./fakeW
 const WHO = "Tester";
 const REPO_Q = "abbashaji%2Fpanel";
 
-let go: ReturnType<typeof vi.spyOn>;
+const spyGo = () => vi.spyOn(transport, "go").mockImplementation(() => {});
+let go: ReturnType<typeof spyGo>;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"], shouldAdvanceTime: true });
@@ -42,7 +43,7 @@ beforeEach(() => {
     addListener() {},
     removeListener() {},
   }));
-  go = vi.spyOn(transport, "go").mockImplementation(() => {});
+  go = spyGo();
   vi.spyOn(transport, "silent").mockImplementation(() => {});
   vi.spyOn(transport, "watch").mockImplementation(() => {});
 });
@@ -163,3 +164,70 @@ describe("panel app with a fake Worker", () => {
     expect(fake.requests("/reserve").map((c) => c.body?.cell_id)).toEqual(["C-003", "C-006"]);
     expect(fake.state.cells.find((c) => c.id === "C-004")?.reservedBy).toBeNull();
   });
+
+  it("5. any teammate can Open chat on a running cell, with no owner-only toast", async () => {
+    const fake = createFakeWorker();
+    await mount(fake);
+    // C-002 is held by Ana, and this browser is Tester
+    await selectCell("C-002");
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(`blueprint://open?repo=${REPO_Q}&cell=C-002`);
+    await poll(200);
+    expect(screen.getByRole("status").textContent).toBe(""); // no toast at all, in particular no owner-only one
+  });
+
+  it("6. Search cells lists all cells", async () => {
+    const fake = createFakeWorker();
+    await mount(fake);
+    const list = await openPalette();
+    expect(within(list).getAllByRole("option")).toHaveLength(8);
+    expect(screen.getByTestId("palette-count").textContent).toBe("8 cells");
+    for (let n = 1; n <= 8; n += 1) expect(within(list).getByText(`C-00${n}`)).toBeTruthy();
+    expect(within(list).queryByText("C-009")).toBeNull(); // replaced
+  });
+
+  it("7. both side bars and the activity panel hide and show", async () => {
+    const fake = createFakeWorker();
+    await mount(fake);
+    for (const panel of ["sidebar", "inspector", "activity"]) {
+      const hide = await screen.findAllByRole("button", { name: `Hide ${panel}` });
+      fireEvent.click(hide[0]);
+      expect(screen.queryAllByRole("button", { name: `Hide ${panel}` })).toHaveLength(0);
+      if (panel === "sidebar") expect(screen.getByTestId("rail-sidebar")).toBeTruthy();
+      if (panel === "activity") expect(screen.getByText(/^LIVE ACTIVITY \(\d+\)$/)).toBeTruthy();
+      const show = await screen.findAllByRole("button", { name: `Show ${panel}` });
+      fireEvent.click(show[0]);
+      expect((await screen.findAllByRole("button", { name: `Hide ${panel}` })).length).toBeGreaterThan(0);
+      expect(screen.queryAllByRole("button", { name: `Show ${panel}` })).toHaveLength(0);
+    }
+    expect(screen.queryByTestId("rail-sidebar")).toBeNull();
+  });
+
+  // Real bug in a slot: shell/ActivityPanel.tsx calls deriveActivity(state?.cells ?? []) and never passes state.healLog,
+  // so the heal row that deriveActivity can build is never shown. The slot is outside this cell's allowed paths.
+  it.fails("8. the live activity shows a heal event (BUG: ActivityPanel does not pass state.healLog to deriveActivity)", async () => {
+    const fake = createFakeWorker();
+    await mount(fake);
+    const activity = screen.getByRole("region", { name: "Live activity" });
+    expect(await within(activity).findByText("C-005 self-healed: sync main")).toBeTruthy();
+  });
+
+  it("9. the Steward chip shows the active and the expired texts", async () => {
+    const fake = createFakeWorker();
+    await mount(fake);
+    expect(await screen.findByText("Steward idle")).toBeTruthy();
+
+    fake.setSteward({ status: "active", holder: "Ana", minutesLeft: 42, expiredMinutesAgo: null, problems: 2 });
+    await poll();
+    expect(await screen.findByText("Steward active, Ana, 42m left")).toBeTruthy();
+    expect(screen.getByText("2 problems")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start steward" })).toBeNull();
+
+    fake.setSteward({ status: "expired", holder: "Ana", minutesLeft: null, expiredMinutesAgo: 15, problems: 1 });
+    await poll();
+    expect(await screen.findByText("Steward expired 15m ago")).toBeTruthy();
+    expect(screen.getByText("1 problem")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Resume steward" })).toBeTruthy();
+  });
+});
