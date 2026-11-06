@@ -20,24 +20,24 @@ Extracted from the approved mockup (`docs/design/*.png`, 4 artboards, sample dat
 | accent | `#5B9DFF` | primary button, running, logo |
 | edge | `#3A4560` | normal edge |
 
-Status colors (unchanged): merged/done `#3DD6A3`, running `#5B9DFF`, ready `#FFC857`, waiting `#9AA3B8`, lease expired `#FF6B5E`, needs human `#C792FF`, needs split `#FF8FB1`.
+Status colors (unchanged): merged/done `#3DD6A3`, running `#5B9DFF`, ready `#FFC857`, waiting `#9AA3B8`, lease expired `#FF6B5E`, needs steward `#C792FF`, needs split `#FF8FB1`.
 Danger surfaces: banner / chip bg `#2B1512`, border `#7A2E27`, text `#FFD3CD`, sub text `#FFB4AB`. Warning chip: bg `#2A2312`, border `#6B5620`, text `#FFD98A`.
 
-**Labels change:** `done` shows **Merged**, `expired` shows **Lease expired**. Other labels as before (Running, Ready, Waiting, Needs human, Needs split).
+**Labels change:** `done` shows **Merged**, `expired` shows **Lease expired**. Other labels as before (Running, Ready, Waiting, Needs steward, Needs split).
 
 **Icons** are 14x14 viewBox strokes (`stroke-width 1.6`, round caps/joins, `fill none`), drawn at 12px in the status color:
 - merged: `M3 7.5l3 3 5-6`
 - lease expired (warning triangle): `M7 2.5l5 9H2z` + `M7 6v2.5M7 10v.1`
 - running (clock): `circle cx7 cy7 r4.5` + `M7 4v3l2 1.5`
 - waiting (clock): `circle cx7 cy7 r5` + `M7 4.5V7h2.5`
-- needs human (circled !): `circle cx7 cy7 r5` + `M7 4.5v3M7 9.5v.1`
+- needs steward (circled !): `circle cx7 cy7 r5` + `M7 4.5v3M7 9.5v.1`
 - ready: filled triangle `M3 1.5l9 5.5-9 5.5z`
 - needs split: pick a simple split glyph in the same style (not in the mockup)
 
 ## 2. Frame (1440 x 860 reference)
 
 - **Header** 56px, bg panel, bottom border line, padding 0 20, gap 16: logo (3 rounded squares icon, stroke accent, 22px) + "Blueprint" 700 15px; repo chip `owner/name · main` (mono 500 12px, bg raised, border `#2A3553`, radius 8, padding 6 10, color `#C6CDDD`); progress bar 180x8 radius 99 on line track with segments merged (green), running (blue), expired (red) as % of all cells, then "4 / 15 merged" 600 12.5px; right side: usage-limit chip (see note), search box 200x36 (bg raised, border, radius 8, text "Search cells" 500 12.5 muted-2, right "Ctrl K" mono 11), "Live · 3s" (green 8px dot with `pulse` animation 2s, text 500 12 `#A9B2C6`; seconds since last successful poll), user chip (pill, border `#2A3553`, 26px avatar circle accent bg `#06142B` initials 700 11, name 600 12).
-- **Sidebar** 196px, bg panel, right border, padding 16 12. Nav buttons (Graph, Table, Timeline, Settings): height 40, radius 8, padding 0 12, 13px; active = bg `#1B2745` white 600; inactive transparent `#A9B2C6` 500. Then caption "STATUS" (600 11px, letter-spacing .08em, muted-3), rows: 10x10 radius-3 color square + label 500 12.5 `#D5DBE8` + count right (mono, `#A9B2C6`), padding 7 8, radius 8; clicking a row toggles the status filter. Order: Merged, Running, Ready, Waiting, Lease expired, Needs human, Needs split (hide a status with count 0 only if it is not filtered). Caption "FILTERS" then checkboxes "Critical path only", "Hide merged" (500 12.5, padding 8).
+- **Sidebar** 196px, bg panel, right border, padding 16 12. Nav buttons (Graph, Table, Timeline, Settings): height 40, radius 8, padding 0 12, 13px; active = bg `#1B2745` white 600; inactive transparent `#A9B2C6` 500. Then caption "STATUS" (600 11px, letter-spacing .08em, muted-3), rows: 10x10 radius-3 color square + label 500 12.5 `#D5DBE8` + count right (mono, `#A9B2C6`), padding 7 8, radius 8; clicking a row toggles the status filter. Order: Merged, Running, Ready, Waiting, Lease expired, Needs steward, Needs split (hide a status with count 0 only if it is not filtered). Caption "FILTERS" then checkboxes "Critical path only", "Hide merged" (500 12.5, padding 8).
 - **Right inspector** 320px, bg panel, left border line, padding 20 (see 5).
 - **Graph pane** between sidebar and inspector, bg bg. Reference geometry: pane starts x 196; content margin 16.
 - **Activity panel** inside the graph pane at the bottom: height 172, margin 0 16 16 16, padding 12 16, border line, radius 12, bg panel; caption "LIVE ACTIVITY" (use "LIVE ACTIVITY · SAMPLE DATA" only in mock mode); rows: padding 6 0, top border line, 500 12px `#C6CDDD`, columns time (mono, muted-3, 44px, HH:MM local), icon 14px, text. Icons: heartbeat/running clock blue, warnings red triangle, merged green check. Rows are derived from `state.cells[].lastCommit` and statuses, newest first; scrolls inside the panel.
@@ -46,7 +46,7 @@ Danger surfaces: banner / chip bg `#2B1512`, border `#7A2E27`, text `#FFD3CD`, s
 
 - **Scale is 1:1.** Cards are 152 x 72 and the graph opens at zoom 1 (no fit-to-view shrink): column pitch 186 (152 card + 34 gap), row pitch 96 (72 + 24). Wave columns left to right; vertical centering of each column around its parent cells. Pan and zoom remain; add a minimap and zoom controls only if they do not overlap the activity panel (bottom-left controls, minimap bottom-right above the panel).
 - **Wave labels** above the columns at the top of the pane: "WAVE 1" 600 11px letter-spacing .08em `#9AA3B8` + " · 3 cells" 500 `#6F7890`.
-- **Card** (button): 152x72, padding 8 11, radius 12, bg card, border `1px solid <status color>88`, an inner overlay of the status color at opacity .1 (inset 0, radius 11), flex column space-between. Row 1: id (mono 600 11, status color) left; right icon + status label (600 10, status color). Row 2: title 600 13 (ellipsis). Row 3: sha7 (mono 500 10.5, `#A9B2C6`, "—" when none) left; meta right (500 10.5 `#A9B2C6`): merged "merged 3h ago", running "34m left", expired "expired 22m ago", waiting "← C-004, C-006" (blocked-by ids), needs human "feedback sent", ready "start now".
+- **Card** (button): 152x72, padding 8 11, radius 12, bg card, border `1px solid <status color>88`, an inner overlay of the status color at opacity .1 (inset 0, radius 11), flex column space-between. Row 1: id (mono 600 11, status color) left; right icon + status label (600 10, status color). Row 2: title 600 13 (ellipsis). Row 3: sha7 (mono 500 10.5, `#A9B2C6`, "—" when none) left; meta right (500 10.5 `#A9B2C6`): merged "merged 3h ago", running "34m left", expired "expired 22m ago", waiting "← C-004, C-006" (blocked-by ids), needs steward "feedback sent", ready "start now".
 - **Badges** sit OUTSIDE the card, above its top edge (top -22px), never overlapping text: left `START` (ready cells only: bg `#FFC857`, text `#261A00`, 700 10, letter-spacing .03em, padding 3 8, radius 8, play icon 9px); left owner chip: any running or lease expired cell, whoever started it: "AL · Open chat" (initials + holder name; bg `#1B2745`, border `#4A5F94`, text `#DDE6FF`; the chip is clickable for everyone, mine and others' alike); right `BLOCKS 8` on the bottleneck (bg `#FF6B5E`, text `#1A0B09`, 700 10, padding 3 8, radius 8). Merged cells never show Open chat.
 - **Selected** card: `outline 2px solid #fff; outline-offset 2px`; bottleneck selected/idle also `box-shadow 0 0 0 6px rgba(255,107,94,.28)`.
 - **Edges:** cubic bezier from the right edge middle of the source to the left edge middle of the target, control offset about 40px (`M x1 y1 C x1+40 y1, x2-40 y2, x2 y2`); stroke `#3A4560` 1.5; contract edges dashed `5 4`; edges leaving the bottleneck are `#FF6B5E`, width 2, opacity .85 (long edges use a wider bend).

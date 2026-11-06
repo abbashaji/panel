@@ -15,7 +15,7 @@ export const STATUS_META: Record<PanelStatus, StatusMeta> = {
   ready: { label: "Ready", color: "#FFC857", icon: "◆" },
   waiting: { label: "Waiting", color: "#9AA3B8", icon: "…" },
   expired: { label: "Lease expired", color: "#FF6B5E", icon: "!" },
-  needs_human: { label: "Needs human", color: "#C792FF", icon: "?" },
+  needs_human: { label: "Needs steward", color: "#C792FF", icon: "?" },
   needs_split: { label: "Needs split", color: "#FF8FB1", icon: "÷" },
 };
 
