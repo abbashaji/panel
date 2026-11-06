@@ -104,3 +104,122 @@ export interface RecordedCall {
   path: string;
   body: Record<string, unknown> | null;
 }
+
+export interface FakeWorker {
+  /** the fetch mock to install with vi.stubGlobal("fetch", fake.fetch) */
+  fetch: typeof fetch;
+  /** the live state the next poll serves; tests change it through the helpers below */
+  state: PanelState;
+  calls: RecordedCall[];
+  /** the recorded calls whose path (without query) equals `path`, e.g. "/reserve" */
+  requests(path: string): RecordedCall[];
+  setSteward(s: PanelSteward): void;
+  setHealLog(log: NonNullable<PanelState["healLog"]>): void;
+}
+
+export function createFakeWorker(opts: { requireLogin?: boolean } = {}): FakeWorker {
+  const cells = plan();
+  const state: PanelState = {
+    repo: REPO,
+    project: "panel",
+    mainSha: "9f8e7d6",
+    generatedAt: new Date(NOW).toISOString(),
+    counts: countStatuses(cells),
+    cells,
+    bottleneck: null,
+    steward: { ...NO_STEWARD },
+    healLog: [{ cell: "C-005", kind: "sync_main", at: ago(5), note: "main merged into the branch" }],
+  };
+  const calls: RecordedCall[] = [];
+  let authed = !opts.requireLogin;
+
+  const json = (body: unknown, status = 200): Response =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const text = (body: string, status: number): Response => new Response(body, { status });
+  const find = (id: unknown): PanelCell | undefined => state.cells.find((c) => c.id === id);
+  const actionCell = (c: PanelCell) => ({ id: c.id, status: c.status, resumable: c.resumable === true });
+
+  function route(method: string, path: string, body: Record<string, unknown> | null): Response {
+    if (method === "POST" && path === "/login") {
+      if (body?.password !== PASSWORD) return text("Wrong password", 401);
+      authed = true;
+      return json({ ok: true });
+    }
+    if (!authed) return text("Login required", 401);
+
+    if (method === "GET" && path === "/state") {
+      state.counts = countStatuses(state.cells);
+      state.generatedAt = new Date(Date.now()).toISOString();
+      return json(state);
+    }
+    if (method !== "POST" || body === null) return text("Not found", 404);
+
+    if (path === "/reserve") {
+      const c = find(body.cell_id);
+      const who = String(body.who ?? "");
+      if (!c || c.status !== "ready") return json({ status: "not_ready", detail: `${String(body.cell_id)} is not ready.` });
+      if (c.reservedBy && c.reservedBy !== who) return json({ status: "taken", detail: `${c.id} is already taken.` });
+      c.reservedBy = who;
+      return json({ status: "reserved", detail: `${c.id} reserved for ${who}.`, cell: actionCell(c) });
+    }
+
+    if (body.admin_key !== ADMIN_KEY) return text("Wrong admin key", 403);
+
+    if (path === "/steward-release") {
+      const steward: PanelSteward = { status: "released", holder: null, minutesLeft: null, expiredMinutesAgo: null, problems: 0 };
+      state.steward = steward;
+      const out: StewardReleaseResult = { ok: true, result: "Steward released.", steward };
+      return json(out);
+    }
+
+    if (path === "/release" || path === "/clear-feedback") {
+      const c = find(body.cell_id);
+      if (!c) return text("No such cell", 404);
+      if (path === "/release") {
+        if (c.status !== "running" && c.status !== "expired") return text("Cell is not held", 409);
+        c.status = "ready";
+        c.reservedBy = null;
+        c.resumable = true;
+        c.lease = null;
+        return json({ result: `Released ${c.id}. Ready to resume.`, cell: actionCell(c) });
+      }
+      if (c.status !== "needs_human") return text("Cell has no feedback", 409);
+      c.status = "ready";
+      c.resumable = false;
+      return json({ result: `Feedback cleared on ${c.id}.`, cell: actionCell(c) });
+    }
+    return text("Not found", 404);
+  }
+
+  const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const marker = "/panel/api";
+    const at = url.indexOf(marker);
+    if (at < 0) return text("Not found", 404);
+    const rest = url.slice(at + marker.length);
+    const method = (init?.method ?? "GET").toUpperCase();
+    let body: Record<string, unknown> | null = null;
+    if (typeof init?.body === "string") {
+      try {
+        body = JSON.parse(init.body) as Record<string, unknown>;
+      } catch {
+        return text("Bad JSON", 400);
+      }
+    }
+    calls.push({ method, path: rest, body });
+    return route(method, rest.split("?")[0], body);
+  }) as typeof fetch;
+
+  return {
+    fetch: fakeFetch,
+    state,
+    calls,
+    requests: (path) => calls.filter((c) => c.path.split("?")[0] === path),
+    setSteward: (s) => {
+      state.steward = s;
+    },
+    setHealLog: (log) => {
+      state.healLog = log;
+    },
+  };
+}
