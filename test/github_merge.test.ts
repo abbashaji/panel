@@ -44,7 +44,7 @@ test("compare maps ahead_by, behind_by and files; slashes in branch names stay s
 test("compare reads a second page when the first one is full", async () => {
   const { fetchImpl, calls } = mock((c) => ({
     status: 200,
-    body: c.url.includes("page=1")
+    body: c.url.includes("&page=1")
       ? { ahead_by: 101, behind_by: 0, files: Array.from({ length: 100 }, (_, i) => ({ filename: `f${i}.ts` })) }
       : { ahead_by: 101, behind_by: 0, files: [{ filename: "last.ts" }] },
   }));
@@ -104,7 +104,7 @@ test("mergeBranch 404 and other failures become ApiError without the token", asy
 function forked() {
   const gh = new FakeGitHub();
   gh.commit("main", { "a.txt": "1", "b.txt": "1" }, "base");
-  gh.commit("cell/C-001", {}, "claim");
+  gh.refs.set("cell/C-001", gh.refs.get("main")!);
   return gh;
 }
 
@@ -114,7 +114,7 @@ test("fake compare counts ahead and behind and lists the files the head changed"
   gh.commit("cell/C-001", { "y.txt": "1" }, "c2");
   gh.commit("main", { "m.txt": "1" }, "m1");
   const res = await gh.compare("o/r", "main", "cell/C-001");
-  assert.equal(res.ahead, 3); // claim, c1, c2
+  assert.equal(res.ahead, 2); // c1, c2
   assert.equal(res.behind, 1);
   assert.deepEqual(res.files, ["x.txt", "y.txt"]); // m.txt is main's change, not the cell's
   assert.deepEqual(await gh.compare("o/r", "main", "main"), { ahead: 0, behind: 0, files: [] });
