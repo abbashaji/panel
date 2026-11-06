@@ -129,3 +129,170 @@
     v.push(Date.now());
     api.storeSet(CONFIG.keySends, v);
   };
+
+  // ---- page access ----
+  function firstMatch(selectors) {
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (el) return el;
+    }
+    return null;
+  }
+  api.editorEl = function () { return firstMatch(CONFIG.editorSelectors); };
+  api.sendBtn = function () { return firstMatch(CONFIG.sendSelectors); };
+  api.editorText = function (el) {
+    if (!el) return '';
+    if (typeof el.value === 'string') return el.value;
+    return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
+  };
+
+  // ---- banner ----
+  api.banner = function (text, kind, withCancel) {
+    var old = document.getElementById(CONFIG.bannerId);
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var box = document.createElement('div');
+    box.id = CONFIG.bannerId;
+    box.setAttribute('role', 'status');
+    box.setAttribute('data-kind', kind);
+    box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;'
+      + 'font:14px/1.4 system-ui,sans-serif;color:#fff;display:flex;gap:12px;align-items:center;'
+      + 'background:' + (kind === 'error' ? '#b00020' : '#1f4e79') + ';';
+    var span = document.createElement('span');
+    span.textContent = text;
+    box.appendChild(span);
+    if (withCancel) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('data-bp-cancel', '1');
+      b.textContent = 'Cancel';
+      b.addEventListener('click', api.cancel);
+      box.appendChild(b);
+    }
+    (document.body || document.documentElement).appendChild(box);
+    return box;
+  };
+
+  // ---- run loop ----
+  api.clearTimers = function () {
+    if (!state) return;
+    if (state.poll) clearInterval(state.poll);
+    if (state.fire) clearTimeout(state.fire);
+    if (state.timeout) clearTimeout(state.timeout);
+    state.poll = state.fire = state.timeout = null;
+  };
+  api.getState = function () { return state; };
+  api.reset = function () {
+    api.clearTimers();
+    state = null;
+    memTab = false;
+    var old = document.getElementById(CONFIG.bannerId);
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+  };
+
+  api.isReady = function () {
+    var ed = api.editorEl();
+    var btn = api.sendBtn();
+    if (!state || !ed || !btn) return false;
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return false;
+    return api.squash(api.editorText(ed)) === api.squash(state.prompt);
+  };
+
+  api.tick = function () {
+    if (!state || state.phase !== 'waiting') return;
+    if (!api.isReady()) { state.readySince = null; return; }
+    if (state.readySince === null) { state.readySince = Date.now(); return; }
+    if (Date.now() - state.readySince >= CONFIG.stableMs) api.beginCountdown();
+  };
+
+  api.beginCountdown = function () {
+    if (!state || state.phase !== 'waiting') return;
+    state.phase = 'countdown';
+    if (state.poll) { clearInterval(state.poll); state.poll = null; }
+    api.banner('Blueprint is sending ' + state.cell + ' in ' + (CONFIG.countdownMs / 1000) + 's', 'info', true);
+    state.fire = setTimeout(api.fire, CONFIG.countdownMs);
+  };
+
+  api.fire = function () {
+    if (!state || state.phase !== 'countdown') return;
+    state.fire = null;
+    if (!api.isReady()) {
+      // page changed during the countdown: go back to waiting, never click blindly
+      state.phase = 'waiting';
+      state.readySince = null;
+      state.poll = setInterval(api.tick, CONFIG.pollMs);
+      api.banner('Blueprint auto-send: waiting for the editor...', 'info');
+      return;
+    }
+    var btn = api.sendBtn();
+    state.phase = 'done';
+    api.clearTimers();
+    api.recordSend();
+    btn.click();
+    api.banner('Blueprint sent ' + state.cell + '.', 'info');
+  };
+
+  api.cancel = function () {
+    if (!state || state.phase === 'done') return;
+    api.clearTimers();
+    state.phase = 'cancelled';
+    api.banner('Blueprint auto-send cancelled for this tab.', 'info');
+  };
+
+  api.onTimeout = function () {
+    if (!state || state.phase === 'done' || state.phase === 'cancelled') return;
+    api.clearTimers();
+    state.phase = 'timeout';
+    api.banner('Blueprint auto-send: not sent, press Send yourself.', 'error');
+  };
+
+  // ---- entry: everything is captured once here ----
+  api.start = function () {
+    var params;
+    try { params = new URLSearchParams(window.location.search); } catch (e) { return { status: 'no-marker' }; }
+    var q = params.get('q');
+    if (params.get('autosend') !== '1' || q === null || q === '') return { status: 'no-marker' };
+
+    var m = api.matchTemplate(q);
+    if (!m) {
+      api.banner('Blueprint auto-send: not sent, the prompt does not match the launcher cell template.', 'error');
+      return { status: 'bad-template' };
+    }
+    var allowed = api.getAllowed();
+    if (!allowed.length) {
+      api.banner('Blueprint auto-send: not sent, set allowed repos first.', 'error');
+      return { status: 'no-allowlist' };
+    }
+    if (allowed.indexOf(m.repo.toLowerCase()) < 0) {
+      api.banner('Blueprint auto-send: not sent, ' + m.repo + ' is not in the allowed repos.', 'error');
+      return { status: 'repo-not-allowed' };
+    }
+    if (api.tabDone()) {
+      api.banner('Blueprint auto-send: already handled once in this tab.', 'error');
+      return { status: 'once-per-tab' };
+    }
+    if (api.sendsInWindow() >= CONFIG.maxSends) {
+      api.banner('Blueprint auto-send: not sent, rate limit reached (' + CONFIG.maxSends + ' per 10 minutes).', 'error');
+      return { status: 'rate-limited' };
+    }
+
+    api.markTab();
+    state = {
+      prompt: api.normalize(q), cell: m.cell, repo: m.repo,
+      phase: 'waiting', readySince: null, poll: null, fire: null, timeout: null
+    };
+    state.poll = setInterval(api.tick, CONFIG.pollMs);
+    state.timeout = setTimeout(api.onTimeout, CONFIG.timeoutMs);
+    api.banner('Blueprint auto-send: waiting for the editor...', 'info');
+    return { status: 'waiting', cell: m.cell, repo: m.repo };
+  };
+
+  if (typeof GM_registerMenuCommand === 'function') {
+    try { GM_registerMenuCommand('Blueprint auto-send: set allowed repos', api.promptAllowedRepos); } catch (e) { /* menu optional */ }
+  }
+
+  if (window.__BP_TEST__) {
+    window.__bpAutoSend = api;
+  } else {
+    api.start();
+  }
+})();
