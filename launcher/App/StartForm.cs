@@ -13,6 +13,10 @@ internal sealed class StartForm : Form
 
     private readonly ParseResult _req;
     private readonly bool _steward;
+    private readonly string _settingsPath;
+    private readonly LauncherSettings _settings;
+    private readonly Label _footer;
+    private readonly CheckBox? _autoSend;
     private readonly CellRecords _records;
     private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly ToolTip _tip = new();
@@ -24,6 +28,8 @@ internal sealed class StartForm : Form
         _req = req;
         _records = records;
         _steward = req.Kind == CommandKind.Steward;
+        _settingsPath = LauncherSettings.DefaultPath(Program.LocalAppData);
+        _settings = LauncherSettings.Load(_settingsPath);
 
         Text = "Blueprint Launcher \u00B7 local window on your PC";
         BackColor = Theme.Window;
@@ -33,7 +39,7 @@ internal sealed class StartForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(780, 626);
+        ClientSize = new Size(780, _steward ? 626 : 666);
         CancelButton = _cancel;
 
         var idFont = Theme.Mono(13, FontStyle.Bold);
@@ -58,14 +64,27 @@ internal sealed class StartForm : Form
         };
         Controls.Add(promptBox);
 
-        Controls.Add(Labels.Create(
+        _footer = Labels.Create(
             _steward
                 ? "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You type the admin key yourself in the chat; it never passes through the launcher."
-                : "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You press Send in the chat.",
-            Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, 36));
+                : CellFooter(_settings.AutoSend),
+            Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, _steward ? 36 : 56);
+        Controls.Add(_footer);
 
-        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 566, 260, 44);
-        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, 566, 120, 44);
+        var btnY = _steward ? 566 : 606;
+        if (!_steward)
+        {
+            var box = AutoSendOption.CreateCheckBox(_settings.AutoSend, new Rectangle(Pad, 572, ContentWidth, 26));
+            box.CheckedChanged += (_, _) =>
+            {
+                _footer.Text = CellFooter(box.Checked);
+                AutoSendOption.SaveQuietly(_settingsPath, box.Checked);
+            };
+            _autoSend = box;
+            Controls.Add(box);
+        }
+        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, btnY, 260, 44);
+        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, btnY, 120, 44);
         Controls.Add(_cancel);
         Controls.Add(_confirm);
 
@@ -73,6 +92,9 @@ internal sealed class StartForm : Form
         LoadProfiles();
         _confirm.Click += (_, _) => Confirm();
     }
+
+    private static string CellFooter(bool autoSend)
+        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. " + AutoSendOption.FooterText(autoSend);
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -154,10 +176,13 @@ internal sealed class StartForm : Form
         try
         {
             var url = _steward ? PromptBuilder.BuildStewardUrl(_req.Repo) : PromptBuilder.BuildUrl(_req.Repo, _req.Cell);
+            url = AutoSendOption.Apply(url, !_steward && _autoSend?.Checked == true, out var markError);
             var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
             if (!_steward) _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
             Program.SaveLastChoice(p.Browser, p.Folder);
             Program.Run(cmd);
+            if (markError is not null)
+                MessageBox.Show("The chat was opened without auto-send: " + markError, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             Close();
         }
         catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or Win32Exception)

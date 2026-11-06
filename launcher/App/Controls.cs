@@ -477,3 +477,54 @@ internal sealed class ProfileTile : Control
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
     }
 }
+
+/// <summary>Opt-in auto-send checkbox shared by the start and start-many windows. Cell mode only; never used for the Steward.</summary>
+internal static class AutoSendOption
+{
+    public const string Caption = "Auto-send in the browser";
+
+    public static string FooterText(bool on) => on
+        ? "The helper script sends it after 3 seconds unless you cancel. Needs the Blueprint auto-send helper in this browser profile."
+        : "You press Send in the chat.";
+
+    public static CheckBox CreateCheckBox(bool on, Rectangle bounds) => new()
+    {
+        Text = Caption,
+        Checked = on,
+        Bounds = bounds,
+        AutoSize = false,
+        FlatStyle = FlatStyle.Flat,
+        BackColor = Theme.Window,
+        ForeColor = Theme.Text,
+        Font = Theme.Ui(13),
+        Cursor = Cursors.Hand,
+    };
+
+    /// <summary>Marks the cell URL when on. If marking is refused the plain URL is returned and the reason is set.</summary>
+    public static string Apply(string url, bool on, out string? error)
+    {
+        error = null;
+        if (!on) return url;
+        try
+        {
+            return BlueprintLauncher.Core.PromptBuilder.WithAutoSend(url);
+        }
+        catch (ArgumentException e)
+        {
+            error = e.Message;
+            return url;
+        }
+    }
+
+    /// <summary>A settings file that cannot be written must not stop the window.</summary>
+    public static void SaveQuietly(string path, bool on)
+    {
+        try
+        {
+            new BlueprintLauncher.Core.LauncherSettings { AutoSend = on }.Save(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+}
