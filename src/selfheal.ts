@@ -175,3 +175,116 @@ const cap = (s: string, n: number): string => (s.length > n ? `${s.slice(0, Math
 const q = (s: string): string => JSON.stringify(s);
 /** The exact call text for a tool of this cell. */
 const call = (tool: string, repo: string, id: string, base: string, extra = ""): string => `${tool}(repo=${q(repo)}, cell_id=${q(id)}, base=${q(base)}${extra ? `, ${extra}` : ""})`;
+
+// ---------------------------------------------------------------- classification
+const SCOPE_RE = /outside (?:of )?(?:the )?allowed|not in allowed_paths|out of scope|scope violation|not allowed to (?:edit|write|touch)|forbidden path/i;
+const FAIL_RE = /\b(?:fail(?:s|ed|ing|ure|ures)?|errors?|exceptions?|broken|red|assert(?:ion|ions)?|typeerror|syntaxerror|cannot|can't|crash(?:es|ed)?|timeout|timed out)\b/i;
+const SPEC_RE = /\b(?:contract|spec|specification|ambiguous|unclear|underspecified|contradict(?:s|ion|ory)?|not specified|unspecified|impossible|missing (?:field|input|requirement|detail))\b/i;
+const STALE_RE = /\b(?:stale|behind|out of date|outdated|rebase|merge conflict|conflict|diverged|main moved|missing export|not exported|cannot find module|no such file|does not exist|not found)\b/i;
+const PATH_RE = /(?:[\w.@-]+\/)+[\w@-]+\.[A-Za-z0-9]{1,5}\b|\b[\w@-]+\.(?:ts|tsx|js|mjs|cjs|json|ya?ml|md|py|css|html|sh|toml|txt|lock)\b/g;
+
+export interface Facts {
+  behind: number;
+  outside: string[];
+  ownMention: boolean;
+  mainRed: boolean;
+  missingContract: boolean;
+}
+
+/** stale_branch, spec_gap, scope_violation, broken_main, own_bug or unknown. First match wins, in this order. */
+export function classifyProblem(problem: string, f: Facts): ProblemClass {
+  const t = problem.toLowerCase();
+  if (f.outside.length > 0 || SCOPE_RE.test(t)) return "scope_violation";
+  if (f.mainRed && FAIL_RE.test(t) && !f.ownMention) return "broken_main";
+  if ((f.missingContract && !f.ownMention) || SPEC_RE.test(t)) return "spec_gap";
+  if (f.behind > 0 && (STALE_RE.test(t) || (FAIL_RE.test(t) && !f.ownMention))) return "stale_branch";
+  if (FAIL_RE.test(t) || f.ownMention) return "own_bug";
+  return "unknown";
+}
+
+/** File paths a problem text mentions (at most 20; urls, node: ids and node_modules are ignored). */
+export function mentionedPaths(problem: string): string[] {
+  const out: string[] = [];
+  for (const m of problem.matchAll(PATH_RE)) {
+    const prev = problem[(m.index ?? 0) - 1];
+    if (prev === ":" || prev === "/" || prev === "@") continue;
+    const p = m[0].replace(/^\.\//, "");
+    if (!p || p.startsWith("node_modules/") || out.includes(p)) continue;
+    out.push(p);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+/** Is a path covered by allowed_paths (exact file, directory prefix, or a * / ** pattern)? */
+export function pathAllowed(p: string, patterns: string[]): boolean {
+  return patterns.some((pat) => {
+    if (pat === p) return true;
+    if (pat.endsWith("/")) return p.startsWith(pat);
+    if (pat.includes("*")) {
+      const re = pat.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+      return new RegExp(`^${re}$`).test(p);
+    }
+    return p.startsWith(`${pat}/`);
+  });
+}
+
+// ---------------------------------------------------------------- evidence
+interface Evidence {
+  behind: number;
+  ahead: number;
+  mainRed: string | null;
+  outside: string[];
+  ownMention: boolean;
+  missingContract: string[];
+  unmerged: string[];
+  dependents: string[];
+}
+
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** Title of the newest failed gate run that is not a cell run (a run of main), or null. */
+async function redMain(api: GitHubApi, repo: string, opts: HealOptions): Promise<string | null> {
+  try {
+    const runs = (await api.workflowRuns(repo, "cell-gate.yml", 30))
+      .filter((r) => r.status === "completed" && r.headBranch === opts.mainBranch && !RUN_TITLE_RE.exec(r.displayTitle || ""))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    const r = runs[0];
+    return r && (r.conclusion === "failure" || r.conclusion === "timed_out") ? oneLine(r.displayTitle || "gate run", 80) : null;
+  } catch {
+    return null; // the CI signal is optional
+  }
+}
+
+/** Facts about why the cell may be blocked. Only ids and titles of other cells; every read is optional. */
+async function gather(api: GitHubApi, repo: string, opts: HealOptions, ctx: Ctx, problem: string): Promise<Evidence> {
+  const { id, plan, snap } = ctx;
+  const c = plan.cells[id] as unknown as Record<string, any>;
+  const allowed = strs(c.allowed_paths);
+  const paths = mentionedPaths(problem);
+  const outside = paths.filter((p) => !pathAllowed(p, allowed));
+  const title = (x: string): string => `${x} "${oneLine(String(plan.cells[x]?.title ?? ""), 60)}"`;
+
+  let behind = 0;
+  let ahead = 0;
+  try {
+    const r = await api.compare(repo, opts.mainBranch, branchOf(id));
+    behind = r.behind;
+    ahead = r.ahead;
+  } catch {
+    /* unknown: no claim about being behind */
+  }
+
+  const inputs: any[] = Array.isArray(c.inputs) ? c.inputs : [];
+  const missingContract = inputs.filter((i) => !(i && typeof i.contract === "string" && i.contract.trim())).map((i) => String(i?.from ?? "?"));
+  const merged = mergedOf(snap);
+  const deps = new Set<string>([...strs(c.after), ...inputs.map((i) => String(i?.from ?? ""))]);
+  const unmerged = [...deps].filter((d) => d !== id && d in plan.cells && !merged.has(d)).sort().map(title);
+  const dependents = Object.entries(hardGraph(plan.cells))
+    .filter(([, ds]) => ds.includes(id))
+    .map(([k]) => k)
+    .sort()
+    .map(title);
+
+  return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents };
+}
