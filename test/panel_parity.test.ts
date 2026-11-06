@@ -188,3 +188,95 @@ async function runScenario(sc: Scenario, strict: boolean): Promise<PanelState | 
   if (diff) assert.fail(`panel and engine differ in scenario "${sc.name}": ${diff}`);
   return p;
 }
+
+// ---------------------------------------------------------------- scenarios
+const mk = (id: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  title: `cell ${id}`,
+  goal: "g",
+  inputs: [],
+  after: [],
+  provides: [`${id}-api`],
+  allowed_paths: [`src/${id}/**`],
+  outputs: [`src/${id}/x.ts`],
+  acceptance: [{ cmd: "true" }],
+  ...extra,
+});
+const planOf = (...cs: { id: string }[]) => Object.fromEntries(cs.map((c) => [c.id, c]));
+// C-002 and C-003 wait for C-001; C-004 is independent.
+const plain = () => planOf(mk("C-001"), mk("C-002", { after: ["C-001"] }), mk("C-003", { after: ["C-001"] }), mk("C-004"));
+// C-002 replaces C-001; C-003 waits for C-001 (so for C-002); C-004 is independent.
+const replaced = () => planOf(mk("C-001"), mk("C-002", { supersedes: ["C-001"], provides: ["C-001-api"] }), mk("C-003", { after: ["C-001"] }), mk("C-004"));
+
+const handWritten: Scenario[] = [
+  { name: "nothing started", cells: plain() },
+  { name: "everything merged", cells: plain(), merged: ["C-001", "C-002", "C-003", "C-004"] },
+  { name: "live lease blocks the dependents", cells: plain(), claims: { "C-001": 10 } },
+  { name: "expired lease", cells: plain(), claims: { "C-001": 90 } },
+  { name: "lease expires exactly now", cells: plain(), claims: { "C-001": 60 } },
+  { name: "released while the lease is alive", cells: plain(), claims: { "C-001": 3 }, released: ["C-001"] },
+  { name: "released while CI runs", cells: plain(), claims: { "C-001": 3 }, released: ["C-001"], ci: { "C-001": 5 } },
+  { name: "expired lease kept alive by CI", cells: plain(), claims: { "C-001": 90 }, ci: { "C-001": 5 } },
+  { name: "expired lease, CI past its limit", cells: plain(), claims: { "C-001": 90 }, ci: { "C-001": 50 } },
+  { name: "feedback on a live lease", cells: plain(), claims: { "C-001": 10 }, feedback: ["C-001"] },
+  { name: "feedback on an expired lease", cells: plain(), claims: { "C-001": 90 }, feedback: ["C-001"] },
+  { name: "feedback on a cell that is also in the released list", cells: plain(), claims: { "C-004": 90 }, feedback: ["C-004"], released: ["C-004"] },
+  { name: "attempts exhausted, lease expired", cells: plain(), claims: { "C-004": 90 }, attempts: { "C-004": 3 } },
+  { name: "attempts exhausted, lease alive", cells: plain(), claims: { "C-004": 10 }, attempts: { "C-004": 3 } },
+  { name: "attempts exhausted, but released", cells: plain(), claims: { "C-004": 90 }, attempts: { "C-004": 3 }, released: ["C-004"] },
+  { name: "attempts below the limit", cells: plain(), claims: { "C-004": 90 }, attempts: { "C-004": 2 } },
+  { name: "attempts exhausted, CI still running", cells: plain(), claims: { "C-004": 90 }, attempts: { "C-004": 3 }, ci: { "C-004": 5 } },
+  { name: "critical cell gets the short lease", cells: plain(), claims: { "C-001": 20 }, threshold: 2 },
+  { name: "superseded cell is not live", cells: replaced() },
+  { name: "superseder running", cells: replaced(), claims: { "C-002": 10 } },
+  { name: "superseder merged", cells: replaced(), merged: ["C-002"] },
+  { name: "superseded cell merged earlier", cells: replaced(), merged: ["C-001"] },
+  { name: "superseded and superseder both merged", cells: replaced(), merged: ["C-001", "C-002"] },
+  { name: "superseded cell with a stale released branch", cells: replaced(), claims: { "C-001": 90 }, released: ["C-001"] },
+  { name: "superseded cell with feedback", cells: replaced(), claims: { "C-001": 90 }, feedback: ["C-001"] },
+  { name: "superseder with feedback", cells: replaced(), claims: { "C-002": 10 }, feedback: ["C-002"] },
+  { name: "superseder with exhausted attempts", cells: replaced(), claims: { "C-002": 90 }, attempts: { "C-002": 3 } },
+];
+
+const fromFixture = (c: any, i: number): Scenario => ({
+  name: `fixtures.state[${i}]`,
+  cells: c.cells,
+  merged: c.merged,
+  claims: c.claims,
+  released: c.released,
+  feedback: c.feedback,
+  attempts: c.attempts,
+  ci: c.ci,
+  lease: c.lease,
+  threshold: c.threshold,
+  maxAttempts: c.max_attempts,
+  chain: c.options.critical_chain_threshold,
+  transitive: c.options.critical_transitive_threshold,
+  criticalLease: c.options.critical_lease_minutes,
+  parkMax: c.options.park_max_minutes,
+});
+
+test("panel agrees with the engine on the hand-written scenarios", async () => {
+  const seen = new Set<string>();
+  for (const sc of handWritten) {
+    const p = await runScenario(sc, true);
+    for (const k of STATUSES) if (p && p.counts[k] > 0) seen.add(k);
+  }
+  for (const k of STATUSES) assert.ok(seen.has(k), `no hand-written scenario produces a ${k} cell`);
+});
+
+test("panel agrees with the engine on every fixture scenario", async () => {
+  const seen = new Set<string>();
+  let ran = 0;
+  let withSuperseded = 0;
+  for (const [i, c] of fx.state.entries()) {
+    const p = await runScenario(fromFixture(c, i), false);
+    if (!p) continue;
+    ran++;
+    for (const k of STATUSES) if (p.counts[k] > 0) seen.add(k);
+    if (p.cells.some((x) => x.supersededBy)) withSuperseded++;
+  }
+  assert.ok(ran >= fx.state.length / 2, `only ${ran} of ${fx.state.length} fixture scenarios were valid plans`);
+  for (const k of STATUSES) assert.ok(seen.has(k), `no fixture scenario produces a ${k} cell`);
+  assert.ok(withSuperseded > 0, "no fixture scenario has a superseded cell");
+});
