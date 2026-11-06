@@ -87,7 +87,7 @@ function blueprintText(n: Norm): string {
     max_attempts: n.maxAttempts,
     max_cell_files: 8,
     acceptance_timeout_s: 60,
-    owners: { "pyproject.toml": "C-000" },
+    owners: "C-000" in n.cells ? { "pyproject.toml": "C-000" } : {},
   });
 }
 
