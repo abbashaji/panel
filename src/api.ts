@@ -44,6 +44,18 @@ export interface TreeEntry {
   content: string | null; // null = delete the file
 }
 
+export interface CompareResult {
+  ahead: number; // commits head has that base lacks
+  behind: number; // commits base has that head lacks
+  files: string[]; // files that differ between the merge base and head
+}
+
+export interface MergeResult {
+  status: "merged" | "up_to_date" | "conflict";
+  oid?: string; // the new tip of `into` when merged
+  files?: string[]; // on conflict: the files changed on both sides (best effort, may be absent)
+}
+
 export interface GitHubApi {
   /** One round trip: main commit/tree, cells/*.yaml, blueprint.yaml, cell/* branches, merge history. */
   snapshot(repo: string, mainBranch: string, historyPages: number): Promise<Snapshot>;
@@ -65,6 +77,10 @@ export interface GitHubApi {
   /** Commits of a branch, newest first (first-parent order). page starts at 1; perPage is clamped to 1..100; null when the branch does not exist; [] past the end. */
   branchCommits(repo: string, branch: string, page: number, perPage: number): Promise<{ oid: string; treeOid: string; message: string }[] | null>;
   changedFiles(repo: string, base: string, head: string): Promise<string[]>;
+  /** Ahead/behind counts and changed files of head relative to base (GET compare/{base}...{head}). Throws ApiError (404) when a ref is missing. */
+  compare(repo: string, base: string, head: string): Promise<CompareResult>;
+  /** Merge branch `from` into branch `into` (POST merges). A conflict is a result, never an error; a missing branch throws ApiError. */
+  mergeBranch(repo: string, into: string, from: string, message: string): Promise<MergeResult>;
   activeRuns(repo: string): Promise<RunRef[]>;
   workflowRuns(repo: string, workflowFile: string, perPage: number): Promise<RunRef[]>;
   getRun(repo: string, runId: number): Promise<RunRef | null>;

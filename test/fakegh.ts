@@ -3,12 +3,23 @@
 //  - a non-force ref update must be a fast-forward (the takeover),
 //  - commits/trees are content-addressed, so a losing claimer leaves only an unreferenced object.
 import { createHash } from "node:crypto";
-import { ApiError, type BranchInfo, type GitHubApi, type PrRef, type RunRef, type Snapshot, type TreeEntry } from "../src/api.ts";
+import {
+  ApiError,
+  type BranchInfo,
+  type CompareResult,
+  type GitHubApi,
+  type MergeResult,
+  type PrRef,
+  type RunRef,
+  type Snapshot,
+  type TreeEntry,
+} from "../src/api.ts";
 
 interface Commit {
   oid: string;
   tree: string;
   parent: string | null;
+  parent2?: string | null; // second parent of a merge commit
   message: string;
   date: string;
 }
@@ -219,9 +230,45 @@ export class FakeGitHub implements GitHubApi {
     return "created" as const;
   }
 
+  /** oid and every commit reachable from it through either parent. */
+  private ancestors(oid: string): Set<string> {
+    const seen = new Set<string>();
+    const stack = [oid];
+    while (stack.length) {
+      const o = stack.pop()!;
+      if (seen.has(o)) continue;
+      seen.add(o);
+      const c = this.commits.get(o)!;
+      if (c.parent) stack.push(c.parent);
+      if (c.parent2) stack.push(c.parent2);
+    }
+    return seen;
+  }
+
   private isAncestor(anc: string, desc: string): boolean {
-    for (let cur: string | null = desc; cur; cur = this.commits.get(cur)!.parent) if (cur === anc) return true;
-    return false;
+    return this.ancestors(desc).has(anc);
+  }
+
+  /** Nearest common ancestor of two commits (breadth first from b), null if unrelated. */
+  private mergeBase(a: string, b: string): string | null {
+    const mine = this.ancestors(a);
+    const seen = new Set<string>();
+    const queue = [b];
+    while (queue.length) {
+      const o = queue.shift()!;
+      if (seen.has(o)) continue;
+      seen.add(o);
+      if (mine.has(o)) return o;
+      const c = this.commits.get(o)!;
+      if (c.parent) queue.push(c.parent);
+      if (c.parent2) queue.push(c.parent2);
+    }
+    return null;
+  }
+
+  /** A branch name or a commit oid. */
+  private resolve(ref: string): string | undefined {
+    return this.refs.get(ref) ?? (this.commits.has(ref) ? ref : undefined);
   }
 
   async fastForward(_repo: string, branch: string, oid: string) {
@@ -263,6 +310,61 @@ export class FakeGitHub implements GitHubApi {
     if (!hOid) return [];
     const b = this.trees.get(this.commits.get(hOid)!.tree)!;
     return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((p) => a[p] !== b[p]).sort();
+  }
+
+  async compare(_repo: string, base: string, head: string): Promise<CompareResult> {
+    this.maybeFail("compare");
+    const b = this.resolve(base);
+    const h = this.resolve(head);
+    if (!b || !h) throw new ApiError("compare: 404 Not Found", 404);
+    const ab = this.ancestors(b);
+    const ah = this.ancestors(h);
+    const ahead = [...ah].filter((o) => !ab.has(o)).length;
+    const behind = [...ab].filter((o) => !ah.has(o)).length;
+    const mb = this.mergeBase(b, h);
+    const from = mb ? this.trees.get(this.commits.get(mb)!.tree)! : {};
+    const to = this.trees.get(this.commits.get(h)!.tree)!;
+    const files = [...new Set([...Object.keys(from), ...Object.keys(to)])].filter((p) => from[p] !== to[p]).sort();
+    return { ahead, behind, files };
+  }
+
+  /** Like POST /merges: up_to_date if `from` is already in `into`, fast-forward if `into` is behind, else a two-parent merge commit; conflict (nothing written) when both sides changed a file differently. */
+  async mergeBranch(_repo: string, into: string, from: string, message: string): Promise<MergeResult> {
+    this.maybeFail("mergeBranch");
+    const i = this.refs.get(into);
+    const f = this.resolve(from);
+    if (!i || !f) throw new ApiError("merge: 404 Not Found", 404);
+    if (this.isAncestor(f, i)) return { status: "up_to_date" };
+    if (this.isAncestor(i, f)) {
+      this.refs.set(into, f);
+      return { status: "merged", oid: f };
+    }
+    const mb = this.mergeBase(i, f);
+    const baseT = mb ? this.trees.get(this.commits.get(mb)!.tree)! : {};
+    const ours = this.trees.get(this.commits.get(i)!.tree)!;
+    const theirs = this.trees.get(this.commits.get(f)!.tree)!;
+    const merged: Record<string, string> = {};
+    const conflicts: string[] = [];
+    for (const p of new Set([...Object.keys(baseT), ...Object.keys(ours), ...Object.keys(theirs)])) {
+      const o = ours[p];
+      const t = theirs[p];
+      const b0 = baseT[p];
+      let v: string | undefined;
+      if (o === t) v = o;
+      else if (o === b0) v = t;
+      else if (t === b0) v = o;
+      else {
+        conflicts.push(p);
+        continue;
+      }
+      if (v !== undefined) merged[p] = v;
+    }
+    if (conflicts.length) return { status: "conflict", files: conflicts.sort() };
+    const tree = this.put(merged);
+    const oid = sha(`merge${tree}${i}${f}${message}${this.commits.size}`);
+    this.commits.set(oid, { oid, tree, parent: i, parent2: f, message, date: new Date(this.clock).toISOString() });
+    this.refs.set(into, oid);
+    return { status: "merged", oid };
   }
 
   async activeRuns() {

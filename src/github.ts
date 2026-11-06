@@ -7,7 +7,9 @@
 import {
   ApiError,
   type BranchInfo,
+  type CompareResult,
   type GitHubApi,
+  type MergeResult,
   type PrRef,
   type RunRef,
   type Snapshot,
@@ -36,6 +38,9 @@ function mapRun(r: any): RunRef {
     url: r.html_url ?? "",
   };
 }
+
+/** Branch names contain slashes (cell/C-001): encode each segment, keep the separators. */
+const refPath = (ref: string) => ref.split("/").map(encodeURIComponent).join("/");
 
 function mapPr(p: any): PrRef {
   return { number: p.number, state: p.state, merged: !!p.merged_at, url: p.html_url ?? "" };
@@ -127,7 +132,8 @@ export function createGitHubApi(token: string, fetchImpl: FetchLike = fetch as F
   }
 
   function fail(what: string, r: { status: number; json: any; text: string }): never {
-    const msg = r.json?.message ?? r.text.slice(0, 200);
+    const raw = String(r.json?.message ?? r.text.slice(0, 200));
+    const msg = token ? raw.split(token).join("***") : raw;
     throw new ApiError(`${what}: ${r.status} ${msg}`, r.status);
   }
 
@@ -152,6 +158,25 @@ export function createGitHubApi(token: string, fetchImpl: FetchLike = fetch as F
       }
     }
   };
+
+  // compare is paged (100 files per page); read at most 3 pages, i.e. 300 files.
+  async function compareImpl(repo: string, base: string, head: string): Promise<CompareResult> {
+    const files: string[] = [];
+    let ahead = 0;
+    let behind = 0;
+    for (let page = 1; page <= 3; page++) {
+      const r = await rest("GET", `/repos/${repo}/compare/${refPath(base)}...${refPath(head)}?per_page=100&page=${page}`);
+      if (r.status !== 200) fail("compare", r);
+      if (page === 1) {
+        ahead = r.json?.ahead_by ?? 0;
+        behind = r.json?.behind_by ?? 0;
+      }
+      const batch: any[] = r.json?.files ?? [];
+      for (const f of batch) files.push(f.filename as string);
+      if (batch.length < 100) break;
+    }
+    return { ahead, behind, files };
+  }
 
   return {
     async snapshot(repo, mainBranch, historyPages) {
@@ -320,6 +345,28 @@ export function createGitHubApi(token: string, fetchImpl: FetchLike = fetch as F
       const r = await rest("GET", `/repos/${repo}/compare/${base}...${head}?per_page=100`);
       if (r.status !== 200) fail("compare", r);
       return (r.json.files ?? []).map((f: any) => f.filename as string);
+    },
+
+    compare: compareImpl,
+
+    async mergeBranch(repo, into, from, message): Promise<MergeResult> {
+      const r = await rest("POST", `/repos/${repo}/merges`, { base: into, head: from, commit_message: message });
+      if (r.status === 201) return { status: "merged", oid: r.json?.sha as string };
+      if (r.status === 204) return { status: "up_to_date" };
+      if (r.status === 409) {
+        // GitHub does not say which files conflict. Files changed on both sides since the merge base are the
+        // candidates (a superset of the true conflicts). Failing to work this out must not hide the conflict.
+        let files: string[] = [];
+        try {
+          const [theirs, ours] = await Promise.all([compareImpl(repo, into, from), compareImpl(repo, from, into)]);
+          const mine = new Set(ours.files);
+          files = theirs.files.filter((f) => mine.has(f)).sort();
+        } catch {
+          files = [];
+        }
+        return files.length ? { status: "conflict", files } : { status: "conflict" };
+      }
+      return fail("merge", r);
     },
 
     async activeRuns(repo) {
