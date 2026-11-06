@@ -398,3 +398,87 @@ export async function cellHelp(api: GitHubApi, repo: string, opts: HealOptions, 
     BRIEFING_MAX_CHARS,
   );
 }
+
+// ---------------------------------------------------------------- heals (each is one commit on the cell branch)
+/** "heal(C-NNN): <what>" + optional "note:" body line + "heal: <kind>" trailer; next: and attempt: are carried from the tip. */
+function healMessage(prev: string, cell: string, kind: HealKind, what: string, note?: string): string {
+  const head = carry(prev, `heal(${cell}): ${what}`);
+  const extra = `${note ? `note: ${note}\n` : ""}heal: ${kind}`;
+  return head.includes("\n") ? `${head}\n${extra}` : `${head}\n\n${extra}`;
+}
+
+/** Authority and budget for a write. feedbackOk: cell_clear may act on a cell whose feedback is pending. */
+async function prepare(api: GitHubApi, repo: string, opts: HealOptions, a: { cell_id?: string; base?: string }, feedbackOk: boolean): Promise<{ ctx: Ctx; heals: Heal[] } | string> {
+  const au = await authorize(api, repo, opts, a, 0);
+  if (!au.ok) return au.text;
+  const { ctx } = au;
+  if (!feedbackOk && isFeedback(ctx.branch.message)) {
+    return `SELFHEAL_DENIED: ${ctx.id} has feedback pending (a human or the Steward decides). Do not change the cell. If the feedback was a mistake: ${HEAL_TOOLS.clear} first.`;
+  }
+  return { ctx, heals: await healsOf(api, repo, ctx.id) };
+}
+
+async function commitHeal(api: GitHubApi, repo: string, ctx: Ctx, message: string): Promise<string | null> {
+  const oid = await api.commitEmpty(repo, ctx.branch.oid, ctx.branch.treeOid, message);
+  return (await api.fastForward(repo, branchOf(ctx.id), oid)) === "ok" ? oid : null;
+}
+
+const moved = (id: string): string => `HEAL_FAILED ${id}: ${branchOf(id)} moved while you were writing (another chat is writing). Nothing was written. Stop and call next_cell.`;
+const healed = (id: string, what: string, oid: string, used: number): string =>
+  `HEALED ${id}: ${what} (tip ${short(oid)}, next base=${short(oid)}). Heals left: ${Math.max(0, MAX_HEALS - used - 1)} of ${MAX_HEALS}.`;
+
+/**
+ * Append a heal commit whose body is the note (cleaned like steward notes, at most NOTE_MAX chars). The note becomes part of
+ * the cell: claim and resume texts show it under AMENDMENTS (binding). Costs one heal.
+ */
+export async function cellNote(api: GitHubApi, repo: string, opts: HealOptions, a: { cell_id: string; base: string; text: string }): Promise<string> {
+  return safely(opts, String(a?.cell_id ?? ""), async () => {
+    const p = await prepare(api, repo, opts, a, false);
+    if (typeof p === "string") return p;
+    if (p.heals.length >= MAX_HEALS) return escalateText(repo, p.ctx, p.heals);
+    const note = redact(cleanNote(a.text ?? ""), opts.secrets).slice(0, NOTE_MAX);
+    if (!note) return `EMPTY_NOTE ${p.ctx.id}: nothing to write (text:). No heal spent.`;
+    const oid = await commitHeal(api, repo, p.ctx, healMessage(p.ctx.branch.message, p.ctx.id, "note", "note", note));
+    return oid ? healed(p.ctx.id, "note recorded; every chat that continues this cell sees it under AMENDMENTS (binding)", oid, p.heals.length) : moved(p.ctx.id);
+  });
+}
+
+/**
+ * Merge main into cell/<id> (message "heal(C-NNN): sync main"); main itself is never touched. up_to_date costs nothing, a
+ * conflict changes nothing and lists the files, a merge costs one heal.
+ */
+export async function cellSync(api: GitHubApi, repo: string, opts: HealOptions, a: { cell_id: string; base: string }): Promise<string> {
+  return safely(opts, String(a?.cell_id ?? ""), async () => {
+    const p = await prepare(api, repo, opts, a, false);
+    if (typeof p === "string") return p;
+    const { ctx, heals } = p;
+    const upToDate = `UP_TO_DATE ${ctx.id}: ${branchOf(ctx.id)} already contains ${opts.mainBranch}. Nothing changed, no heal spent. Your base is still ${short(ctx.branch.oid)}.`;
+    if (heals.length >= MAX_HEALS) {
+      // a merge would be a fourth heal, but being up to date is free to report
+      const r = await api.compare(repo, opts.mainBranch, branchOf(ctx.id)).catch(() => null);
+      return r && r.behind === 0 ? upToDate : escalateText(repo, ctx, heals);
+    }
+    const res = await api.mergeBranch(repo, branchOf(ctx.id), opts.mainBranch, healMessage(ctx.branch.message, ctx.id, "sync", "sync main"));
+    if (res.status === "up_to_date") return upToDate;
+    if (res.status === "conflict") {
+      const files = (res.files ?? []).slice(0, 12).join(", ");
+      return `CONFLICT ${ctx.id} (sync): ${opts.mainBranch} and your branch changed the same file(s)${files ? `: ${files}` : ""}. This is NOT a takeover: the cell is still yours and nothing was changed (no heal spent). Resolve those files inside allowed_paths with apply_changes, or file cell_signal feedback.`;
+    }
+    const tip = res.oid ?? (await api.branchTip(repo, branchOf(ctx.id)))?.oid;
+    if (!tip) return `HEAL_FAILED ${ctx.id}: the merge answered without a new tip. Call ${HEAL_TOOLS.sync} again.`;
+    return healed(ctx.id, `${opts.mainBranch} merged into ${branchOf(ctx.id)}; ${opts.mainBranch} itself was not touched`, tip, heals.length);
+  });
+}
+
+/** Remove the feedback state of this one cell (like takeover clear_feedback) with a heal commit. Costs one heal. */
+export async function cellClear(api: GitHubApi, repo: string, opts: HealOptions, a: { cell_id: string; base: string }): Promise<string> {
+  return safely(opts, String(a?.cell_id ?? ""), async () => {
+    const p = await prepare(api, repo, opts, a, true);
+    if (typeof p === "string") return p;
+    const { ctx, heals } = p;
+    if (!isFeedback(ctx.branch.message)) return `NO_FEEDBACK ${ctx.id}: there is no feedback state to clear. No heal spent.`;
+    if (heals.length >= MAX_HEALS) return escalateText(repo, ctx, heals);
+    const oid = await commitHeal(api, repo, ctx, healMessage(ctx.branch.message, ctx.id, "clear", "clear"));
+    return oid ? healed(ctx.id, "feedback state cleared; the cell is yours again", oid, heals.length) : moved(ctx.id);
+  });
+}

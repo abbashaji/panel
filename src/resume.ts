@@ -7,6 +7,7 @@ import { RULES } from "./protocol.ts";
 import { RUN_TITLE_RE } from "./plan.ts";
 import { parseTrailers, stewardNote, subjectOf } from "./trailers.ts";
 import { branchOf, cellYaml, short, type Loaded } from "./common.ts";
+import { amendmentsOf, withAmendments, type Amendment } from "./selfheal.ts";
 
 export async function resumeText(api: GitHubApi, repo: string, snap: Snapshot, plan: Loaded, id: string, tip: string, attempt?: number): Promise<string> {
   const b = snap.branches[branchOf(id)];
@@ -43,12 +44,19 @@ export async function resumeText(api: GitHubApi, repo: string, snap: Snapshot, p
   } catch {
     /* the note is a convenience */
   }
+  // Every steward and heal note of the branch is binding: it goes right after the goal for every chat that continues the cell.
+  let amendments: Amendment[] = [];
+  try {
+    amendments = await amendmentsOf(api, repo, id);
+  } catch {
+    /* the amendments are a convenience */
+  }
   // Last commit: its subject and next: trailer only. The attempt: and req: trailers are never printed (the header is the single source).
   const trl = parseTrailers(b?.message ?? "");
   const last = `Last commit: ${subjectOf(b?.message ?? "")}${trl.next ? `\nnext: ${trl.next}` : ""}`;
   const shown = files.slice(0, 30).join(", ") + (files.length > 30 ? ", ..." : "");
   return (
     `RESUME ${id} base=${short(tip)} repo=${repo} on ${branchOf(id)}${n > 0 ? ` attempt ${n}/${plan.cfg.max_attempts ?? 3}` : ""}. ${last}\n` +
-    `${noteLine}Files already changed (${files.length}): ${shown || "none"}${prLine}\n\n${cellYaml(plan.cells[id])}\n\n${RULES}`
+    `${noteLine}Files already changed (${files.length}): ${shown || "none"}${prLine}\n\n${withAmendments(cellYaml(plan.cells[id]), amendments)}\n\n${RULES}`
   );
 }
