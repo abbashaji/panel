@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, getState, login as apiLogin } from "./api";
 import { orderedIds, selectionReducer } from "./selection";
 import { readStore, writeStore } from "./storage";
-import type { PanelState, PanelStatus } from "./types";
+import type { PanelCell, PanelState, PanelStatus } from "./types";
 
 export type View = "graph" | "table" | "timeline";
 export type Theme = "dark" | "light";
@@ -82,6 +82,9 @@ export interface PanelContextValue {
   hideMerged: boolean;
   toggleCriticalOnly(): void;
   toggleHideMerged(): void;
+  /** show cells that a newer cell replaced (supersededBy), titled with a ' (replaced by C-xxx)' suffix; default false, kept in localStorage bp_show_replaced */
+  showReplaced: boolean;
+  setShowReplaced(v: boolean): void;
   /** ms timestamp of the last successful poll; null before the first load */
   lastUpdated: number | null;
 
@@ -173,6 +176,38 @@ function initialTheme(): Theme {
 const isEditable = (t: EventTarget | null): boolean =>
   t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 
+const SHOW_REPLACED_KEY = "bp_show_replaced";
+
+function initialShowReplaced(): boolean {
+  try {
+    return readStore(SHOW_REPLACED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const isReplaced = (c: PanelCell): boolean => Array.isArray(c.supersededBy) && c.supersededBy.length > 0;
+
+/** Remove replaced cells (and every edge / blocker / bottleneck pointing at them), or keep them with a title suffix. */
+export function applyReplaced(s: PanelState, show: boolean): PanelState {
+  const hidden = new Set(s.cells.filter(isReplaced).map((c) => c.id));
+  if (hidden.size === 0) return s;
+  if (show) {
+    return {
+      ...s,
+      cells: s.cells.map((c) => (isReplaced(c) ? { ...c, title: `${c.title} (replaced by ${(c.supersededBy ?? []).join(", ")})` } : c)),
+    };
+  }
+  const cells = s.cells
+    .filter((c) => !hidden.has(c.id))
+    .map((c) =>
+      c.depends.some((d) => hidden.has(d.id)) || c.blockedBy.some((b) => hidden.has(b))
+        ? { ...c, depends: c.depends.filter((d) => !hidden.has(d.id)), blockedBy: c.blockedBy.filter((b) => !hidden.has(b)) }
+        : c,
+    );
+  return { ...s, cells, bottleneck: s.bottleneck && hidden.has(s.bottleneck.id) ? null : s.bottleneck };
+}
+
 export function PanelProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [repo, setRepoState] = useState(initialRepo);
@@ -181,6 +216,15 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   const [statusFilter, setStatusFilter] = useState<PanelStatus[]>([]);
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [hideMerged, setHideMerged] = useState(false);
+  const [showReplaced, setShowReplacedState] = useState(initialShowReplaced);
+  const setShowReplaced = useCallback((v: boolean) => {
+    setShowReplacedState(v);
+    try {
+      writeStore(SHOW_REPLACED_KEY, v ? "1" : "0");
+    } catch {
+      /* storage may be unavailable; keep the value in memory */
+    }
+  }, []);
   const [selection, dispatch] = useReducer(selectionReducer, []);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -240,7 +284,8 @@ export function PanelProvider({ children }: { children: ReactNode }) {
     // live updates by polling every 5 s; stop while the login screen is shown
     refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 401 ? false : POLL_MS),
   });
-  const state = query.data ?? null;
+  const rawState = query.data ?? null;
+  const state = useMemo(() => (rawState ? applyReplaced(rawState, showReplaced) : null), [rawState, showReplaced]);
   const needsLogin = query.error instanceof ApiError && query.error.status === 401;
 
   // a repo change or unmount stops every running retry series and forgets pending expectations
@@ -417,6 +462,8 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       hideMerged,
       toggleCriticalOnly: () => setCriticalOnly((v) => !v),
       toggleHideMerged: () => setHideMerged((v) => !v),
+      showReplaced,
+      setShowReplaced,
       lastUpdated: query.dataUpdatedAt > 0 ? query.dataUpdatedAt : null,
 
       theme,
@@ -431,7 +478,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       actions,
       registerActions,
     }),
-    [repo, recentRepos, switchRepo, forgetRepo, state, query, needsLogin, qc, refreshAfterAction, selection, view, search, statusFilter, criticalOnly, hideMerged, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
+    [repo, recentRepos, switchRepo, forgetRepo, state, query, needsLogin, qc, refreshAfterAction, selection, view, search, statusFilter, criticalOnly, hideMerged, showReplaced, setShowReplaced, theme, toasts, toast, dismissToast, launcher, registerLauncher, actions, registerActions],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
