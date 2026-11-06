@@ -1,0 +1,26 @@
+id: C-048
+title: Panel hides replaced cells by default
+type: normal
+priority: 6
+goal: |
+  Use PanelCell.supersededBy from C-047. In web/src/core/store.tsx, where the polled state becomes usePanel().state, remove every cell that has a non-empty supersededBy and drop it from edges, search, table, sidebar, the bottleneck line and any count the UI computes from cells, so nothing shows a replaced cell. Add showReplaced (default false, kept in memory and in localStorage key bp_show_replaced with try/catch) and setShowReplaced to usePanel(); when true the replaced cells are shown again with the title suffix ' (replaced by C-043)'. Counts shown in the header ('16 / 19 merged') come from the Worker counts and already exclude them.
+  Tests in a NEW file web/src/core/replaced.test.tsx: replaced cell hidden by default, shown when showReplaced is true with the suffix, a plain cell is never hidden, state without supersededBy (old Worker) unchanged, storage failure does not throw.
+inputs: []
+after: [C-004, C-012, C-019, C-029, C-031, C-043, C-044, C-045, C-046, C-047]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "usePanel().showReplaced / setShowReplaced and a state without replaced cells"
+read:
+  - web/src/core/store.tsx
+  - web/src/core/types.ts
+allowed_paths:
+  - web/src/core/store.tsx
+  - web/src/core/replaced.test.tsx
+outputs:
+  - web/src/core/store.tsx
+  - web/src/core/replaced.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  No toggle button is required in this cell; the flag is only exposed. If it is cheap to add a 'Show replaced cells' checkbox in the Search cells popover or the sidebar footer, do it in a new file and say so in the PR text, otherwise leave it.

@@ -1,0 +1,38 @@
+id: C-047
+title: Worker marks replaced cells and leaves them out of the counts
+type: normal
+priority: 6
+goal: |
+  Bug: cells that another cell supersedes (for example C-036, C-039, C-040, C-042) and that never merged are left out by the engine (ready_cells says ALL_DONE) but the panel state still lists them as 'waiting' forever. They stay in the graph and the 'N / M merged' counter can never finish. They come from cells/*.yaml on main, not from a branch, so deleting a branch does not remove them.
+  Fix in src/panel/state.ts: buildPanelState already computes sup = superseders(cells). For every cell that is in sup and not merged:
+  - set the new optional field supersededBy: string[] (the sorted superseder ids) on its PanelCell, and status stays 'waiting' for compatibility;
+  - do NOT count it in counts (counts then equal the number of live cells) and do not count it as a blocker or dependent of other cells (blockedBy of a dependent already points at the superseders, keep that);
+  - a superseded cell that DID merge before it was replaced is normal: no supersededBy, status done.
+  - src/panel/types.ts and web/src/core/types.ts: PanelCell gets supersededBy?: string[] (parity test must stay green).
+  Tests in test/panel_state.test.ts: superseded unmerged cell has supersededBy and is not in counts, a merged superseded cell is done without the field, dependents wait on the superseders, a plan without supersedes is unchanged.
+inputs: []
+after: [C-000, C-002, C-003, C-004, C-012, C-030, C-035, C-041, C-045]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "PanelCell.supersededBy?: string[] and counts that exclude replaced cells"
+read:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - src/plan.ts
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Keep every other field. Old web clients ignore supersededBy.
