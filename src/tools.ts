@@ -10,6 +10,8 @@ import { ID_RE } from "./plan.ts";
 import { nextCellWait } from "./longpoll.ts";
 import { SERVER_INSTRUCTIONS } from "./protocol.ts";
 import { cellSignal } from "./signal.ts";
+import { cellClear, cellHelp, cellNote, cellSync, type HealOptions } from "./selfheal.ts";
+import { cellFix } from "./selfheal_fix.ts";
 import { claimSteward, gatherBriefing, leaseMinutesOf, noteCell, redact, releaseSteward } from "./steward.ts";
 import type { ClaimOptions, ReserveKv } from "./claim.ts";
 
@@ -158,8 +160,28 @@ export function stewardToolHandlers(env: Env, opts: engine.EngineOptions, apiFac
   return withWarning(env, raw);
 }
 
+/**
+ * The self-heal tools: cell_help, cell_note, cell_sync, cell_clear, cell_fix. No admin key: the proof is cell_id + base of the live
+ * lease (checked in selfheal.ts). Kept apart from toolHandlers, whose 11-tool list test/tools.test.ts asserts exactly.
+ */
+export function healToolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: ApiFactory = createGitHubApi): Record<string, (args: any) => Promise<string>> {
+  const run = makeRun(env, apiFactory);
+  const hopts = (): HealOptions => ({
+    ...opts,
+    secrets: [env.ADMIN_TOKEN, env.GITHUB_TOKEN, env.MCP_AUTH_TOKEN, env.EXT_TOKEN].filter((s): s is string => typeof s === "string" && s.length > 0),
+  });
+  const raw = {
+    cell_help: run((api, r, a) => cellHelp(api, r, hopts(), { cell_id: a.cell_id, base: a.base, problem: a.problem })),
+    cell_note: run((api, r, a) => cellNote(api, r, hopts(), { cell_id: a.cell_id, base: a.base, text: a.note })),
+    cell_sync: run((api, r, a) => cellSync(api, r, hopts(), { cell_id: a.cell_id, base: a.base })),
+    cell_clear: run((api, r, a) => cellClear(api, r, hopts(), { cell_id: a.cell_id, base: a.base })),
+    cell_fix: run((api, r, a) => cellFix(api, r, hopts(), { cell_id: a.cell_id, base: a.base, kind: a.kind, cells: a.cells })),
+  };
+  return withWarning(env, raw);
+}
+
 const NO_WARN = /^(CONFLICT|NOT_CLAIMED|CELL_DONE)/;
-const WARNED_TOOLS = new Set(["apply_changes", "cell_signal", "read_files", "submit_cell", "ci_result", "preflight"]);
+const WARNED_TOOLS = new Set(["apply_changes", "cell_signal", "read_files", "submit_cell", "ci_result", "preflight", "cell_help", "cell_note", "cell_sync", "cell_clear", "cell_fix"]);
 
 /** C5: append LIMIT_WARNING_TEXT while the advisory KV flag of the cell exists; delete the flag on next_cell CLAIMED/RESUME, cell_signal release and takeover. No OAUTH_KV or any KV error = the reply is returned unchanged. */
 function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>): Record<string, (args: any) => Promise<string>> {
@@ -204,7 +226,7 @@ function withWarning(env: Env, h: Record<string, (args: any) => Promise<string>>
 
 export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi): McpServer {
   const server = new McpServer({ name: "blueprint-mcp", version: "1.0.0" }, { instructions: SERVER_INSTRUCTIONS } as any);
-  const h = { ...toolHandlers(env, engineOptions(env), apiFactory), ...stewardToolHandlers(env, engineOptions(env), apiFactory) };
+  const h = { ...toolHandlers(env, engineOptions(env), apiFactory), ...stewardToolHandlers(env, engineOptions(env), apiFactory), ...healToolHandlers(env, engineOptions(env), apiFactory) };
   const repo = z.string().optional().describe("owner/name; omit to use the default repository");
 
   server.registerTool("next_cell", {
@@ -288,6 +310,34 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
     description: "STEWARD ONLY (needs admin_key): give up the Steward role (handoff: true when a fresh chat should take over). Needs the session of steward_next.",
     inputSchema: { repo, admin_key: z.string().optional(), session: z.string(), handoff: z.boolean().optional() },
   }, async (a) => text(await h.steward_release(a)));
+
+  const cellId = z.string();
+  const base = z.string().optional().describe("7-char sha of your cell branch tip from your last CLAIMED/RESUME/ok/HEALED; required");
+
+  server.registerTool("cell_help", {
+    description: "You are blocked? Call this first (no admin key needed): a short briefing with the problem class and the exact allowed steps. Read-only, free.",
+    inputSchema: { repo, cell_id: cellId, base, problem: z.string().optional().describe("what failed, in a sentence or two") },
+  }, async (a) => text(await h.cell_help(a)));
+
+  server.registerTool("cell_note", {
+    description: "Record a decision or assumption on your own cell (no admin key needed); it becomes binding AMENDMENTS for every chat on the cell. Costs one heal.",
+    inputSchema: { repo, cell_id: cellId, base, note: z.string().describe("max 2000 chars") },
+  }, async (a) => text(await h.cell_note(a)));
+
+  server.registerTool("cell_sync", {
+    description: "Merge main into your own cell branch (no admin key needed); main is never changed. Free when already up to date.",
+    inputSchema: { repo, cell_id: cellId, base },
+  }, async (a) => text(await h.cell_sync(a)));
+
+  server.registerTool("cell_clear", {
+    description: "Clear a feedback state you filed by mistake on your own cell (no admin key needed). Costs one heal.",
+    inputSchema: { repo, cell_id: cellId, base },
+  }, async (a) => text(await h.cell_clear(a)));
+
+  server.registerTool("cell_fix", {
+    description: "Publish a corrected cell (kind replace) or a small blocker cell (kind blocker) for your own cell (no admin key needed); at most 2 cells, ids are assigned for you. Costs one heal.",
+    inputSchema: { repo, cell_id: cellId, base, kind: z.enum(["replace", "blocker"]), cells: z.array(z.record(z.string(), z.any())) },
+  }, async (a) => text(await h.cell_fix(a)));
 
   return server;
 }
