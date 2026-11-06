@@ -184,3 +184,68 @@ test("an action clears the panel cache so the next state is rebuilt", async () =
   await buildPanelState(e, "o/r", { api, opts });
   assert.ok(builds > n1);
 });
+
+// --- C-047: replaced (superseded, never merged) cells ---
+function supSnapshot(mergedIds: string[], defs: Record<string, { after: string[]; supersedes?: string[] }>): Snapshot {
+  const cellFiles: Record<string, string> = {};
+  for (const [id, d] of Object.entries(defs)) {
+    cellFiles[`${id}.yaml`] = cellYaml(id, d.after) + (d.supersedes ? `supersedes:\n${d.supersedes.map((s) => `  - ${s}`).join("\n")}\n` : "");
+  }
+  return {
+    mainOid: oid("a"), mainTreeOid: oid("b"), cellFiles, blueprint: "project: demo\nmain_branch: main\n", branches: {},
+    subjects: mergedIds.map((m) => `cell(${m}): done`), historyComplete: true,
+  };
+}
+
+test("superseded unmerged cell has supersededBy and is not counted", async () => {
+  const snap = supSnapshot(["C-000"], {
+    "C-000": { after: [] },
+    "C-010": { after: ["C-000"] },
+    "C-011": { after: ["C-000"], supersedes: ["C-010"] },
+    "C-013": { after: ["C-000"], supersedes: ["C-010"] },
+    "C-012": { after: ["C-010"] },
+  });
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snap), opts });
+  const by = Object.fromEntries(s.cells.map((c) => [c.id, c]));
+  assert.deepEqual(by["C-010"].supersededBy, ["C-011", "C-013"]);
+  assert.equal(by["C-010"].status, "waiting");
+  for (const id of ["C-000", "C-011", "C-012", "C-013"]) assert.equal("supersededBy" in by[id], false);
+  assert.deepEqual(s.counts, { done: 1, running: 0, ready: 2, waiting: 1, expired: 0, needs_human: 0, needs_split: 0 });
+  const live = Object.values(s.counts).reduce((a, b) => a + b, 0);
+  assert.equal(live, s.cells.length - 1);
+});
+
+test("dependents of a replaced cell wait on its superseders", async () => {
+  const snap = supSnapshot(["C-000"], {
+    "C-000": { after: [] },
+    "C-010": { after: ["C-000"] },
+    "C-011": { after: ["C-000"], supersedes: ["C-010"] },
+    "C-012": { after: ["C-010"] },
+  });
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snap), opts });
+  const by = Object.fromEntries(s.cells.map((c) => [c.id, c]));
+  assert.equal(by["C-012"].status, "waiting");
+  assert.ok(by["C-012"].blockedBy.includes("C-011"));
+  assert.equal(by["C-012"].blockedBy.includes("C-010"), false);
+  // the replaced cell is not a dependent of C-000
+  assert.equal(by["C-000"].directDependents, 1);
+});
+
+test("superseded cell that merged first is done without supersededBy", async () => {
+  const snap = supSnapshot(["C-000", "C-020"], {
+    "C-000": { after: [] },
+    "C-020": { after: ["C-000"] },
+    "C-021": { after: ["C-000"], supersedes: ["C-020"] },
+  });
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snap), opts });
+  const by = Object.fromEntries(s.cells.map((c) => [c.id, c]));
+  assert.equal(by["C-020"].status, "done");
+  assert.equal("supersededBy" in by["C-020"], false);
+  assert.equal(s.counts.done, 2);
+});
+
+test("a plan without supersedes has no supersededBy and counts every cell", async () => {
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snapshot()), opts });
+  assert.equal(s.cells.some((c) => "supersededBy" in c), false);
+  assert.equal(Object.values(s.counts).reduce((a, b) => a + b, 0), s.cells.length);
+});

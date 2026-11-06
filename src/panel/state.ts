@@ -164,6 +164,9 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
   const split = new Set((state.needs_split ?? []).map((r) => r.id));
   const human = new Set((state.needs_human ?? []).map((r) => r.id));
   const sup = superseders(cells);
+  // A cell that another cell supersedes and that never merged is replaced: it stays in the graph but is not live.
+  const replaced = (id: string): boolean => id in sup && !merged.has(id);
+  const hasReplaced = Object.keys(cells).some(replaced);
 
   const ids = Object.keys(cells).sort();
   const direct = directDependents(cells);
@@ -173,12 +176,27 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
   for (const [lv, list] of Object.entries(waves(cells))) for (const id of list) wave[id] = Number(lv);
   const dependents: Record<string, string[]> = {};
   for (const id of ids) dependents[id] = [];
-  for (const [c, ds] of Object.entries(graph)) for (const d of ds) dependents[d].push(c);
+  // Replaced cells are not dependents of anything.
+  for (const [c, ds] of Object.entries(graph)) if (!replaced(c)) for (const d of ds) dependents[d].push(c);
   const depth: Record<string, number> = {};
   const dp = (n: string): number => (depth[n] ??= 1 + Math.max(0, ...dependents[n].map(dp)));
+  // Without replaced cells these are exactly the plan.ts values; with them, only live dependents are counted.
+  const directOf = (id: string): number => (hasReplaced ? dependents[id].length : direct[id]);
+  const transOf = (id: string): number => {
+    if (!hasReplaced) return trans[id];
+    const seen = new Set<string>();
+    const stack = [...dependents[id]];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      stack.push(...dependents[n]);
+    }
+    return seen.size;
+  };
   // Same rule as computeState (which only reports it for ready cells): the panel needs it for every cell.
   const isCritical = (id: string) =>
-    direct[id] >= cfg.bottleneck_threshold || dp(id) - 1 >= cfg.critical_chain_threshold || trans[id] >= cfg.critical_transitive_threshold;
+    directOf(id) >= cfg.bottleneck_threshold || dp(id) - 1 >= cfg.critical_chain_threshold || transOf(id) >= cfg.critical_transitive_threshold;
 
   const statusOf = (id: string): PanelStatus => {
     if (merged.has(id)) return "done";
@@ -235,8 +253,8 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         wave: wave[id] ?? 0,
         depends,
         blockedBy,
-        directDependents: direct[id],
-        transitiveDependents: trans[id],
+        directDependents: directOf(id),
+        transitiveDependents: transOf(id),
         sha: { lock, tip: b ? short(b.oid) : null, merged: null },
         lease,
         attempts: attempts[id] ?? 0,
@@ -248,15 +266,16 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         allowedPaths: slist(c, "allowed_paths"),
         provides: slist(c, "provides"),
         inputs: inputsOf(c).map((i) => String(i.from)),
+        ...(replaced(id) ? { supersededBy: [...sup[id]].sort() } : {}),
       };
     }),
   );
 
   const counts: PanelCounts = { done: 0, running: 0, ready: 0, waiting: 0, expired: 0, needs_human: 0, needs_split: 0 };
-  for (const c of cellsOut) counts[c.status]++;
+  for (const c of cellsOut) if (!c.supersededBy) counts[c.status]++;
   let bottleneck: PanelState["bottleneck"] = null;
   for (const c of cellsOut) {
-    if (c.status === "done" || c.transitiveDependents === 0) continue;
+    if (c.status === "done" || c.supersededBy || c.transitiveDependents === 0) continue;
     if (!bottleneck || c.transitiveDependents > bottleneck.blocks) bottleneck = { id: c.id, blocks: c.transitiveDependents };
   }
 

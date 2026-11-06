@@ -43,6 +43,7 @@ export interface PanelCell {
   provides: string[];
   inputs: string[];
   resumable?: boolean;
+  supersededBy?: string[];
 }
 
 export interface PanelCounts {
