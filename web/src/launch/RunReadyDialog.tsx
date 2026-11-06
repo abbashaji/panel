@@ -2,6 +2,7 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { PanelCell } from "../core/types";
 import { MAX_CELLS } from "./protocol";
+import AutoSendHelp from "./AutoSendHelp";
 
 type Row = Pick<PanelCell, "id" | "title" | "status">;
 
@@ -70,6 +71,8 @@ function Body({ ready, onRun }: { ready: Row[]; onRun: (ids: string[]) => void }
           })}
         </ul>
       )}
+
+      <AutoSendHelp />
 
       <Dialog.Description className="mt-3" style={{ font: "500 12px var(--font-sans)", color: "var(--muted-3, #8A93A8)" }}>
         The next window lets you pick the browser profiles.
