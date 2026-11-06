@@ -14,6 +14,7 @@ export const RULES = `RULES
 - Before one generation you expect to exceed ~5 minutes: cell_signal heartbeat.
 - CONFLICT means someone took your cell over: stop at once.
 - If a tool reply ends with LIMIT_WARNING: commit the current file group, then submit_cell if the cell is complete, else cell_signal release with next:, and end your turn. Never call next_cell again.
+- Blocked (tests fail on something outside your paths, branch behind main, a cell text gap, main broken)? Call cell_help(repo, cell_id, base, problem) BEFORE cell_signal feedback and follow its steps (cell_note, cell_sync, cell_clear, cell_fix; no admin key needed). cell_signal feedback is only for ESCALATE answers.
 - Wrong or impossible contract: no workaround; cell_signal feedback (what, why, proposed fix), then stop.
 - About 60% of your context used and not nearly done: cell_signal release with next:, then stop (never only reply PARTIAL).
 - preflight(id) dry-runs CI on your branch; keep working and read ci_result once later. Never poll ci_result in a loop.
@@ -24,4 +25,5 @@ export const SERVER_INSTRUCTIONS =
   "Blueprint cell engine. Start every chat with next_cell: it either gives you exactly one cell with its rules, " +
   "or tells you nothing can be done now (NONE_READY ... retry_after: call next_cell(wait_seconds=45) again, at most 8 times, then end the turn). " +
   "You never run git or scripts; you only call these tools. " +
+  "When blocked, call cell_help before cell_signal feedback and follow its steps (no admin key needed); feedback is only for ESCALATE answers. " +
   "Exception: a chat the owner told 'you are the Steward' starts with steward_next (repo, admin_key) instead and follows its briefing; every other chat starts with next_cell.";
