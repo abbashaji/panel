@@ -1,0 +1,32 @@
+id: C-065
+title: Hardened auto-send userscript served by the panel
+type: normal
+priority: 6
+goal: |
+  The userscript that clicks Send. Single source file web/public/blueprint-autosend.user.js (Vite copies web/public, so the panel serves it at /panel/blueprint-autosend.user.js and a userscript manager installs it with one click). Behaviour:
+  - Header: @name Blueprint auto-send, @match https://claude.ai/new*, @run-at document-idle, @grant GM_getValue, GM_setValue, GM_registerMenuCommand, a version, and @updateURL / @downloadURL pointing at the same path relative to the panel (the owner edits the host once; leave a clear comment).
+  - Marker: runs only when the URL has autosend=1 and a q parameter. Everything is captured once at start.
+  - STRICT TEMPLATE: after whitespace normalisation q must match exactly the launcher cell template 'Repo: <owner/name> Follow BLUEPRINT.md. Call next_cell with repo and cell_id=<C-NNN> (reserved for me). Do only that cell. Begin your next message with the CLAIMED line.' with owner/name matching [A-Za-z0-9._-]+/[A-Za-z0-9._-]+ and C-NNN matching C-\d{3,}. Anything else (including the Steward prompt and any free text) is never sent; a red banner says why.
+  - ALLOWED REPOS: a list stored with GM_setValue (menu command 'Blueprint auto-send: set allowed repos', comma separated). An empty list means nothing is sent and the banner says 'set allowed repos first'. The repo in q must be in the list.
+  - Send only when the editor text equals the prompt and the Send button is enabled and both stayed so for 800 ms. Then show a visible banner 'Blueprint is sending <cell> in 3s' with a Cancel button, then click once. Cancel stops it for this tab.
+  - Once per tab (sessionStorage flag), at most 12 sends in 10 minutes in total (stored count), 30 s timeout after which a banner says 'not sent, press Send yourself'. Selectors for the editor and the Send button are in one CONFIG block at the top. Storage access is wrapped in try/catch with a localStorage fallback when GM_* is missing.
+  - Testable: the logic lives in functions on one object that is exposed as window.__bpAutoSend only when window.__BP_TEST__ is set.
+  - Tests in web/src/userscript/autosend.test.ts (vitest, jsdom, load the file with ?raw from ../../public/blueprint-autosend.user.js and evaluate it): template accepted, steward prompt rejected, edited prompt rejected, other repo rejected, empty allowlist, no marker, cancel, once per tab, rate cap, timeout banner, Send clicked exactly once on the happy path with fake timers.
+inputs: []
+after: [C-012, C-045]
+supersedes: [C-040, C-042]
+provides:
+  - "web/public/blueprint-autosend.user.js served at /panel/blueprint-autosend.user.js"
+read:
+  - launcher/Core/PromptBuilder.cs
+allowed_paths:
+  - web/public/blueprint-autosend.user.js
+  - web/src/userscript/autosend.test.ts
+outputs:
+  - web/public/blueprint-autosend.user.js
+  - web/src/userscript/autosend.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Check that web/dist contains blueprint-autosend.user.js after the build and that the Worker serves .js under /panel/ (src/panel router or the assets binding); if it does not, say so in the PR text instead of editing the Worker. The userscript never sends a prompt it did not match against the template.

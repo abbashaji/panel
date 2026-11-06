@@ -1,0 +1,29 @@
+id: C-067
+title: Docs describe the opt-in auto-send and its safety rules
+type: normal
+priority: 4
+goal: |
+  - New docs/autosend.md: what it is, why it is opt-in, how it works (launcher adds &autosend=1 only for cell URLs when the checkbox is on, the userscript sends only the exact launcher template for an allowed repo after a 3 second cancel banner), setup per browser profile, the claude.ai connector tool approvals that may still need 'always allow' for the Blueprint tools, what breaks when claude.ai changes (selectors in the CONFIG block, banner says not sent), how to turn it off.
+  - README.md: replace any statement that prompts are never auto-sent with 'by default the prompt is pre-filled and you press Send; auto-send is an opt-in helper, see docs/autosend.md'.
+  - docs/panel-contracts.md: the launcher section says the same, and lists that auto-send applies to cell chats only and never to the Steward.
+  - Do NOT edit docs/decisions.md (protected). In the PR text tell the owner to change the decision 'Prompt is pre-filled, never auto-sent' to 'pre-filled by default, auto-send opt-in (docs/autosend.md)' by a normal PR.
+inputs: []
+after: [C-000, C-011, C-024, C-026, C-063, C-064, C-065]
+provides:
+  - "docs/autosend.md and corrected README and contracts text"
+read:
+  - README.md
+  - docs/panel-contracts.md
+  - docs/decisions.md
+allowed_paths:
+  - README.md
+  - docs/panel-contracts.md
+  - docs/autosend.md
+outputs:
+  - README.md
+  - docs/panel-contracts.md
+  - docs/autosend.md
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Documentation only.

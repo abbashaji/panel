@@ -1,0 +1,32 @@
+id: C-064
+title: Start windows get an Auto-send checkbox that is off by default
+type: normal
+priority: 6
+goal: |
+  Use LauncherSettings and PromptBuilder.WithAutoSend from C-063.
+  - launcher/App/StartForm.cs (cell mode only) and launcher/App/StartManyForm.cs: a checkbox 'Auto-send in the browser' initialised from LauncherSettings (default off) and saved when changed. When on, the cell URL is passed through PromptBuilder.WithAutoSend before LaunchCommand.Build. The Steward mode never shows the checkbox and never auto-sends.
+  - Footer text: when off 'You press Send in the chat.'; when on 'The helper script sends it after 3 seconds unless you cancel. Needs the Blueprint auto-send helper in this browser profile.' If WithAutoSend throws, launch without it and show the reason in the error list.
+  - launcher/App/Controls.cs: only what the checkbox needs.
+  - StartMany: the marker is added to every cell URL of the batch; keep the 1500 ms gap.
+inputs: []
+after: [C-009, C-016, C-027, C-028, C-038, C-063]
+provides:
+  - "Opt-in auto-send in the start and start-many windows"
+read:
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+  - launcher/Core/LauncherSettings.cs
+allowed_paths:
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+outputs:
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text.

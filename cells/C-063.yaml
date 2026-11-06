@@ -1,0 +1,29 @@
+id: C-063
+title: Launcher core can mark a cell URL for auto-send and remembers the setting
+type: normal
+priority: 6
+goal: |
+  Core part of the opt-in auto-send feature (the launcher stays offline, the click is done by a userscript in the browser, C-065).
+  - launcher/Core/PromptBuilder.cs: const AutoSendSuffix = "&autosend=1" and WithAutoSend(url): accepts only a URL that starts with BaseUrl AND was produced for a cell (its decoded q must equal BuildPrompt(repo, cell) for a valid repo and cell, i.e. parse the q value and compare with the fixed template regex), otherwise ArgumentException. A steward URL, a URL with extra parameters, another host or a longer or edited prompt is rejected, so the admin-key prompt can never be marked. BuildUrl stays unchanged (an existing test asserts no '&' in it).
+  - New launcher/Core/LauncherSettings.cs: Load(path) and Save(path) for %LOCALAPPDATA%\BlueprintLauncher\settings.json with one bool AutoSend (default false). Tolerates a missing, corrupt or oversized file (default false), writes atomically, ignores unknown keys, no other setting is read from the file.
+  - Tests in new launcher/Core.Tests/AutoSendTests.cs: marker appended exactly once, LaunchCommand.Build still accepts the marked URL and keeps the arguments (profile folder, url), rejects steward URL, foreign host, edited prompt, double marker, empty; settings default false, round trip, corrupt file, huge file.
+inputs: []
+after: [C-008, C-022, C-037]
+provides:
+  - "PromptBuilder.WithAutoSend(url) and LauncherSettings.Load/Save with AutoSend"
+read:
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/CellRecords.cs
+allowed_paths:
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core.Tests/AutoSendTests.cs
+outputs:
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core.Tests/AutoSendTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Core stays free of System.Net and System.Drawing (NoNetworkTests). The URL prefix check in LaunchCommand stays as it is.

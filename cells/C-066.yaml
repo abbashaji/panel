@@ -1,0 +1,28 @@
+id: C-066
+title: Panel offers the auto-send helper install link
+type: normal
+priority: 5
+goal: |
+  - New web/src/launch/AutoSendHelp.tsx: a small block 'Auto-send helper (optional)': one line of what it does, the install link to <panel base>/blueprint-autosend.user.js (relative to the current /panel/ path, opens in a new tab so Tampermonkey or Violentmonkey offers the install), and the three setup steps (install a userscript manager in each browser profile the launcher opens, install the script, set the allowed repos from the manager menu to this repo). It says the launcher checkbox 'Auto-send in the browser' must also be on and that Steward chats never auto-send.
+  - web/src/launch/RunReadyDialog.tsx mounts the block below the cell list (collapsed by default).
+  - Tests in a new web/src/launch/autosendHelp.test.tsx: link href ends with blueprint-autosend.user.js, steps visible when expanded, collapsed by default.
+inputs: []
+after: [C-010, C-012, C-029, C-045, C-065]
+supersedes: [C-040, C-042]
+provides:
+  - "Install link for the auto-send helper in the Run ready dialog"
+read:
+  - web/src/launch/RunReadyDialog.tsx
+allowed_paths:
+  - web/src/launch/RunReadyDialog.tsx
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+outputs:
+  - web/src/launch/RunReadyDialog.tsx
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  No new API call. Dark tokens from docs/panel-design.md.
