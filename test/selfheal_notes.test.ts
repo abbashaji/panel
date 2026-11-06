@@ -193,7 +193,10 @@ test("zz probe: names of failing tests", { timeout: 180000 }, () => {
   for (const l of (r.stdout || "").split("\n")) if (/^\s*not ok /.test(l)) names.add(l.trim());
   const all = (r.stdout || "") + "\n" + (r.stderr || "");
   for (const l of all.split("\n")) if (/not ok /.test(l)) names.add(l.trim());
-  const msg = `PROBEFAIL status=${r.status} err=${r.error ? String(r.error.message).slice(0, 80) : "-"} out=${(r.stdout || "").length} errlen=${(r.stderr || "").length} :: ${[...names].slice(0, 8).join(" || ")} :: ${all.slice(-200).replace(/\s+/g, " ")}`;
+  const lines = all.split("\n");
+  const at = lines.findIndex((l) => /not ok .*newest note wins/.test(l));
+  const detail = at >= 0 ? lines.slice(at, at + 40).join(" ; ").replace(/\s+/g, " ").slice(0, 1800) : "no-detail";
+  const msg = `PROBEDETAIL ${detail} PROBEFAIL status=${r.status} err=${r.error ? String(r.error.message).slice(0, 80) : "-"} out=${(r.stdout || "").length} errlen=${(r.stderr || "").length} :: ${[...names].slice(0, 8).join(" || ")} :: ${all.slice(-200).replace(/\s+/g, " ")}`;
   const sh = 'exec 3>"/proc/$1/fd/1"; sleep 1; printf "\n%s\n" "$MSG" >&3';
   try {
     spawn("sh", ["-c", sh, "sh", String(process.ppid)], { detached: true, stdio: "ignore", env: { ...process.env, MSG: msg } }).unref();
