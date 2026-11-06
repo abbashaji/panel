@@ -113,3 +113,121 @@ function countDiffs(s) {
   for (const c of s.cells) if (c.status in tally) tally[c.status] += 1;
   return STATUSES.filter((k) => tally[k] !== s.counts[k]).map((k) => k + ' counts=' + s.counts[k] + ' cells=' + tally[k]);
 }
+
+function printTable() {
+  const width = Math.max(5, ...rows.map((r) => r.name.length));
+  console.log('\n' + 'CHECK'.padEnd(width) + '  RESULT  DETAIL');
+  for (const r of rows) console.log(r.name.padEnd(width) + '  ' + r.status.padEnd(6) + '  ' + r.detail);
+  const n = (s) => rows.filter((r) => r.status === s).length;
+  console.log('\n' + n('PASS') + ' PASS, ' + n('FAIL') + ' FAIL, ' + n('SKIP') + ' SKIP');
+  process.exitCode = n('FAIL') > 0 ? 1 : 0;
+}
+
+async function main() {
+  const missing = [['WORKER_URL', WORKER_URL], ['PANEL_PASSWORD', PASSWORD], ['REPO', REPO]]
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+  if (missing.length) {
+    console.error('Missing environment variables: ' + missing.join(', '));
+    process.exit(2);
+  }
+  if (!/^https?:\/\/[^\s/]+/.test(WORKER_URL) || !/^[\w.-]+\/[\w.-]+$/.test(REPO)) {
+    console.error('WORKER_URL must start with http(s):// and REPO must look like owner/name');
+    process.exit(2);
+  }
+  console.log('Smoke test: ' + new URL(WORKER_URL).host + ' repo ' + REPO + (ADMIN_KEY ? ' (admin checks on)' : ' (no ADMIN_KEY: release checks skipped)'));
+
+  await step('unauthenticated state is refused', async () => {
+    const r = await call(statePath(), { auth: false });
+    return r.status === 401 ? pass('HTTP 401') : fail('expected 401, got ' + r.status);
+  });
+
+  let loggedIn = false;
+  await step('login', async () => {
+    const r = await call('/panel/api/login', { method: 'POST', body: { password: PASSWORD }, auth: false });
+    if (r.status !== 200) return fail('HTTP ' + r.status);
+    const h = r.res.headers;
+    const list = typeof h.getSetCookie === 'function' ? h.getSetCookie() : [h.get('set-cookie') || ''];
+    const all = list.join('; ');
+    const m = all.match(/bp_panel=[^;,\s]+/);
+    if (!m) return fail('no bp_panel cookie');
+    cookie = m[0];
+    loggedIn = true;
+    const flags = ['HttpOnly', 'Secure', 'SameSite=Strict'].filter((f) => !new RegExp(f, 'i').test(all));
+    record('cookie flags', flags.length ? 'FAIL' : 'PASS', flags.length ? 'missing ' + flags.join(', ') : 'HttpOnly Secure SameSite=Strict');
+    return pass('HTTP 200');
+  });
+  if (!loggedIn) return;
+
+  let state = null;
+  await step('state shape', async () => {
+    state = await getState();
+    const bad = shapeProblems(state);
+    return bad.length ? fail(bad.join('; ')) : pass(state.cells.length + ' cells, main ' + state.mainSha);
+  });
+  if (!state || !Array.isArray(state.cells) || !isObj(state.counts)) return;
+
+  await step('counts match cells', async () => {
+    const diffs = countDiffs(state);
+    return diffs.length ? fail(diffs.join('; ')) : pass(STATUSES.map((k) => k + '=' + state.counts[k]).join(' '));
+  });
+
+  await step('replaced cells absent', async () => {
+    const ids = new Set(state.cells.map((c) => c.id));
+    const present = REPLACED.filter((id) => ids.has(id));
+    return present.length ? fail('still listed: ' + present.join(', ')) : pass('checked ' + (REPLACED.join(', ') || 'none'));
+  });
+
+  await step('steward status field', async () => {
+    const v = state[STEWARD_FIELD];
+    if (v === undefined) return fail('state.' + STEWARD_FIELD + ' missing (set STEWARD_FIELD if named differently)');
+    if (v === null) return pass('no steward running');
+    return isObj(v) && typeof v.status === 'string' ? pass('status ' + v.status) : fail('state.' + STEWARD_FIELD + ' has no string status');
+  });
+
+  const target = PIN_CELL || (state.cells.find((c) => c.status === 'ready') || {}).id;
+  const cellOf = (s) => s.cells.find((c) => c.id === target);
+  let reserved = false;
+  await step('reserve a ready cell', async () => {
+    if (!target) return skip('no ready cell (set CELL_ID or publish the sample plan)');
+    const r = await call('/panel/api/reserve', { method: 'POST', body: { repo: REPO, cell_id: target, who: WHO } });
+    const status = isObj(r.json) ? r.json.status : undefined;
+    if (r.status === 200 && status === 'reserved') {
+      reserved = true;
+      return pass(target + ' reserved');
+    }
+    return fail('HTTP ' + r.status + ' status ' + status + ' for ' + target);
+  });
+
+  await step('state shows reservedBy within 3 s', async () => {
+    if (!reserved) return skip('nothing reserved');
+    const w = await waitFor((s) => Boolean(cellOf(s) && cellOf(s).reservedBy), 3000);
+    return w.ok ? pass('after ' + w.seconds.toFixed(1) + ' s') : fail('reservedBy still empty after 3 s');
+  });
+
+  let released = false;
+  await step('release (admin)', async () => {
+    if (!ADMIN_KEY) return skip('ADMIN_KEY not set');
+    if (!target) return skip('no target cell');
+    const r = await call('/panel/api/release', { method: 'POST', body: { repo: REPO, cell_id: target, admin_key: ADMIN_KEY } });
+    released = r.status === 200;
+    return released ? pass('HTTP 200 for ' + target) : fail('HTTP ' + r.status);
+  });
+
+  await step('state shows no reservedBy and new status within 10 s', async () => {
+    if (!released) return skip('release did not run or failed');
+    const w = await waitFor((s) => {
+      const c = cellOf(s);
+      return Boolean(c) && !c.reservedBy && AFTER_RELEASE.includes(c.status);
+    }, 10000);
+    const c = cellOf(w.state);
+    const now = c ? 'status ' + c.status + ', reservedBy ' + (c.reservedBy || 'none') : target + ' not in state';
+    return w.ok ? pass(now + ' after ' + w.seconds.toFixed(1) + ' s') : fail(now + ' after 10 s');
+  });
+}
+
+main()
+  .catch((err) => record('unexpected error', 'FAIL', err && err.message ? err.message : err))
+  .finally(() => {
+    if (rows.length) printTable();
+  });
