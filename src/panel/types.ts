@@ -99,7 +99,8 @@ export interface PanelState {
   cells: PanelCell[];
   /** not-done cell with the most transitive dependents; null when nothing is blocked */
   bottleneck: { id: string; blocks: number } | null;
-  steward: PanelSteward;
+  /** optional so older fixtures and an older Worker still compile; the UI treats a missing steward as "none" */
+  steward?: PanelSteward;
 }
 
 export interface ReserveResult {

@@ -1,0 +1,31 @@
+id: C-041
+title: Repair web build and type parity after the steward state field
+type: normal
+priority: 20
+lease_minutes: 15
+goal: |
+  main is broken since C-035 and it blocks C-032 (its chat found it and reported it in a feedback). Two failures:
+  1. web/src/core/types.test.ts 'every shared type name exists in both files': web/src/core/types.ts lacks StewardReleaseBody and StewardReleaseResult that src/panel/types.ts exports. Add them to web/src/core/types.ts with the same fields (StewardReleaseResult.steward is PanelSteward).
+  2. 'npm --prefix web run build' (tsc -b) fails: web/src/core/mock.ts line 116 and web/src/shell/shell.test.tsx line 61 build a PanelState without the new required field steward. Make the field optional in BOTH files: steward?: PanelSteward in PanelState (src/panel/types.ts and web/src/core/types.ts), so old fixtures and an older Worker keep compiling and the UI treats a missing steward as 'none'. Keep StewardReleaseResult.steward required. The Worker still always sends it.
+  Do not edit mock.ts or any test file. Check the whole thing with: npm test, npm --prefix web test, npm --prefix web run build (all three must pass).
+inputs: []
+after: [C-030, C-035]
+supersedes: [C-040]
+provides:
+  - "PanelState.steward?: PanelSteward and web mirrors of StewardReleaseBody and StewardReleaseResult"
+read:
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - web/src/core/types.test.ts
+allowed_paths:
+  - src/panel/types.ts
+  - web/src/core/types.ts
+outputs:
+  - src/panel/types.ts
+  - web/src/core/types.ts
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  C-040 is superseded only to avoid a path overlap, its work continues unchanged as C-042. After this merges the owner clears the feedback of C-032 (panel Clear feedback or Release) so a chat can resume it.
