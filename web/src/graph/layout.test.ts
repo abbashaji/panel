@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PanelCell, PanelDepend } from '../core/types';
-import { BADGE_H, CARD_H, CARD_W, COL_PITCH, ROW_PITCH, badgeRules, layoutCells, metaLine, primaryAction, type Layout } from './layout';
+import { BADGE_H, CARD_H, CARD_W, COL_PITCH, ROW_PITCH, badgeRules, cardStatus, layoutCells, metaLine, primaryAction, type Layout } from './layout';
 
 const impl = (id: string): PanelDepend => ({ id, kind: 'implementation' });
 const contract = (id: string): PanelDepend => ({ id, kind: 'contract' });
@@ -141,5 +141,45 @@ describe('card helpers', () => {
     const blocked = cell('W', 2, [impl('A')], { blockedBy: ['A', 'B'] });
     expect(metaLine(blocked, now)).toBe('← A, B');
     expect(metaLine(cell('Z', 1), now)).toBe('');
+  });
+});
+
+describe('Ready to resume on the card', () => {
+  const resumeReady = cell('R', 1, [], { status: 'ready', resumable: true } as Partial<PanelCell>);
+  const resumeExpired = cell('X', 1, [], { status: 'expired', resumable: true, reservedBy: 'Ann' } as Partial<PanelCell>);
+  const reset = cell('Z', 1, [], { status: 'ready', resumable: false } as Partial<PanelCell>);
+
+  it('cardStatus shows Ready to resume with the resume icon', () => {
+    expect(cardStatus(resumeReady)).toEqual({ label: 'Ready to resume', icon: 'resume' });
+    expect(cardStatus(resumeExpired)).toEqual({ label: 'Ready to resume', icon: 'resume' });
+  });
+
+  it('a reset cell and plain cells keep the old label and icon', () => {
+    expect(cardStatus(reset)).toEqual({ label: 'Ready', icon: 'ready' });
+    expect(cardStatus(cell('E', 1, [], { status: 'expired' }))).toEqual({ label: 'Lease expired', icon: 'expired' });
+  });
+
+  it('a resumable cell starts on double-click, also when the lease expired', () => {
+    expect(primaryAction(resumeReady)).toBe('start');
+    expect(primaryAction(resumeExpired)).toBe('start');
+    expect(primaryAction('ready')).toBe('start');
+    expect(primaryAction('expired')).toBe('open');
+    expect(primaryAction('running')).toBe('open');
+    expect(primaryAction({ status: 'expired', resumable: false })).toBe('open');
+  });
+
+  it('meta line says resume now; a reset cell says start now', () => {
+    expect(metaLine(resumeReady)).toBe('resume now');
+    expect(metaLine(resumeExpired)).toBe('resume now');
+    expect(metaLine(reset)).toBe('start now');
+  });
+
+  it('badges: START on a resumable expired cell, and its owner chip does not open a chat', () => {
+    const b = badgeRules(resumeExpired, 'Ann', false, 0);
+    expect(b.start).toBe(true);
+    expect(b.owner?.clickable).toBe(false);
+    const plain = badgeRules(cell('E', 1, [], { status: 'expired' }), 'Ann', false, 0);
+    expect(plain.start).toBe(false);
+    expect(plain.owner?.clickable).toBe(true);
   });
 });

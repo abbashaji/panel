@@ -316,3 +316,134 @@ describe("LaunchProvider", () => {
     expect(reserve).not.toHaveBeenCalled();
   });
 });
+
+describe("LaunchProvider refreshes after every start path", () => {
+  const toast = vi.fn();
+  const refreshAfterAction = vi.fn();
+  const refresh = vi.fn();
+  let registered: {
+    start?: (id: string) => void;
+    startMany?: (ids: string[]) => void;
+    open?: (id: string) => void;
+  } = {};
+  const state = {
+    cells: [
+      { id: "C-001", status: "done", reservedBy: null },
+      { id: "C-010", status: "ready", reservedBy: null },
+      { id: "C-011", status: "running", reservedBy: "Bob" },
+    ],
+  };
+  const panel = {
+    repo: REPO,
+    state,
+    toast,
+    refreshAfterAction,
+    registerLauncher: (part: typeof registered) => {
+      registered = part;
+      return () => {};
+    },
+  };
+  let go: ReturnType<typeof vi.spyOn>;
+
+  function mount(p: object = panel) {
+    vi.mocked(usePanel).mockReturnValue(p as never);
+    render(
+      <LaunchProvider>
+        <div>child</div>
+      </LaunchProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem("bp_who", "Ann");
+    toast.mockReset();
+    refreshAfterAction.mockReset();
+    refresh.mockReset();
+    registered = {};
+    vi.mocked(reserve).mockReset();
+    go = vi.spyOn(transport, "go").mockImplementation(() => {});
+    vi.spyOn(transport, "silent").mockImplementation(() => {});
+    vi.spyOn(transport, "watch").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("does not refresh just because the state changed or the provider mounted", () => {
+    mount();
+    expect(refreshAfterAction).not.toHaveBeenCalled();
+  });
+
+  it("reserved: refreshes once, before the dialog is confirmed", async () => {
+    mount();
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    registered.start!("C-010");
+    await screen.findByRole("dialog");
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("taken: refreshes because the panel was wrong", async () => {
+    mount();
+    vi.mocked(reserve).mockResolvedValue({ status: "taken", detail: "Held by Bob" });
+    registered.start!("C-010");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Held by Bob", "error"));
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("not_ready: refreshes because the panel was wrong", async () => {
+    mount();
+    vi.mocked(reserve).mockResolvedValue({ status: "not_ready", detail: "Not ready" });
+    registered.start!("C-010");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Not ready", "info"));
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("startMany: one refresh after the batch", async () => {
+    mount();
+    vi.mocked(reserve).mockImplementation(async (_repo: string, id: string) =>
+      id === "C-012" ? { status: "taken", detail: "Held by Bob" } : { status: "reserved", detail: "ok" },
+    );
+    registered.startMany!(["C-010", "C-012"]);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("startMany: refreshes also when every reserve is rejected", async () => {
+    mount();
+    vi.mocked(reserve).mockResolvedValue({ status: "taken", detail: "Held by Bob" });
+    registered.startMany!(["C-010", "C-012"]);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Not started: C-010 (taken), C-012 (taken)", "error"));
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("open refreshes after its sync, but not for a merged cell", () => {
+    mount();
+    registered.open!("C-001");
+    expect(refreshAfterAction).not.toHaveBeenCalled();
+    registered.open!("C-011");
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to refresh when the panel has no refreshAfterAction", async () => {
+    mount({ ...panel, refreshAfterAction: undefined, refresh });
+    vi.mocked(reserve).mockResolvedValue({ status: "taken", detail: "Held by Bob" });
+    registered.start!("C-010");
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("a refresh that throws does not break the start flow", async () => {
+    refreshAfterAction.mockImplementation(() => {
+      throw new Error("offline");
+    });
+    mount();
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    registered.start!("C-010");
+    await screen.findByRole("dialog");
+  });
+});

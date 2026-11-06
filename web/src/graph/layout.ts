@@ -1,4 +1,5 @@
 import type { DependKind, PanelCell } from '../core/types';
+import { displayLabel, isResumable, type DisplayCell } from '../core/status';
 
 export const CARD_W = 152;
 export const CARD_H = 72;
@@ -160,7 +161,10 @@ export function layoutCells(cells: PanelCell[], bottleneckId: string | null = nu
 }
 
 /** What a double-click does: Start if ready, Open chat if running or expired (for anyone), else just select. */
-export function primaryAction(status: PanelCell['status']): PrimaryAction {
+export function primaryAction(input: PanelCell['status'] | DisplayCell): PrimaryAction {
+  const status = typeof input === 'string' ? input : input.status;
+  // a resumable cell (ready or expired) is resumed with start, not opened
+  if (typeof input !== 'string' && isResumable(input)) return 'start';
   if (status === 'ready') return 'start';
   if (status === 'running' || status === 'expired') return 'open';
   return 'select';
@@ -175,6 +179,7 @@ export function ago(iso: string, now: number = Date.now()): string {
 
 /** The single meta line on a card: merged ago / lease left / blocked by. Empty when none applies. */
 export function metaLine(cell: PanelCell, now: number = Date.now()): string {
+  if (isResumable(cell)) return 'resume now';
   if (cell.status === 'done') {
     const t = cell.lastCommit ? ago(cell.lastCommit.at, now) : '';
     return t ? `merged ${t}` : 'merged';
@@ -223,10 +228,10 @@ export function badgeRules(cell: PanelCell, owner: string | null, bottleneck: bo
   let chip: OwnerChip | null = null;
   if (owner && cell.status !== 'done') {
     const ini = initials(owner);
-    const openable = cell.status === 'running' || cell.status === 'expired';
+    const openable = (cell.status === 'running' || cell.status === 'expired') && !isResumable(cell);
     chip = openable ? { label: `${ini} · Open chat`, clickable: true } : { label: `${ini} · ${owner}`, clickable: false };
   }
-  return { start: cell.status === 'ready', owner: chip, blocks: bottleneck && blocks > 0 ? blocks : null };
+  return { start: cell.status === 'ready' || isResumable(cell), owner: chip, blocks: bottleneck && blocks > 0 ? blocks : null };
 }
 
 /** sha7 shown on the card: merged, else tip, else lock; an em dash when none. */
@@ -235,3 +240,8 @@ export function shaLabel(cell: PanelCell): string {
 }
 
 export const cellsLabel = (n: number): string => `${n} ${n === 1 ? 'cell' : 'cells'}`;
+
+/** Status text and icon key for a card: 'Ready to resume' with the resume icon, else the plain label and the status id. */
+export function cardStatus(cell: PanelCell): { label: string; icon: PanelCell['status'] | 'resume' } {
+  return { label: displayLabel(cell), icon: isResumable(cell) ? 'resume' : cell.status };
+}

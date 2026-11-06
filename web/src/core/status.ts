@@ -43,3 +43,26 @@ export const SIDEBAR_ORDER: PanelStatus[] = [
 
 /** CSS custom property that holds the color of a status (set in theme.css). */
 export const statusVar = (s: PanelStatus): string => `var(--st-${s})`;
+
+/** The part of a cell that decides how its status is shown. resumable (C-030) means the last chat left a handoff. */
+export interface DisplayCell {
+  status: PanelStatus;
+  resumable?: boolean | null;
+}
+
+export const RESUME_LABEL = "Ready to resume";
+/** single-glyph resume icon for plain-text places */
+export const RESUME_ICON = "\u21bb";
+
+/** Only a ready or expired cell can be resumable; a reset cell (resumable false) is plain Ready. */
+export const isResumable = (c: DisplayCell): boolean => c.resumable === true && (c.status === "ready" || c.status === "expired");
+
+/** The one label every view shows for a cell. Status ids (filters, sort, counts) stay on cell.status. */
+export const displayLabel = (c: DisplayCell): string => (isResumable(c) ? RESUME_LABEL : STATUS_META[c.status].label);
+
+/** Label, color and glyph for a cell. A resumable cell uses the Ready color so it never reads as an alarm. */
+export function displayMeta(c: DisplayCell): StatusMeta & { resume: boolean } {
+  return isResumable(c)
+    ? { ...STATUS_META.ready, label: RESUME_LABEL, icon: RESUME_ICON, resume: true }
+    : { ...STATUS_META[c.status], resume: false };
+}

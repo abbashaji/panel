@@ -1,5 +1,5 @@
 import { StatusIcon } from "../core/Icon";
-import { STATUS_META, STATUS_ORDER } from "../core/status";
+import { STATUS_META, STATUS_ORDER, displayMeta, isResumable } from "../core/status";
 import { usePanel } from "../core/store";
 import type { PanelCell } from "../core/types";
 import type { AdminAction } from "./ReleaseDialog";
@@ -46,9 +46,12 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
   const { launcher } = usePanel();
   const branch = `cell/${cell.id}`;
   const gh = REPO_OK.test(repo) ? `https://github.com/${repo}` : null;
-  const canOpenChat = cell.status === "running" || cell.status === "expired";
+  const resumable = isResumable(cell);
+  const meta = displayMeta(cell);
+  const canOpenChat = (cell.status === "running" || cell.status === "expired") && !resumable;
   const canRelease = cell.status !== "done" && cell.status !== "waiting";
-  const holder = cell.reservedBy ?? launcher.owner(cell.id) ?? null;
+  // a reset cell (ready, not resumable, nobody holding it) has no holder, even if this browser remembers an old start
+  const holder = cell.reservedBy ?? (cell.status === "ready" && !resumable ? null : launcher.owner(cell.id)) ?? null;
   const direct = `${cell.directDependents} direct, ${cell.transitiveDependents} total dependents`;
   const subline = cell.critical ? `Critical cell \u00b7 ${direct}` : direct;
   const when = ago(cell.lastCommit?.at);
@@ -57,13 +60,29 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
   return (
     <div data-testid="cell-details">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[12px] font-semibold" style={{ color: STATUS_META[cell.status].color }}>
+        <span className="font-mono text-[12px] font-semibold" style={{ color: meta.color }}>
           {cell.id}
         </span>
-        <StatusChip status={cell.status} />
+        {resumable ? (
+          <span
+            data-testid="resume-chip"
+            className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold"
+            style={{ color: meta.color, borderColor: meta.color }}
+          >
+            <span aria-hidden="true">{meta.icon}</span>
+            <span>{meta.label}</span>
+          </span>
+        ) : (
+          <StatusChip status={cell.status} />
+        )}
       </div>
       <h2 className="mb-1 mt-2 text-[22px] font-bold leading-tight text-[#E8ECF5]">{cell.title}</h2>
       <p className="m-0 text-[12.5px] font-medium text-[#A9B2C6]">{subline}</p>
+      {resumable && (
+        <p data-testid="resume-note" className="mb-0 mt-2 text-[12.5px] font-semibold text-[#FFC857]">
+          Ready to resume, the last chat left a handoff
+        </p>
+      )}
 
       <LeaseBar lease={cell.lease} expired={cell.status === "expired"} attempts={cell.attempts} maxAttempts={cell.maxAttempts} />
 
@@ -98,7 +117,12 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
             Open chat
           </button>
         )}
-        {cell.status === "ready" && (
+        {resumable && (
+          <button type="button" className={primary} onClick={() => launcher.start(cell.id)}>
+            Resume
+          </button>
+        )}
+        {cell.status === "ready" && !resumable && (
           <button type="button" className={primary} onClick={() => launcher.start(cell.id)}>
             Start
           </button>

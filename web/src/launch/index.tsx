@@ -51,13 +51,31 @@ function rememberOwn(repo: string, id: string): void {
 const mergedIds = (s: PanelState | null): string[] => (s ? s.cells.filter((c) => c.status === "done").map((c) => c.id) : []);
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+type Refresher = { refreshAfterAction?: () => unknown; refresh?: () => unknown };
+
+/** Re-reads the panel state after a write. Uses refreshAfterAction, else refresh; does nothing when the panel has neither. */
+function makeRefresh(panel: object): () => void {
+  return () => {
+    const p = panel as unknown as Refresher;
+    const fn = p.refreshAfterAction ?? p.refresh;
+    if (typeof fn !== "function") return;
+    try {
+      void Promise.resolve(fn.call(p)).catch(() => {});
+    } catch {
+      // the panel keeps its last state
+    }
+  };
+}
+
 type Dlg = { phase: "name"; id?: string; many?: string[] } | { phase: "confirm"; id: string; url: string; who: string } | null;
 
 /** Registers the launcher hooks with usePanel().registerLauncher and renders the start dialog. */
 export default function LaunchProvider({ children }: { children?: ReactNode }) {
-  const { repo, state, toast, registerLauncher } = usePanel();
-  const live = useRef({ repo, state, toast });
-  live.current = { repo, state, toast };
+  const panel = usePanel();
+  const { repo, state, toast, registerLauncher } = panel;
+  const refresh = makeRefresh(panel);
+  const live = useRef({ repo, state, toast, refresh });
+  live.current = { repo, state, toast, refresh };
   const syncMark = useRef({ at: 0, key: "" });
   const busy = useRef(false);
   const [dlg, setDlg] = useState<Dlg>(null);
@@ -94,7 +112,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     async (id: string, who: string) => {
       if (busy.current) return;
       busy.current = true;
-      const { repo: r, toast: say } = live.current;
+      const { repo: r, toast: say, refresh: again } = live.current;
       try {
         let res: ReserveResult;
         try {
@@ -103,6 +121,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
           say(`Could not reserve ${id}: ${errText(e)}`, "error");
           return;
         }
+        again(); // reserved: show the reservation chip at once; taken or not_ready: the panel was wrong, so show the real state
         if (res.status !== "reserved") {
           const fallback = res.status === "taken" ? `${id} is already taken.` : `${id} is not ready.`;
           say(res.detail || fallback, res.status === "taken" ? "error" : "info");
@@ -148,7 +167,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     async (ids: string[], who: string) => {
       if (busy.current) return;
       busy.current = true;
-      const { repo: r, toast: say } = live.current;
+      const { repo: r, toast: say, refresh: again } = live.current;
       try {
         try {
           startManyUrl(r, who, ids); // fail before reserving anything when the link cannot be built
@@ -167,6 +186,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
             dropped.push(`${id} (error)`);
           }
         }
+        again(); // one refresh after the whole batch, also when every reserve failed
         if (dropped.length > 0) say(`Not started: ${dropped.join(", ")}`, "error");
         if (ok.length === 0) return;
         let url: string;
@@ -212,7 +232,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
 
   const open = useCallback(
     (id: string) => {
-      const { repo: r, state: s, toast: say } = live.current;
+      const { repo: r, state: s, toast: say, refresh: again } = live.current;
       if (s?.cells.find((c) => c.id === id)?.status === "done") {
         say(`${id} is merged; there is no chat to open.`, "info");
         return;
@@ -225,6 +245,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
         return;
       }
       sendSync(mergedIds(s), true);
+      again();
       transport.go(url);
       transport.watch(() => live.current.toast(HINT, "info"));
     },
