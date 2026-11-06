@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import AutoSendHelp from "./AutoSendHelp";
+
+afterEach(cleanup);
 
 describe("AutoSendHelp", () => {
   it("is collapsed by default", () => {
