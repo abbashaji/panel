@@ -7,6 +7,7 @@ import { ID_RE, claimsFromBranches, computeState, leaseOf, parseRuns, render, ty
 import { RULES } from "./protocol.ts";
 import { NOT_INIT, branchOf, cellYaml, errText, freshSnapshot, invalidText, loadPlan, mergedOf, short, type EngineOptions, type Loaded } from "./common.ts";
 import { resumeText } from "./resume.ts";
+import { withAmendments, type Amendment } from "./selfheal.ts";
 import { carry, isFeedback, isRelease, parseTrailers } from "./trailers.ts";
 
 // ---------------------------------------------------------------- claim / takeover primitives
@@ -30,10 +31,10 @@ export async function tryTakeover(api: GitHubApi, repo: string, snap: Snapshot, 
   return (await api.fastForward(repo, branchOf(id), oid)) === "ok" ? oid : null;
 }
 
-export function claimedText(plan: Loaded, repo: string, id: string, tip: string, critical = false): string {
+export function claimedText(plan: Loaded, repo: string, id: string, tip: string, critical = false, amendments: Amendment[] = []): string {
   let lease = leaseOf(plan.cells[id], plan.cfg.lease_minutes);
   if (critical) lease = Math.min(lease, plan.cfg.critical_lease_minutes);
-  return `CLAIMED ${id} base=${short(tip)} repo=${repo} (lease ${lease} min, renewed by every apply_changes)\n\n${cellYaml(plan.cells[id])}\n\n${RULES}`;
+  return `CLAIMED ${id} base=${short(tip)} repo=${repo} (lease ${lease} min, renewed by every apply_changes)\n\n${withAmendments(cellYaml(plan.cells[id]), amendments)}\n\n${RULES}`;
 }
 
 // ---------------------------------------------------------------- reservation (pinned claim, used by the panel)
