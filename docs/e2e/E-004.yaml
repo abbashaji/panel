@@ -1,0 +1,26 @@
+# Sample cell for the end to end test. Rename ids as described in docs/e2e-runbook.md before publishing.
+# DELIBERATE PATH GAP: the goal needs manifest.txt, which is not in allowed_paths.
+id: E-004
+title: Parallel cell C, add parts/c.txt and manifest.txt (path gap)
+type: normal
+goal: |
+  Create parts/c.txt with exactly one line: c
+  Also create manifest.txt in the repo root with exactly one line: parts/c.txt
+inputs: []
+after:
+  - E-001
+provides:
+  - parts/c.txt
+read:
+  - hello.txt
+allowed_paths:
+  - parts/c.txt
+outputs:
+  - parts/c.txt
+acceptance:
+  - cmd: test -f parts/c.txt
+  - cmd: grep -qx c parts/c.txt
+  - cmd: grep -qx parts/c.txt manifest.txt
+notes: |
+  Expected: the chat cannot write manifest.txt (outside allowed_paths) and asks for help with cell_help.
+  The owner or Steward then repairs the cell with cell_fix (see the runbook).

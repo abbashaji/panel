@@ -1,0 +1,29 @@
+# Sample cell for the end to end test. Rename ids as described in docs/e2e-runbook.md before publishing.
+id: E-005
+title: Integration, build result.txt from all parts
+type: normal
+goal: |
+  Create result.txt containing, in this order, the exact contents of hello.txt, parts/a.txt,
+  parts/b.txt and parts/c.txt (four lines).
+inputs: []
+after:
+  - E-001
+  - E-002
+  - E-003
+  - E-004
+provides:
+  - result.txt
+read:
+  - hello.txt
+  - parts/a.txt
+  - parts/b.txt
+  - parts/c.txt
+allowed_paths:
+  - result.txt
+outputs:
+  - result.txt
+acceptance:
+  - cmd: test -f result.txt
+  - cmd: test "$(cat result.txt)" = "$(cat hello.txt parts/a.txt parts/b.txt parts/c.txt)"
+notes: |
+  Integration cell: it only becomes ready when E-001 to E-004 are merged. Until then the panel shows it waiting.

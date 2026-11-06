@@ -1,0 +1,21 @@
+# Sample cell for the end to end test. Rename ids as described in docs/e2e-runbook.md before publishing.
+id: E-001
+title: Skeleton, add hello.txt
+type: normal
+goal: |
+  Skeleton cell of the sample plan. Create hello.txt in the repo root with exactly one line: hello
+  Nothing else. Every other sample cell builds on this file.
+inputs: []
+after: []
+provides:
+  - hello.txt
+read: []
+allowed_paths:
+  - hello.txt
+outputs:
+  - hello.txt
+acceptance:
+  - cmd: test -f hello.txt
+  - cmd: grep -qx hello hello.txt
+notes: |
+  Happy path. Expected: the chat claims it, commits hello.txt, submits, CI merges it.
