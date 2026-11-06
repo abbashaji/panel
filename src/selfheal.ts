@@ -348,7 +348,7 @@ function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev
   L.push(`PROBLEM (as you told me): ${cap(problem || "(none given)", 250)}`);
   L.push(`BUDGET: ${left} of ${MAX_HEALS} heals left. ${HEAL_TOOLS.note}, ${HEAL_TOOLS.sync} (when it merges) and ${HEAL_TOOLS.clear} cost one each; up_to_date, CONFLICT and this briefing are free. At 0 the answer is ESCALATE: file cell_signal feedback.`);
   L.push("ALLOWED ACTIONS (nothing else; every call needs your current base):");
-  actionsFor(cls, repo, id, base, pending).forEach((a, k) => L.push(`${k + 1}. ${cap(a, 330)}`));
+  actionsFor(cls, repo, id, base, pending).forEach((a, k) => L.push(`${k + 1}. ${cap(a, 400)}`));
 
   L.push("WHY IT MAY BE BLOCKED:");
   const ev1: string[] = [];
