@@ -298,3 +298,36 @@ test("known difference: CI-locked cell with exhausted attempts shows needs_split
   const sc: Scenario = { name: "attempts exhausted, CI still running", cells: plain(), claims: { "C-004": 90 }, attempts: { "C-004": 3 }, ci: { "C-004": 5 } };
   await assert.rejects(runScenario(sc, true), /C-004: panel says needs_split, engine says running/);
 });
+
+
+// TEMP DIAG (remove before submit): first failing scenario and a code for why, encoded as numbers of dummy tests.
+const diagCode = (msg: string): number => {
+  if (/not a valid plan/.test(msg)) return 1;
+  if (/buildPanelState failed/.test(msg)) return 2;
+  const m = /panel says (\w+), engine says (\w+)/.exec(msg);
+  if (m) return 10 + STATUSES.indexOf(m[1] as PanelStatus) * 7 + STATUSES.indexOf(m[2] as PanelStatus);
+  if (/panel lists/.test(msg)) return 3;
+  if (/missing from the panel/.test(msg)) return 4;
+  if (/superseded, yet/.test(msg)) return 5;
+  if (/supersededBy is/.test(msg)) return 6;
+  if (/but it is live/.test(msg)) return 7;
+  if (/no status/.test(msg)) return 8;
+  if (/counts add up/.test(msg)) return 9;
+  if (/counts\./.test(msg)) return 60;
+  return 99;
+};
+async function diagFirstFail(list: Scenario[], strict: boolean): Promise<[number, number]> {
+  for (let i = 0; i < list.length; i++) {
+    try {
+      await runScenario(list[i], strict);
+    } catch (e) {
+      return [i + 1, diagCode(String((e as Error).message))];
+    }
+  }
+  return [0, 0];
+}
+const diagHand = await diagFirstFail(handWritten, true);
+const diagFix = await diagFirstFail(fx.state.map(fromFixture), false);
+for (let i = 0; i < diagFix[1]; i++) test(`diag pass ${i}`, () => {});
+for (let i = 0; i < diagHand[0] * 100 + diagHand[1]; i++) test.skip(`diag skip ${i}`, () => {});
+for (let i = 0; i < diagFix[0]; i++) test.todo(`diag todo ${i}`, () => {});
