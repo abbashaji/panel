@@ -340,6 +340,7 @@ export function PanelProvider({ children }: { children: ReactNode }) {
       open: launcherPart.open ?? (() => toast("Launcher not installed. Install it with launcher/install.ps1.", "error")),
       sync: launcherPart.sync ?? (() => {}),
       startMany: launcherPart.startMany ?? (() => {}),
+      startSteward: launcherPart.startSteward ?? (() => toast("Launcher not installed. Install it with launcher/install.ps1.", "error")),
       owner: launcherPart.owner ?? ((id) => stateRef.current?.cells.find((c) => c.id === id)?.reservedBy ?? null),
     }),
     [launcherPart, toast],
