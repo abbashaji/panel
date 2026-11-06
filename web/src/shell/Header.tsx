@@ -6,6 +6,7 @@ import { usePanel } from "../core/store";
 import { initials, progress } from "./activity";
 import RunReadyDialog from "../launch/RunReadyDialog";
 import RepoSwitcher from "./RepoSwitcher";
+import StewardChip from "./StewardChip";
 
 /** localStorage key of the display name (written by the launch slot and the settings dialog). */
 export const WHO_KEY = "bp_who";
@@ -42,6 +43,8 @@ export default function Header({ onSearch }: { onSearch: () => void }) {
       </div>
 
       <RepoSwitcher />
+
+      <StewardChip />
 
       <div className="ml-2 flex items-center gap-2.5" aria-label="Progress">
         <div

@@ -1,5 +1,5 @@
 import { buildMockState, mockClearFeedback, mockRelease, mockReserve } from "./mock";
-import type { PanelState, PanelStatus, ReserveResult } from "./types";
+import type { PanelState, PanelStatus, ReserveResult, StewardReleaseBody, StewardReleaseResult } from "./types";
 
 // Typed client for the Worker. Same origin, cookie auth (bp_panel), no CORS. See docs/panel-contracts.md section 3.
 
@@ -124,4 +124,18 @@ export async function release(repo: string, cellId: string, adminKey: string): P
 export async function clearFeedback(repo: string, cellId: string, adminKey: string): Promise<ActionResult> {
   if (mock) return { text: await mockClearFeedback(cellId) };
   return actionResult(await post("/clear-feedback", { repo, cell_id: cellId, admin_key: adminKey }));
+}
+
+/** Admin action: releases the Steward lease. `adminKey` is typed by the user per action; never store it. 403 gives ApiError status 403. */
+export async function stewardRelease(repo: string, adminKey: string): Promise<StewardReleaseResult> {
+  if (mock) {
+    return {
+      ok: true,
+      result: "Steward released (sample).",
+      steward: { status: "released", holder: null, minutesLeft: null, expiredMinutesAgo: null, problems: 0 },
+    };
+  }
+  const body: StewardReleaseBody = { repo, admin_key: adminKey };
+  const res = await post("/steward-release", body);
+  return (await res.json()) as StewardReleaseResult;
 }

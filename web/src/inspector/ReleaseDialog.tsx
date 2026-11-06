@@ -1,12 +1,15 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, clearFeedback, release } from "../core/api";
+import { ApiError, clearFeedback, release, stewardRelease } from "../core/api";
 import { usePanel } from "../core/store";
 
-export type AdminAction = "release" | "clear-feedback";
+export type AdminAction = "release" | "clear-feedback" | "steward-release";
 
 /** The exact git write each admin action performs. Shown in the confirm step before anything is sent. */
 export function gitWriteText(action: AdminAction, cellId: string): string {
+  if (action === "steward-release") {
+    return "This releases the Steward lease so the next chat can start or resume it. No cell is changed and nothing is deleted.";
+  }
   if (action === "release") {
     return `This writes ONE empty commit to branch cell/${cellId} (a hand-over takeover). No files change and nothing is deleted; the cell becomes free for the next chat to claim.`;
   }
@@ -47,6 +50,13 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
     setKey("");
     setBusy(true);
     try {
+      if (action === "steward-release") {
+        const r = await stewardRelease(repo, typed);
+        toast((r.result || "Steward released.").slice(0, 200), "success");
+        if (typeof refresh === "function") void Promise.resolve(refresh()).catch(() => {});
+        onClose();
+        return;
+      }
       const answer = action === "release" ? await release(repo, cellId, typed) : await clearFeedback(repo, cellId, typed);
       // tolerate a plain string answer
       const text = typeof answer === "string" ? answer : answer.text;
@@ -73,7 +83,8 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
     }
   }
 
-  const label = action === "release" ? "Release" : "Clear feedback";
+  const isSteward = action === "steward-release";
+  const label = action === "clear-feedback" ? "Clear feedback" : "Release";
   return (
     <Dialog.Root
       open={open}
@@ -87,7 +98,7 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60" />
         <Dialog.Content className="fixed left-1/2 top-1/2 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-[#1E2740] bg-[#0F1424] p-5 text-[#E8ECF5] shadow-xl">
-          <Dialog.Title className="m-0 mb-2 text-[17px] font-bold text-[#E8ECF5]">{`${label} ${cellId}?`}</Dialog.Title>
+          <Dialog.Title className="m-0 mb-2 text-[17px] font-bold text-[#E8ECF5]">{isSteward ? "Release the Steward?" : `${label} ${cellId}?`}</Dialog.Title>
           <Dialog.Description className="mb-4 text-[12.5px] font-medium leading-[1.5] text-[#A9B2C6]">{cellId ? gitWriteText(action, cellId) : ""}</Dialog.Description>
           <form onSubmit={submit}>
             <label htmlFor="bp-admin-key" className="mb-1.5 block text-[12.5px] font-medium text-[#C6CDDD]">
@@ -108,8 +119,8 @@ export function ReleaseDialog({ action, cellId, onClose }: ReleaseDialogProps) {
                   Cancel
                 </button>
               </Dialog.Close>
-              <button type="submit" disabled={!key || busy} className={action === "release" ? danger : primary}>
-                {busy ? "Working…" : `${label} ${cellId}`}
+              <button type="submit" disabled={!key || busy} className={action === "clear-feedback" ? primary : danger}>
+                {busy ? "Working…" : isSteward ? "Release the Steward" : `${label} ${cellId}`}
               </button>
             </div>
           </form>
