@@ -57,7 +57,7 @@ describe("deriveActivity", () => {
     expect(byKey["C-003:expired"]?.kind).toBe("warning");
     expect(byKey["C-003:expired"]?.text).toBe("C-003 lease expired 22 min ago (attempt 2 of 3)");
     expect(byKey["C-001:merged"]?.kind).toBe("merged");
-    expect(byKey["C-005:human"]?.text).toBe("C-005 needs a human");
+    expect(byKey["C-005:human"]?.text).toBe("C-005 needs the steward");
   });
 
   it("formats HH:MM and honours the limit", () => {

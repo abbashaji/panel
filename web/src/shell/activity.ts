@@ -31,7 +31,7 @@ export function deriveActivity(cells: PanelCell[], now: number = Date.now(), lim
       const ago = c.lease?.expiredMinutesAgo ?? 0;
       add(c, now - ago * 60_000, "warning", `${c.id} lease expired ${ago} min ago (attempt ${c.attempts} of ${c.maxAttempts})`, "expired");
     } else if (c.status === "needs_human") {
-      add(c, commitAt, "warning", `${c.id} needs a human`, "human");
+      add(c, commitAt, "warning", `${c.id} needs the steward`, "human");
     } else if (c.status === "needs_split") {
       add(c, commitAt, "warning", `${c.id} needs to be split`, "split");
     } else if (c.status === "running" && c.lastCommit) {

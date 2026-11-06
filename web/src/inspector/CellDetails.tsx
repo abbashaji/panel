@@ -10,6 +10,9 @@ const DASH = "\u2014";
 const HELP =
   "Click selects. Double-click opens details. Release writes one empty commit so any chat can adopt the cell at once.";
 
+const STEWARD_HELP =
+  "The Steward chat solves this. If no Steward is running, start one from the header.";
+
 const base =
   "flex h-11 w-full cursor-pointer items-center justify-center rounded-[10px] border text-[13.5px] no-underline disabled:cursor-default disabled:opacity-40";
 const primary = `${base} border-[#5B9DFF] bg-[#5B9DFF] font-bold text-[#06142B]`;
@@ -133,9 +136,12 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
           </button>
         )}
         {cell.status === "needs_human" && (
-          <button type="button" className={secondary} onClick={() => onAdmin("clear-feedback")}>
-            Clear feedback
-          </button>
+          <>
+            <span className="mt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8A93A8]">Owner override</span>
+            <button type="button" className={secondary} onClick={() => onAdmin("clear-feedback")}>
+              Clear feedback
+            </button>
+          </>
         )}
         {gh && cell.sha.tip && (
           <a className={secondary} href={`${gh}/tree/${branch}`} target="_blank" rel="noopener noreferrer">
@@ -144,6 +150,11 @@ export function CellDetails({ cell, repo, onAdmin }: { cell: PanelCell; repo: st
         )}
       </div>
 
+      {cell.status === "needs_human" && (
+        <p data-testid="steward-help" className="mb-0 mt-4 text-[11.5px] font-medium leading-[1.5] text-[#C792FF]">
+          {STEWARD_HELP}
+        </p>
+      )}
       <p className="mb-0 mt-4 text-[11.5px] font-medium leading-[1.5] text-[#8A93A8]">{HELP}</p>
     </div>
   );

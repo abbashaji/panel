@@ -10,7 +10,7 @@ const LABELS: Record<string, string> = {
   ready: "Ready",
   waiting: "Waiting",
   expired: "Lease expired",
-  needs_human: "Needs human",
+  needs_human: "Needs steward",
   needs_split: "Needs split",
 };
 

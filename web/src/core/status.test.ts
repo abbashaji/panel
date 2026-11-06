@@ -10,10 +10,10 @@ describe("status metadata", () => {
     expect(STATUS_META.done.label).toBe("Merged");
     expect(STATUS_META.expired.label).toBe("Lease expired");
     expect(STATUS_META.waiting.label).toBe("Waiting");
-    expect(STATUS_META.needs_human.label).toBe("Needs human");
+    expect(STATUS_META.needs_human.label).toBe("Needs steward");
   });
 
-  it("sidebar order is merged, running, ready, waiting, expired, needs human, needs split", () => {
+  it("sidebar order is merged, running, ready, waiting, expired, needs steward, needs split", () => {
     expect(SIDEBAR_ORDER).toEqual(["done", "running", "ready", "waiting", "expired", "needs_human", "needs_split"]);
     // the urgency order used by the table sort is unchanged
     expect(STATUS_ORDER[0]).toBe("expired");
