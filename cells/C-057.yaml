@@ -1,0 +1,32 @@
+id: C-057
+title: One command deploys the Worker and the panel and installs the launcher
+type: normal
+priority: 5
+goal: |
+  Remove the manual deploy and install steps.
+  - scripts/release.ps1 (Windows PowerShell) and scripts/release.sh (bash): npm ci, npm test, npm --prefix web ci, npm --prefix web test, npm --prefix web run build, then npx wrangler deploy. Stop at the first failure with a clear message. Print the deployed URL path /panel/. Never print secrets; check that the needed secrets exist with 'wrangler secret list' and say which are missing (GITHUB_TOKEN, ADMIN_TOKEN, MCP_AUTH_TOKEN, panel password name as in docs) without reading their values.
+  - launcher/build-install.ps1: dotnet test launcher/Core.Tests, dotnet publish launcher/App/App.csproj -c Release -r win-x64 --self-contained false -o launcher\out, then run launcher/install.ps1 -ExePath with the full path of the published blueprint-launcher.exe, then print the registered protocol path and a self test line that parses a sample blueprint://sync URL through the exe's --self-test switch if it exists, otherwise skip it.
+  - docs/deploy.md: the commands, required secrets, how to roll back (wrangler rollback), how to uninstall the launcher (remove HKCU\Software\Classes\blueprint).
+inputs: []
+after: []
+provides:
+  - "scripts/release.ps1, scripts/release.sh, launcher/build-install.ps1, docs/deploy.md"
+read:
+  - package.json
+  - wrangler.toml
+  - launcher/install.ps1
+allowed_paths:
+  - scripts/release.ps1
+  - scripts/release.sh
+  - launcher/build-install.ps1
+  - docs/deploy.md
+outputs:
+  - scripts/release.ps1
+  - scripts/release.sh
+  - launcher/build-install.ps1
+  - docs/deploy.md
+acceptance:
+  - cmd: "bash -n scripts/release.sh"
+  - cmd: "npm test"
+notes: |
+  PowerShell scripts cannot be run in CI here, keep them simple and say in the PR text that they are not run on Windows.

@@ -1,0 +1,23 @@
+id: C-056
+title: Panel state agrees with the engine on every status
+type: normal
+priority: 6
+goal: |
+  The panel (src/panel/state.ts) and the engine (src/plan.ts computeState) classify cells separately, and they drifted once (replaced cells). New test/panel_parity.test.ts using the scenarios already in test/fixtures.json.gz plus hand written ones with supersedes, feedback, released leases and expired leases: for every scenario build the PanelState with test/fakegh.ts and assert that (a) every cell the engine reports ready, locked, waiting, needs_split or needs_human has the matching panel status, (b) a cell the engine leaves out because it is superseded has supersededBy and is absent from counts, (c) counts add up to the number of live cells, (d) merged cells are 'done'. Failures print the scenario name and the first differing cell.
+inputs: []
+after: [C-047]
+provides:
+  - "test/panel_parity.test.ts"
+read:
+  - src/panel/state.ts
+  - src/plan.ts
+  - test/parity.test.ts
+  - test/gen_fixtures.py
+allowed_paths:
+  - test/panel_parity.test.ts
+outputs:
+  - test/panel_parity.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Only add the test. If it finds a difference in src/panel/state.ts, mark that scenario it.fails with a comment and say so in the PR text.

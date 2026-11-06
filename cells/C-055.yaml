@@ -1,0 +1,28 @@
+id: C-055
+title: Full panel integration test with a fake Worker
+type: normal
+priority: 8
+goal: |
+  The test that was missing when the Start steward button was dropped. Mount the REAL app (web/src/App.tsx with all slots loaded through its import.meta.glob) in jsdom with a fake Worker implemented as a fetch mock in web/src/e2e/fakeWorker.ts. The fake serves /panel/api/state (a small plan of about 8 cells covering done, running, ready, expired, resumable, needs_human, waiting and a replaced cell with supersededBy, plus steward and healLog fields), login, reserve, release, clear-feedback and steward-release with the same JSON shapes as docs/panel-contracts.md and keeps a mutable in-memory state so actions change what the next poll returns.
+  Tests in web/src/e2e/app.integration.test.tsx (each starts from a fresh fake): (1) Start steward button is visible when steward is none and its click opens the blueprint://steward URL through the transport; (2) Release a running cell with the admin key: the card shows the new state right away and after the polling interval; (3) a replaced cell is not on the graph and not counted; (4) 'Run ready' dialog lists only ready cells, Run reserves exactly the selected ones and opens one blueprint://startmany URL; (5) any teammate can Open chat on a running cell, with no owner-only toast; (6) Search cells lists all cells; (7) both side bars and the activity panel hide and show; (8) the live activity shows a heal event; (9) the Steward chip shows active and expired texts.
+  Use fake timers where polling matters. No network, no real clock dependency. The suite must run in under 60 seconds.
+inputs: []
+after: [C-012, C-043, C-044, C-045, C-046, C-048, C-054]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "web/src/e2e: full-app integration tests and the fake Worker"
+read:
+  - web/src/App.tsx
+  - web/src/core/store.tsx
+  - docs/panel-contracts.md
+allowed_paths:
+  - web/src/e2e/fakeWorker.ts
+  - web/src/e2e/app.integration.test.tsx
+outputs:
+  - web/src/e2e/fakeWorker.ts
+  - web/src/e2e/app.integration.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  If a test finds a real bug in a slot, do not patch the slot (outside allowed paths): mark the test with it.fails and a comment naming the bug, and say so in the PR text.

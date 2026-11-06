@@ -1,0 +1,38 @@
+id: C-058
+title: End to end runbook smoke script and sample test plan
+type: normal
+priority: 5
+goal: |
+  Let the owner test the whole system on a fresh GitHub test repo.
+  - docs/e2e/E-001.yaml .. E-005.yaml: five tiny sample cells (written in the normal cell format, ids E-001.. so they are not in cells/): a skeleton cell that adds hello.txt, two parallel cells, one cell whose text is deliberately missing a contract (to exercise cell_note), one cell that needs a file outside its allowed paths (to exercise cell_help then cell_fix), plus an integration cell depending on all. The runbook says the owner renames them to the repo's id scheme when publishing.
+  - scripts/e2e-smoke.mjs (Node 18, no dependencies): env WORKER_URL, PANEL_PASSWORD, REPO, optional ADMIN_KEY; checks login, GET /panel/api/state shape and counts, reserve then state shows reservedBy within 3 seconds, release (needs ADMIN_KEY) then state shows no reservedBy and the new status within 10 seconds, steward status field, replaced cells absent from counts; prints a PASS/FAIL table and exits 1 on any FAIL. Never prints secrets.
+  - docs/e2e-runbook.md: step by step: create the test repo, deploy the Worker pointing at it (scripts/release), init_blueprint from a chat, publish the sample plan with publish_plan, open the panel, run the smoke script, start 3 cell chats (including Run ready with 3 browsers), force a stale branch and a spec gap and watch cell_sync, cell_note and cell_fix heal them, kill a chat and see Ready to resume, start a Steward, release it, check the launcher on Windows (icons, new browsers, startmany), then a clean up section. Each step has an expected result checklist.
+inputs: []
+after: [C-052, C-053, C-057]
+provides:
+  - "docs/e2e-runbook.md and scripts/e2e-smoke.mjs"
+read:
+  - docs/panel-contracts.md
+  - docs/deploy.md
+  - cells/C-000.yaml
+allowed_paths:
+  - scripts/e2e-smoke.mjs
+  - docs/e2e-runbook.md
+  - docs/e2e/E-001.yaml
+  - docs/e2e/E-002.yaml
+  - docs/e2e/E-003.yaml
+  - docs/e2e/E-004.yaml
+  - docs/e2e/E-005.yaml
+outputs:
+  - scripts/e2e-smoke.mjs
+  - docs/e2e-runbook.md
+  - docs/e2e/E-001.yaml
+  - docs/e2e/E-002.yaml
+  - docs/e2e/E-003.yaml
+  - docs/e2e/E-004.yaml
+  - docs/e2e/E-005.yaml
+acceptance:
+  - cmd: "node --check scripts/e2e-smoke.mjs"
+  - cmd: "npm test"
+notes: |
+  Document what could not be verified here (real GitHub, real browsers, Windows launcher).

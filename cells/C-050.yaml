@@ -1,0 +1,43 @@
+id: C-050
+title: Self-heal core for a chat with a problem (help note sync clear)
+type: normal
+priority: 8
+goal: |
+  A chat that hits a problem solves it inside its own context instead of filing feedback and stopping. New src/selfheal.ts (no tool registration here, C-052 does that):
+  - Authority: the caller must pass cell_id and base, the current tip oid of cell/<id> (the same proof apply_changes already needs). The cell must have a live lease (branch exists, not expired, not released). Otherwise SELFHEAL_DENIED with the reason. No admin key anywhere in this module and it can only act on that one cell.
+  - Budget: every heal commit has the subject 'heal(C-NNN): <kind>' and a trailer 'heal: <kind>'. MAX_HEALS = 3 per cell (counted from branchCommits). Over budget, cellHelp answers ESCALATE: file cell_signal feedback, the Steward takes it.
+  - cellHelp(api, repo, opts, { cell_id, base, problem }): returns a FOCUSED briefing of at most about 1500 tokens: the cell goal, allowed_paths, outputs, acceptance, the last steward or heal notes, why it may be blocked (behind main by N commits per compare, files outside allowed_paths the problem mentions, missing contract, main CI red, a dependency not merged), the cells that depend on it, the budget left, and the list of allowed actions with the exact tool call for each. Problems are classified: stale_branch, spec_gap, scope_violation (needs files outside allowed_paths), broken_main, own_bug, unknown. Never includes secrets or other cells' content beyond ids and titles.
+  - cellNote(api, repo, opts, args): appends a heal commit on the cell branch whose body is the note (bounded 2000 chars, cleaned like steward notes). The note becomes part of the cell: src/claim.ts claimedText and src/resume.ts resumeText put 'AMENDMENTS (binding)' with all heal and steward notes right after the goal for every future chat on that cell.
+  - cellSync(api, repo, opts, args): mergeBranch(main into cell/<id>) with message 'heal(C-NNN): sync main'. conflict gives CONFLICT with the file list and no change. up_to_date says so and costs no budget.
+  - cellClear(api, repo, opts, args): removes the cell's feedback state (same effect as takeover clear_feedback) for that one cell, costs one heal.
+  Tests in test/selfheal.test.ts and test/selfheal_notes.test.ts with test/fakegh.ts: denied without base or for an expired lease, budget, each classification, note appears in the claim text and the resume text, sync merged, up_to_date, conflict, clear, briefing size bound, no secret in any answer.
+inputs:
+  - from: C-049
+    kind: implementation
+    contract: |
+      GitHubApi.compare(repo, base, head) gives { ahead, behind, files } and GitHubApi.mergeBranch(repo, into, from, message) gives { status: merged | up_to_date | conflict, oid?, files? }.
+after: [C-001, C-033, C-049]
+provides:
+  - "src/selfheal.ts: cellHelp, cellNote, cellSync, cellClear, healsOf, MAX_HEALS"
+read:
+  - src/steward.ts
+  - src/claim.ts
+  - src/resume.ts
+  - src/takeover.ts
+  - src/signal.ts
+allowed_paths:
+  - src/selfheal.ts
+  - src/claim.ts
+  - src/resume.ts
+  - test/selfheal.test.ts
+  - test/selfheal_notes.test.ts
+outputs:
+  - src/selfheal.ts
+  - src/claim.ts
+  - src/resume.ts
+  - test/selfheal.test.ts
+  - test/selfheal_notes.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Existing claim and resume tests must stay green: only add text. A heal merge must never touch main.

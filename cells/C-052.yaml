@@ -1,0 +1,40 @@
+id: C-052
+title: Chats get cell_help cell_note cell_sync cell_fix and the branch syncs itself
+type: normal
+priority: 8
+goal: |
+  Register the self-heal actions and change the chat rules so a chat with a problem fixes it in place.
+  - src/tools.ts: new MCP tools cell_help { repo, cell_id, base, problem }, cell_note { repo, cell_id, base, note }, cell_sync { repo, cell_id, base }, cell_clear { repo, cell_id, base }, cell_fix { repo, cell_id, base, kind, cells } wired to src/selfheal.ts and src/selfheal_fix.ts. Descriptions are short and say 'no admin key needed'.
+  - src/protocol.ts RULES and instructions: when blocked (tests fail on something outside your paths, branch behind main, a cell text gap, main broken) call cell_help BEFORE cell_signal feedback and follow its steps; cell_signal feedback is only for ESCALATE answers. Keep the sentences the existing protocol tests assert.
+  - src/engine.ts: submitCell and preflight first check compare(main, branch) and, when the branch is behind, call the sync (mergeBranch main into branch) automatically; conflict stops with the CONFLICT text, up to date changes nothing. This removes the stale-branch failure seen on C-032.
+  - Tests in test/selfheal_tools.test.ts: every tool answers through the MCP server, denied without base, submit on a behind branch merges main first, submit on a conflicting branch stops, existing protocol tests unchanged.
+inputs:
+  - from: C-050
+    kind: implementation
+    contract: |
+      src/selfheal.ts exports cellHelp, cellNote, cellSync, cellClear (each (api, repo, opts, args) returning a string).
+  - from: C-051
+    kind: implementation
+    contract: |
+      src/selfheal_fix.ts exports cellFix(api, repo, opts, args) returning a string.
+after: [C-001, C-034, C-050, C-051]
+provides:
+  - "MCP tools cell_help, cell_note, cell_sync, cell_clear, cell_fix and automatic main sync before submit and preflight"
+read:
+  - src/tools.ts
+  - src/protocol.ts
+  - src/engine.ts
+allowed_paths:
+  - src/tools.ts
+  - src/protocol.ts
+  - src/engine.ts
+  - test/selfheal_tools.test.ts
+outputs:
+  - src/tools.ts
+  - src/protocol.ts
+  - src/engine.ts
+  - test/selfheal_tools.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The new tools need only the normal MCP bearer, like apply_changes. Update the tool-list test if one counts tools.

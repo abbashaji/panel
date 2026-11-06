@@ -1,0 +1,32 @@
+id: C-049
+title: GitHub API can compare and merge branches
+type: normal
+priority: 8
+goal: |
+  Foundation for self-healing. Extend the narrow GitHubApi (src/api.ts) with two methods and implement them in src/github.ts (REST) and test/fakegh.ts (in memory, same rules):
+  - compare(repo, base, head): Promise<{ ahead: number; behind: number; files: string[] }> using GET /repos/{repo}/compare/{base}...{head}; behind is how many commits main has that head lacks.
+  - mergeBranch(repo, into, from, message): Promise<{ status: 'merged' | 'up_to_date' | 'conflict'; oid?: string; files?: string[] }> using POST /repos/{repo}/merges (201 merged, 204 up to date, 409 conflict; on conflict try to name the conflicting files from compare, never throw for 409).
+  - The fake keeps real semantics: merge commit with two parents, up_to_date when nothing to merge, conflict when both sides changed the same file differently.
+  Tests in test/github_merge.test.ts: github.ts against a mocked fetch for 201 / 204 / 409 / 404, errors become ApiError without leaking the token, fake behaviour as above.
+inputs: []
+after: [C-033]
+provides:
+  - "GitHubApi.compare and GitHubApi.mergeBranch"
+read:
+  - src/api.ts
+  - src/github.ts
+  - test/fakegh.ts
+allowed_paths:
+  - src/api.ts
+  - src/github.ts
+  - test/fakegh.ts
+  - test/github_merge.test.ts
+outputs:
+  - src/api.ts
+  - src/github.ts
+  - test/fakegh.ts
+  - test/github_merge.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Nothing outside the GitHubApi interface may call GitHub directly. A merge commit is never created on main by this code, only into cell/* branches (enforced in C-050).

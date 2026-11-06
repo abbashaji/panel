@@ -1,0 +1,33 @@
+id: C-054
+title: Panel shows what chats healed by themselves
+type: normal
+priority: 6
+goal: |
+  Use PanelState.healLog and PanelCell.heals from C-053.
+  - web/src/shell/activity.ts: the live activity list shows heal events as 'C-032 self-healed: sync main' (kind text mapped to plain words: sync main, note added, feedback cleared, fix cell published, replacement published) with the time, newest first, mixed into the existing activity by time.
+  - web/src/inspector/CellDetails.tsx: a small 'Self-healed N times' line with the last note when heals > 0, and, when heals reached 3, the text 'Self-heal budget used, the Steward takes over'.
+  - Tests in web/src/shell/activity.test.ts and a new web/src/inspector/heals.test.tsx.
+inputs: []
+after: [C-006, C-007, C-012, C-013, C-015, C-024, C-032, C-045, C-053]
+supersedes: [C-040, C-042]
+provides:
+  - "Self-heal events visible in the panel"
+read:
+  - web/src/shell/activity.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/core/types.ts
+allowed_paths:
+  - web/src/shell/activity.ts
+  - web/src/shell/activity.test.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/heals.test.tsx
+outputs:
+  - web/src/shell/activity.ts
+  - web/src/shell/activity.test.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/heals.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Missing healLog (old Worker) shows nothing and must not throw.

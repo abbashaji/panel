@@ -1,0 +1,29 @@
+id: C-051
+title: Self-heal fix cells with a plan lock and strict limits
+type: normal
+priority: 8
+goal: |
+  The only plan write a worker chat may do. New src/selfheal_fix.ts using the existing plan publisher in src/engine.ts (publishPlan) WITHOUT the admin gate, wrapped in hard limits:
+  - cellFix(api, repo, opts, { cell_id, base, kind, cells }) where kind is 'replace' (a corrected cell for the caller's own cell, it must list supersedes: [cell_id] and keep its goal) or 'blocker' (a small fix cell for a broken main or a missing shared file, the caller's cell gets no edit, the new cell gets priority above every open cell and lease_minutes 15).
+  - Limits: authority and budget exactly as in C-050 (base proof, live lease, MAX_HEALS); at most 2 cells per call; ids are assigned by the engine (next free), never chosen; every cell passes the normal plan validation (overlap rules, max_cell_files, protected paths); a 'blocker' cell may have at most 3 outputs and must name why in its notes; no cell may supersede anything except the caller's own cell; no edit of blueprint.yaml, cells that exist, or any protected path; text size bounded.
+  - Plan lock: branch steward/plan-lock with a 90 second lease (trailers who, at). A second concurrent cellFix gets PLAN_LOCKED retry_after seconds. The lock is released at the end of the call even on error.
+  - Each success writes the heal trailer on the caller's branch ('heal: replace' or 'heal: blocker') and the answer tells the chat what to do next: for replace, release your cell with a handoff note (the replacement is claimed by a fresh chat), for blocker, continue only after the blocker merged or hand off.
+  Tests in test/selfheal_fix.test.ts: replace ok, blocker ok, rejected over-budget, protected path, superseding a foreign cell, 3 cells, bad overlap, lock busy, lock released after failure, ids assigned by the engine.
+inputs: []
+after: []
+provides:
+  - "src/selfheal_fix.ts: cellFix"
+read:
+  - src/engine.ts
+  - src/plan.ts
+  - src/steward.ts
+allowed_paths:
+  - src/selfheal_fix.ts
+  - test/selfheal_fix.test.ts
+outputs:
+  - src/selfheal_fix.ts
+  - test/selfheal_fix.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Import the authority and budget helpers from src/selfheal.ts at runtime only when C-050 has merged; this cell is ordered after it by the graph below.

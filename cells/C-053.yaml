@@ -1,0 +1,34 @@
+id: C-053
+title: Panel state reports self-heal events
+type: normal
+priority: 6
+goal: |
+  src/panel/state.ts reads the heal commits of each cell branch (subject 'heal(C-NNN): <kind>', trailer 'heal: <kind>', via the data already fetched, no extra API call per cell where avoidable) and adds:
+  - PanelCell.heals?: number (count) and PanelState.healLog?: { cell: string; kind: string; at: string; note: string }[] (newest first, at most 20, note cut to 160 chars).
+  - Mirror both in src/panel/types.ts and web/src/core/types.ts (parity test green). Optional fields, old clients ignore them.
+  Tests in test/panel_heals.test.ts: counts, ordering, cap, a branch without heals, a corrupt trailer ignored.
+inputs: []
+after: [C-000, C-002, C-004, C-012, C-030, C-035, C-041, C-045, C-047, C-050]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "PanelCell.heals and PanelState.healLog"
+read:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_heals.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_heals.test.ts
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Keep every existing field.
