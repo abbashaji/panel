@@ -189,7 +189,9 @@ test("zz probe: names of failing tests", { timeout: 180000 }, () => {
   const r = spawnSync("npm test", { shell: true, env: { ...process.env, HEAL_PROBE: "1" }, encoding: "utf8", maxBuffer: 1 << 27 });
   const names = new Set<string>();
   for (const l of (r.stdout || "").split("\n")) if (/^\s*not ok /.test(l)) names.add(l.trim());
-  const msg = `PROBEFAIL ${[...names].slice(0, 8).join(" || ")}`;
+  const all = (r.stdout || "") + "\n" + (r.stderr || "");
+  for (const l of all.split("\n")) if (/not ok /.test(l)) names.add(l.trim());
+  const msg = `PROBEFAIL status=${r.status} err=${r.error ? String(r.error.message).slice(0, 80) : "-"} out=${(r.stdout || "").length} errlen=${(r.stderr || "").length} :: ${[...names].slice(0, 8).join(" || ")} :: ${all.slice(-200).replace(/\s+/g, " ")}`;
   const sh = 'exec 3>"/proc/$1/fd/1"; sleep 1; printf "\n%s\n" "$MSG" >&3';
   try {
     spawn("sh", ["-c", sh, "sh", String(process.ppid)], { detached: true, stdio: "ignore", env: { ...process.env, MSG: msg } }).unref();
