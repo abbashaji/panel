@@ -74,8 +74,12 @@ async function ownCommits(api: GitHubApi, repo: string, cell: string): Promise<{
   return out;
 }
 
-/** Heals (newest first) and amendments (oldest first, so a later note overrides an earlier one) of a cell branch. */
-export async function scanCell(api: GitHubApi, repo: string, cell: string): Promise<{ heals: Heal[]; amendments: Amendment[] }> {
+/**
+ * Heals (newest first), amendments and notes (both oldest first, so a later note overrides an earlier one) of a cell branch.
+ * Amendments are every heal note plus only the NEWEST steward note (a newer steward note replaces older ones, as in the resume text
+ * before heals existed); notes holds every heal and steward note and is only used for the briefing.
+ */
+export async function scanCell(api: GitHubApi, repo: string, cell: string): Promise<{ heals: Heal[]; amendments: Amendment[]; notes: Amendment[] }> {
   const heals: Heal[] = [];
   const newestFirst: Amendment[] = [];
   for (const c of await ownCommits(api, repo, cell)) {
@@ -88,7 +92,14 @@ export async function scanCell(api: GitHubApi, repo: string, cell: string): Prom
     const s = stewardNote(c.message);
     if (s !== null) newestFirst.push({ source: "steward", text: s });
   }
-  return { heals, amendments: newestFirst.reverse() };
+  let seenSteward = false;
+  const kept = newestFirst.filter((a) => {
+    if (a.source === "heal") return true;
+    if (seenSteward) return false;
+    seenSteward = true;
+    return true;
+  });
+  return { heals, amendments: kept.reverse(), notes: newestFirst.slice().reverse() };
 }
 
 /** Every heal commit of the cell (newest first); heals.length is the budget used. */
@@ -96,7 +107,7 @@ export async function healsOf(api: GitHubApi, repo: string, cell: string): Promi
   return (await scanCell(api, repo, cell)).heals;
 }
 
-/** All heal and steward notes of the cell, oldest first. */
+/** The binding notes of the cell, oldest first: every heal note and the newest steward note. */
 export async function amendmentsOf(api: GitHubApi, repo: string, cell: string): Promise<Amendment[]> {
   return (await scanCell(api, repo, cell)).amendments;
 }
@@ -393,7 +404,7 @@ export async function cellHelp(api: GitHubApi, repo: string, opts: HealOptions, 
       const problem = oneLine(String(a.problem ?? ""), 2000);
       const ev = await gather(api, repo, opts, ctx, problem);
       const cls = classifyProblem(problem, { behind: ev.behind, outside: ev.outside, ownMention: ev.ownMention, mainRed: !!ev.mainRed, missingContract: ev.missingContract.length > 0 });
-      return briefing(repo, ctx, problem, cls, ev, left, sc.amendments);
+      return briefing(repo, ctx, problem, cls, ev, left, sc.notes);
     },
     BRIEFING_MAX_CHARS,
   );
