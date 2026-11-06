@@ -1,0 +1,46 @@
+id: C-043
+title: Header shows the Steward with start resume and release (contract included)
+type: normal
+priority: 9
+goal: |
+  Replaces C-036, whose chat stopped because the contract below was not written in it. Everything it needs already exists on main.
+  - New web/src/shell/StewardChip.tsx in the header next to the repo name: shows 'Steward idle' (none), 'Steward active, <holder>, 41m left', 'Steward expired 12m ago' or 'Steward released', plus the problem count ('3 problems'). Buttons: 'Start steward' (none), 'Resume steward' (expired or released), 'Release' (active or expired, opens ReleaseDialog with the new action 'steward-release', admin key typed like for cells, never stored). Start and Resume call usePanel().launcher.startSteward?.() and are hidden when that function is missing.
+  - web/src/core/api.ts: add stewardRelease(repo: string, adminKey: string): Promise<StewardReleaseResult> that POSTs to /panel/api/steward-release with body { repo, admin_key } the same way release() posts to /panel/api/release, and returns the parsed JSON { ok, result, steward }. 403 gives ApiError status 403 like release.
+  - web/src/core/store.tsx: Launcher interface gets startSteward?: () => void (default none). usePanel() already exposes state.steward because it is part of state; nothing else to add there.
+  - web/src/inspector/ReleaseDialog.tsx: AdminAction becomes 'release' | 'clear-feedback' | 'steward-release'. For steward-release the title is 'Release the Steward?', cellId is not needed (the dialog opens with a fixed marker id such as 'steward'), it calls stewardRelease, then toast(result) and refresh().
+  - web/src/shell/Header.tsx mounts the chip; it collapses to an icon with a tooltip on narrow widths.
+  - Tests in web/src/shell/steward.test.tsx: each of the four statuses, buttons per status, release flow calls the API once with the typed key and clears it, chip hidden when state.steward is undefined (old Worker).
+  CONTRACT (already merged, do not change):
+  - web/src/core/types.ts: type PanelStewardStatus = 'none' | 'active' | 'expired' | 'released'; interface PanelSteward { status: PanelStewardStatus; holder: string | null; minutesLeft: number | null; expiredMinutesAgo: number | null; problems: number }; PanelState.steward?: PanelSteward (optional); StewardReleaseBody { repo; admin_key }; StewardReleaseResult { ok: boolean; result: string; steward: PanelSteward }.
+  - Worker route POST /panel/api/steward-release: needs the panel cookie and admin_key, answers 200 { ok, result, steward } or 403 { error: 'forbidden' }.
+inputs: []
+after: [C-004, C-006, C-007, C-012, C-013, C-015, C-019, C-021, C-024, C-029, C-031, C-032, C-035, C-041]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "Launcher.startSteward?: () => void and the Steward chip"
+read:
+  - web/src/core/types.ts
+  - web/src/core/api.ts
+  - web/src/shell/Header.tsx
+  - web/src/core/store.tsx
+  - web/src/inspector/ReleaseDialog.tsx
+  - docs/panel-design.md
+allowed_paths:
+  - web/src/shell/Header.tsx
+  - web/src/shell/StewardChip.tsx
+  - web/src/shell/steward.test.tsx
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/inspector/ReleaseDialog.tsx
+outputs:
+  - web/src/shell/Header.tsx
+  - web/src/shell/StewardChip.tsx
+  - web/src/shell/steward.test.tsx
+  - web/src/core/store.tsx
+  - web/src/core/api.ts
+  - web/src/inspector/ReleaseDialog.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  The admin key lives only in the dialog's component state, exactly like Release. Existing tests that mock usePanel() have no startSteward or steward: keep them passing.

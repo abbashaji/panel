@@ -1,0 +1,30 @@
+id: C-044
+title: Panel can start the Steward through the launcher (replaces C-039)
+type: normal
+priority: 8
+goal: |
+  - web/src/launch/protocol.ts: stewardUrl(repo, who) building blueprint://steward?repo=<enc repo>&who=<enc who> with the same validation as startUrl (REPO_RE, WHO_RE, max 400).
+  - web/src/launch/index.tsx: implement startSteward(): read or ask the name like doStart, open stewardUrl with transport.go, show the same 'launcher not installed' hint, then refresh. No reservation (the Worker lease decides who wins; a second chat gets STEWARD_BUSY). Register it in registerLauncher as startSteward (the Launcher interface member startSteward?: () => void is added by C-043).
+  - Tests in web/src/launch/launch.test.tsx: URL valid and invalid, startSteward fires the URL once, missing launcher hint, name prompt.
+  The launcher side (blueprint://steward) is already merged in C-037 and C-038.
+inputs: []
+after: [C-010, C-012, C-023, C-029, C-032, C-037, C-043]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "launcher.startSteward() used by the Steward chip"
+read:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+allowed_paths:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/launch/launch.test.tsx
+outputs:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/launch/launch.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Contract of blueprint://steward is in C-037.

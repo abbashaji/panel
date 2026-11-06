@@ -1,0 +1,39 @@
+id: C-045
+title: Needs human becomes Needs steward everywhere (replaces C-042)
+type: normal
+priority: 5
+goal: |
+  There is no human step any more: problems go to the Steward. Keep the status id needs_human (contract and parity), change what people read.
+  - Label 'Needs human' becomes 'Needs steward' in core/status.ts, shell/Palette.tsx, shell/activity.ts ('C-012 needs the steward'), inspector/CellDetails.tsx help text (explains: the Steward chat solves it; if no Steward is running, start one from the header) and docs/panel-design.md.
+  - The Clear feedback button stays only as an owner override, under a small 'Owner override' caption.
+  - Update every test that asserts the old label (grep for 'Needs human' and 'needs a human').
+inputs: []
+after: [C-004, C-006, C-007, C-012, C-013, C-015, C-021, C-024, C-032, C-041, C-043, C-044]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "UI says Needs steward"
+read:
+  - web/src/core/status.ts
+  - web/src/shell/activity.ts
+  - docs/panel-design.md
+allowed_paths:
+  - web/src/core/status.ts
+  - web/src/core/status.test.ts
+  - web/src/shell/Palette.tsx
+  - web/src/shell/activity.ts
+  - web/src/shell/activity.test.ts
+  - web/src/inspector/CellDetails.tsx
+  - docs/panel-design.md
+  - web/src/**/*.test.ts
+  - web/src/**/*.test.tsx
+outputs:
+  - web/src/core/status.ts
+  - web/src/shell/Palette.tsx
+  - web/src/shell/activity.ts
+  - web/src/inspector/CellDetails.tsx
+  - docs/panel-design.md
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Do not rename the status id or change the Worker. Tests only change expected strings.
