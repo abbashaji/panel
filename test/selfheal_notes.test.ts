@@ -120,3 +120,64 @@ test("sync conflict: CONFLICT with the files, nothing changes, no heal spent", a
   assert.equal(gh.refs.get("main"), mainTip);
   assert.equal((await healsOf(gh, REPO, "C-001")).length, 0);
 });
+
+// ---------------------------------------------------------------- clear and feedback
+test("clear: removes the feedback state of this one cell for one heal; note and sync are refused while it is pending", async () => {
+  const gh = setup(["C-001", "C-002"]);
+  const o = engine(gh);
+  const b1 = await claim(gh, "C-001");
+  const b2 = await claim(gh, "C-002");
+  assert.match(await cellClear(gh, REPO, o, { cell_id: "C-001", base: b1 }), /^NO_FEEDBACK C-001/);
+  assert.equal((await healsOf(gh, REPO, "C-001")).length, 0);
+
+  assert.match(await cellSignal(gh, REPO, o, { cell_id: "C-001", base: b1, kind: "feedback", text: "need a decision" }), /^feedback recorded/);
+  assert.match(await cellSignal(gh, REPO, o, { cell_id: "C-002", base: b2, kind: "feedback", text: "another one" }), /^feedback recorded/);
+  const f1 = baseOf(gh, "C-001");
+  assert.ok(isFeedback(msgOf(gh, "C-001")));
+  assert.match(await cellNote(gh, REPO, o, { cell_id: "C-001", base: f1, text: "x" }), /^SELFHEAL_DENIED: C-001 has feedback pending/);
+  assert.match(await cellSync(gh, REPO, o, { cell_id: "C-001", base: f1 }), /^SELFHEAL_DENIED: C-001 has feedback pending/);
+  const help = await cellHelp(gh, REPO, o, { cell_id: "C-001", base: f1, problem: "waiting for an answer" });
+  assert.match(help, /feedback is pending/);
+  assert.match(help, /cell_clear\(repo="o\/r", cell_id="C-001"/);
+
+  // the base of another cell is no authority
+  assert.match(await cellClear(gh, REPO, o, { cell_id: "C-001", base: baseOf(gh, "C-002") }), /^SELFHEAL_DENIED: base /);
+  assert.ok(isFeedback(msgOf(gh, "C-001")));
+
+  const r = await cellClear(gh, REPO, o, { cell_id: "C-001", base: f1 });
+  assert.match(r, /^HEALED C-001: feedback state cleared.*Heals left: 2 of 3/);
+  assert.ok(!isFeedback(msgOf(gh, "C-001")));
+  assert.equal(subjectOf(msgOf(gh, "C-001")), "heal(C-001): clear");
+  assert.match(msgOf(gh, "C-001"), /^heal: clear$/m);
+  assert.equal((await healsOf(gh, REPO, "C-001")).length, 1);
+  assert.equal(nextBase(r), baseOf(gh, "C-001"));
+  assert.ok(isFeedback(msgOf(gh, "C-002")), "only that one cell is cleared");
+  assert.equal((await healsOf(gh, REPO, "C-002")).length, 0);
+
+  // after the clear the cell can heal again
+  assert.match(await cellNote(gh, REPO, o, { cell_id: "C-001", base: nextBase(r), text: "decided: v2" }), /^HEALED C-001/);
+});
+
+// ---------------------------------------------------------------- note bounds
+test("note: at most 2000 chars, empty refused, next and attempt carried", async () => {
+  const gh = setup(["C-001"]);
+  const o = engine(gh);
+  const base = await claim(gh, "C-001");
+  const hb = await cellSignal(gh, REPO, o, { cell_id: "C-001", base, kind: "heartbeat", next: "write tests" });
+  const b1 = nextBase(hb);
+
+  const before = tipOf(gh, "C-001");
+  assert.match(await cellNote(gh, REPO, o, { cell_id: "C-001", base: b1, text: "  \n\t " }), /^EMPTY_NOTE C-001/);
+  assert.equal(tipOf(gh, "C-001"), before);
+  assert.equal((await healsOf(gh, REPO, "C-001")).length, 0);
+
+  const r = await cellNote(gh, REPO, o, { cell_id: "C-001", base: b1, text: "word ".repeat(1000) });
+  assert.match(r, /^HEALED C-001/);
+  const msg = msgOf(gh, "C-001");
+  const heal = parseHeal(msg, "C-001");
+  assert.equal(heal?.kind, "note");
+  assert.ok(heal!.note!.length > 1900 && heal!.note!.length <= 2000, `note is ${heal!.note!.length} chars`);
+  assert.equal(parseTrailers(msg).next, "write tests");
+  assert.equal(parseHeal(msg, "C-002"), null, "a heal belongs to its own cell");
+  assert.equal(parseHeal("steward(C-001): note", "C-001"), null);
+});
