@@ -15,6 +15,9 @@ internal sealed class StartManyForm : Form
     private readonly ParseResult _req;
     private readonly CellRecords _records;
     private readonly IReadOnlyList<string> _cells;
+    private readonly string _settingsPath;
+    private readonly Label _footer;
+    private readonly CheckBox _autoSend;
     private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly ToolTip _tip = new();
     private readonly Label _counter;
@@ -27,6 +30,8 @@ internal sealed class StartManyForm : Form
         _req = req;
         _records = records;
         _cells = req.Cells.ToList();
+        _settingsPath = LauncherSettings.DefaultPath(Program.LocalAppData);
+        var settings = LauncherSettings.Load(_settingsPath);
 
         Text = "Blueprint Launcher \u00B7 local window on your PC";
         BackColor = Theme.Window;
@@ -36,7 +41,7 @@ internal sealed class StartManyForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(780, 626);
+        ClientSize = new Size(780, 666);
         CancelButton = _cancel;
 
         Controls.Add(Labels.Create("Start " + _cells.Count + " cells", Theme.Ui(22, FontStyle.Bold), Theme.Text, Pad, 32, ContentWidth, 32));
@@ -55,12 +60,20 @@ internal sealed class StartManyForm : Form
         _skipped = Labels.Create("", Theme.Ui(12.5f), Theme.Muted, Pad, 412, ContentWidth, 40);
         Controls.Add(_counter);
         Controls.Add(_skipped);
-        Controls.Add(Labels.Create(
-            "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You press Send in each chat.",
-            Theme.Ui(12.5f), Theme.Done, Pad, 480, ContentWidth, 36));
+        _footer = Labels.Create(
+            FooterText(settings.AutoSend),
+            Theme.Ui(12.5f), Theme.Done, Pad, 480, ContentWidth, 56);
+        Controls.Add(_footer);
+        _autoSend = AutoSendOption.CreateCheckBox(settings.AutoSend, new Rectangle(Pad, 544, ContentWidth, 26));
+        _autoSend.CheckedChanged += (_, _) =>
+        {
+            _footer.Text = FooterText(_autoSend.Checked);
+            AutoSendOption.SaveQuietly(_settingsPath, _autoSend.Checked);
+        };
+        Controls.Add(_autoSend);
 
-        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 566, 260, 44);
-        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, 566, 120, 44);
+        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 606, 260, 44);
+        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, 606, 120, 44);
         Controls.Add(_cancel);
         Controls.Add(_confirm);
 
@@ -68,6 +81,9 @@ internal sealed class StartManyForm : Form
         UpdateState();
         _confirm.Click += (_, _) => Confirm();
     }
+
+    private static string FooterText(bool autoSend)
+        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. " + AutoSendOption.FooterText(autoSend);
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -176,7 +192,9 @@ internal sealed class StartManyForm : Form
                     errors.Add(cell + ": the browser was not found.");
                     continue;
                 }
-                var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, PromptBuilder.BuildUrl(_req.Repo, cell));
+                var url = AutoSendOption.Apply(PromptBuilder.BuildUrl(_req.Repo, cell), _autoSend.Checked, out var markError);
+                if (markError is not null) errors.Add(cell + ": opened without auto-send (" + markError + ")");
+                var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
                 _records.Upsert(_req.Repo, cell, p.Browser, p.Folder, p.Name);
                 Program.Run(cmd);
             }
