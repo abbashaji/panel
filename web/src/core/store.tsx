@@ -35,6 +35,8 @@ export interface Launcher {
   owner(id: string): string | null;
   /** reserve these ready cells and start them through one launcher window (default: no-op) */
   startMany?: (ids: string[]) => void;
+  /** start or resume the Steward through the launcher (default: none, the chip hides its Start / Resume buttons) */
+  startSteward?: () => void;
 }
 
 /** Actions other slots provide for each other (the inspector registers requestRelease for the graph banner). */
