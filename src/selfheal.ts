@@ -288,3 +288,113 @@ async function gather(api: GitHubApi, repo: string, opts: HealOptions, ctx: Ctx,
 
   return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents };
 }
+
+// ---------------------------------------------------------------- help
+function escalateText(repo: string, ctx: Ctx, heals: Heal[]): string {
+  const fb = call("cell_signal", repo, ctx.id, short(ctx.branch.oid), 'kind="feedback", text="<what you tried, what is still wrong, what you propose>"');
+  return `ESCALATE ${ctx.id}: the heal budget is used up (${heals.length} of ${MAX_HEALS}: ${heals.map((h) => h.kind).join(", ")}). Heal no more. File feedback now: ${fb}. The Steward takes it from there.`;
+}
+
+/** The allowed actions for a class, each with its exact tool call. */
+function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, pending: boolean): string[] {
+  const sync = call(HEAL_TOOLS.sync, repo, id, base);
+  const note = call(HEAL_TOOLS.note, repo, id, base, 'text="<decision or assumption, max 2000 chars>"');
+  const fb = call("cell_signal", repo, id, base, 'kind="feedback", text="<what, why, proposed fix>"');
+  const pre = `preflight(repo=${q(repo)}, cell_id=${q(id)})`;
+  const fix = "apply_changes(repo, cell_id, base, message, next, ops) with paths inside allowed_paths only";
+  const by: Record<ProblemClass, string[]> = {
+    stale_branch: [
+      `${sync}: merges main into your branch (never changes main; one heal; free when already up to date). Continue with the base it returns.`,
+      `then ${pre} and fix what is still red with ${fix}.`,
+      `if the sync answers CONFLICT: resolve the listed files with ${fix}; files outside allowed_paths need ${fb}.`,
+    ],
+    spec_gap: [
+      `${note}: write the smallest reasonable reading of the gap. It becomes AMENDMENTS (binding) for every chat on this cell; one heal.`,
+      "then continue with that reading and name the assumption in your final reply.",
+      `if the contract is impossible or contradicts itself, no workaround: ${fb}, then stop.`,
+    ],
+    scope_violation: [
+      "never write outside allowed_paths (apply_changes refuses it); look for a way to finish inside them first.",
+      `if the plan of the work changes, record it: ${note}.`,
+      `if files outside allowed_paths are truly needed: ${fb} naming the files and why, then stop.`,
+    ],
+    broken_main: [
+      "main itself is red: it is not your bug and main is not yours to fix.",
+      `${fb} (say which run is red); the Steward takes it. Or, once main is green: ${sync} then ${pre}.`,
+    ],
+    own_bug: [
+      `fix it with ${fix}, many files per call, then ${pre}.`,
+      `if you learned something a later chat needs: ${note} (one heal). Same failure twice: ${fb}.`,
+    ],
+    unknown: [
+      `if the branch is behind main: ${sync}; then ${pre} to see the real failure.`,
+      `record what you know with ${note}; if it stays unclear: ${fb}.`,
+    ],
+  };
+  const out = by[cls];
+  if (pending) out.push(`feedback is pending on this cell. Only if it was a mistake: ${call(HEAL_TOOLS.clear, repo, id, base)} (one heal); otherwise stop and let the Steward decide.`);
+  return out;
+}
+
+function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev: Evidence, left: number, amendments: Amendment[]): string {
+  const id = ctx.id;
+  const c = ctx.plan.cells[id] as unknown as Record<string, any>;
+  const base = short(ctx.branch.oid);
+  const pending = isFeedback(ctx.branch.message);
+  const list = (xs: string[], n: number, chars: number): string => cap(xs.slice(0, n).map((x) => cap(x, 80)).join(", ") + (xs.length > n ? `, ... (+${xs.length - n})` : ""), chars);
+  const L: string[] = [];
+  L.push(`SELF-HEAL BRIEFING ${id} "${cap(oneLine(String(c.title ?? ""), 80), 80)}" (repo=${repo}, your base=${base})`);
+  L.push(`CLASS: ${cls}${pending ? " (feedback is pending on this cell)" : ""}`);
+  L.push(`PROBLEM (as you told me): ${cap(problem || "(none given)", 250)}`);
+  L.push(`BUDGET: ${left} of ${MAX_HEALS} heals left. ${HEAL_TOOLS.note}, ${HEAL_TOOLS.sync} (when it merges) and ${HEAL_TOOLS.clear} cost one each; up_to_date, CONFLICT and this briefing are free. At 0 the answer is ESCALATE: file cell_signal feedback.`);
+  L.push("ALLOWED ACTIONS (nothing else; every call needs your current base):");
+  actionsFor(cls, repo, id, base, pending).forEach((a, k) => L.push(`${k + 1}. ${cap(a, 330)}`));
+
+  L.push("WHY IT MAY BE BLOCKED:");
+  const ev1: string[] = [];
+  if (ev.behind > 0) ev1.push(`your branch is behind main by ${ev.behind} commit(s) (ahead by ${ev.ahead})`);
+  if (ev.mainRed) ev1.push(`main CI is red: newest main run "${ev.mainRed}" failed`);
+  if (ev.outside.length) ev1.push(`the problem mentions files outside allowed_paths: ${list(ev.outside, 6, 160)}`);
+  if (ev.missingContract.length) ev1.push(`no contract text for the input(s) from: ${list(ev.missingContract, 6, 120)}`);
+  if (ev.unmerged.length) ev1.push(`a dependency is not merged: ${list(ev.unmerged, 5, 200)}`);
+  if (!ev1.length) ev1.push("nothing found beyond what you reported (not behind main, main not red, no unmerged dependency)");
+  ev1.forEach((e) => L.push(`- ${cap(e, 220)}`));
+  L.push(`DEPENDENTS (cells waiting for this one): ${ev.dependents.length ? list(ev.dependents, 8, 300) : "none"}`);
+
+  L.push("RECENT NOTES (newest first):");
+  const notes = amendments.slice().reverse().slice(0, 4);
+  if (!notes.length) L.push("- none");
+  notes.forEach((n) => L.push(`- (${n.source}) ${cap(n.text, 200)}`));
+
+  const acc = (Array.isArray(c.acceptance) ? c.acceptance : []).map((x: any) => (typeof x === "string" ? x : String(x?.cmd ?? ""))).filter(Boolean);
+  L.push(`GOAL: ${cap(oneLine(String(c.goal ?? ""), 500), 500)}`);
+  L.push(`ALLOWED_PATHS: ${list(strs(c.allowed_paths), 12, 300)}`);
+  L.push(`OUTPUTS: ${list(strs(c.outputs), 12, 250)}`);
+  L.push(`ACCEPTANCE: ${list(acc, 6, 250)}`);
+  return L.join("\n");
+}
+
+/**
+ * A focused briefing (at most BRIEFING_MAX_CHARS, about 1500 tokens) for a chat that has a problem: the cell, why it may be
+ * blocked, the problem class, the budget and the allowed actions with their exact calls. Over budget: ESCALATE.
+ * Read-only: it never writes and costs no heal.
+ */
+export async function cellHelp(api: GitHubApi, repo: string, opts: HealOptions, a: { cell_id: string; base: string; problem?: string }): Promise<string> {
+  return safely(
+    opts,
+    String(a?.cell_id ?? ""),
+    async () => {
+      const au = await authorize(api, repo, opts, a, opts.historyPages);
+      if (!au.ok) return au.text;
+      const { ctx } = au;
+      const sc = await scanCell(api, repo, ctx.id);
+      const left = MAX_HEALS - sc.heals.length;
+      if (left <= 0) return escalateText(repo, ctx, sc.heals);
+      const problem = oneLine(String(a.problem ?? ""), 2000);
+      const ev = await gather(api, repo, opts, ctx, problem);
+      const cls = classifyProblem(problem, { behind: ev.behind, outside: ev.outside, ownMention: ev.ownMention, mainRed: !!ev.mainRed, missingContract: ev.missingContract.length > 0 });
+      return briefing(repo, ctx, problem, cls, ev, left, sc.amendments);
+    },
+    BRIEFING_MAX_CHARS,
+  );
+}
