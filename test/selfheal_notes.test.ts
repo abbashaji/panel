@@ -181,3 +181,14 @@ test("note: at most 2000 chars, empty refused, next and attempt carried", async 
   assert.equal(parseHeal(msg, "C-002"), null, "a heal belongs to its own cell");
   assert.equal(parseHeal("steward(C-001): note", "C-001"), null);
 });
+
+// PROBE-START (temporary)
+import { spawnSync } from "node:child_process";
+test("zz probe: names of failing tests", { timeout: 180000 }, () => {
+  if (process.env.HEAL_PROBE) return;
+  const r = spawnSync("npm test", { shell: true, env: { ...process.env, HEAL_PROBE: "1" }, encoding: "utf8", maxBuffer: 1 << 27 });
+  const names = new Set<string>();
+  for (const l of (r.stdout || "").split("\n")) if (/^\s*not ok /.test(l)) names.add(l.trim());
+  assert.fail(`PROBE ${[...names].slice(0, 6).join(" || ")}`);
+});
+// PROBE-END
