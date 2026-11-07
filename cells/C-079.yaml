@@ -1,0 +1,45 @@
+id: C-079
+title: Start steward asks for the admin key once and then needs no paste
+type: normal
+priority: 11
+lease_minutes: 20
+goal: |
+  - web/src/core/api.ts: stewardCode(repo, adminKey): Promise<StewardCodeResult> posting to /panel/api/steward-code (403 gives ApiError status 403).
+  - web/src/launch/protocol.ts: stewardUrl(repo, who, code?) adds &code=<code> (code must match ^[A-Za-z0-9_-]{16,64}$, whole link max 400).
+  - New web/src/launch/OwnerKeyDialog.tsx: asks for the admin key once, with a checkbox 'Remember on this computer' (off: kept only for this browser tab in sessionStorage, on: localStorage key bp_owner_key; every storage access in try/catch) and a visible 'Forget the key' button wherever it is shown. The key is never put in a URL, a toast, a log or React state beyond the dialog.
+  - web/src/launch/index.tsx startSteward(): take the key from storage or ask with the dialog; call stewardCode; open stewardUrl(repo, who, code) with transport.go; on 403 forget the stored key and ask again once; show the launcher missing hint as before. No code or key in any toast.
+  - Tests in web/src/launch/launch.test.tsx: stored key means no dialog, no key asks once, remember writes localStorage and not remembering writes sessionStorage only, 403 clears and asks again, the opened URL contains the code and never the key, forget removes both.
+inputs:
+  - from: C-077
+    kind: implementation
+    contract: |
+      POST /panel/api/steward-code { repo, admin_key } answers { ok: true, code, expires_in } or 403 { error: 'forbidden' }.
+  - from: C-078
+    kind: implementation
+    contract: |
+      blueprint://steward?repo=&who=&code= with code matching ^[A-Za-z0-9_-]{16,64}$.
+after: [C-004, C-010, C-012, C-023, C-029, C-031, C-032, C-043, C-044, C-045, C-074, C-077, C-078]
+supersedes: [C-036, C-039, C-040, C-042]
+provides:
+  - "Start steward without pasting the key into the chat"
+read:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/core/api.ts
+allowed_paths:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/launch/launch.test.tsx
+  - web/src/launch/OwnerKeyDialog.tsx
+  - web/src/core/api.ts
+outputs:
+  - web/src/launch/index.tsx
+  - web/src/launch/protocol.ts
+  - web/src/launch/launch.test.tsx
+  - web/src/launch/OwnerKeyDialog.tsx
+  - web/src/core/api.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  A key stored with 'Remember on this computer' sits in plain browser storage: say so in the dialog text.

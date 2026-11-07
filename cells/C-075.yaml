@@ -1,0 +1,29 @@
+id: C-075
+title: Launcher accepts larger sync links and never pops up for a rejected sync
+type: normal
+priority: 12
+lease_minutes: 20
+goal: |
+  - launcher/Core/ProtocolParser.cs: the sync command accepts up to 200 merged ids and a URL up to 2000 characters (MaxSyncUrlLength); start, open, startmany and steward keep 400. The length check becomes per command: first read the command name (text between the scheme and the first '?' or '/'), then apply the limit for that command, still rejecting anything over 2000 outright. Keep every other rule (ASCII only, key sets, regexes, one trailing slash).
+  - launcher/App/Program.cs: a rejected sync is silent. For CommandKind sync (or a URL that starts with blueprint://sync) a parse rejection writes one line to %LOCALAPPDATA%\BlueprintLauncher\launcher.log (time, reason, no URL; file capped at 64 KB by truncating the oldest half) and exits with code 3 without any window. Other rejected links keep the warning window.
+  - Tests in launcher/Core.Tests/ValidationTests.cs: 200 ids accepted, 201 rejected, a 1500 character sync accepted, a 401 character start link rejected, a 2001 character link rejected, encoded commas accepted, other rules unchanged.
+inputs: []
+after: [C-008, C-009, C-016, C-022, C-026, C-027, C-028, C-037, C-038]
+provides:
+  - "Sync accepts 200 ids and is silent when rejected"
+read:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/App/Program.cs
+outputs:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/App/Program.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+notes: |
+  Core stays free of System.Net. Not verified on a real Windows desktop, say so in the PR text.

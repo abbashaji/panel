@@ -1,0 +1,38 @@
+id: C-078
+title: Launcher passes the Steward code in the prompt and drops the key text
+type: normal
+priority: 11
+lease_minutes: 20
+goal: |
+  - launcher/Core/ProtocolParser.cs: blueprint://steward accepts the key set repo, who, code (code matches ^[A-Za-z0-9_-]{16,64}$, optional for compatibility: without it the old prompt is used); ParseResult gets Code.
+  - launcher/Core/PromptBuilder.cs: BuildStewardPrompt(repo, code) fixed template: 'You are the Steward of <repo>.' / 'Call steward_next with repo, who and code=<code>. The code works once and expires in 10 minutes.' / 'You have no admin key and must never ask for one.' / 'Solve the problems in the briefing from the first to the last, then call steward_release and stop. Do not poll or call steward_next again unless you need a fresh briefing after publishing a plan.' BuildStewardUrl(repo, code) builds the claude.ai link. The only inserted text is the validated repo and code. The old two argument overloads stay for the no-code case.
+  - launcher/App/StartForm.cs and Program.cs: steward mode passes the code through; the prompt box shows the code masked (first 4 characters then dots), the footer says 'No admin key is needed: the one-time code expires in 10 minutes'. Steward URLs are still never marked for auto-send (WithAutoSend keeps rejecting them).
+  - Tests in launcher/Core.Tests/StewardTests.cs and ValidationTests.cs: code accepted and rejected cases, prompt contains the code and no key wording, template has no unvalidated text, auto-send still rejects the steward URL, old no-code link still works.
+inputs: []
+after: [C-008, C-009, C-016, C-022, C-026, C-027, C-028, C-037, C-038, C-063, C-064, C-075]
+provides:
+  - "blueprint://steward?repo=&who=&code= and the keyless Steward prompt"
+read:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/Core.Tests/StewardTests.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/Program.cs
+outputs:
+  - launcher/Core/ProtocolParser.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core.Tests/ValidationTests.cs
+  - launcher/Core.Tests/StewardTests.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/Program.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text.

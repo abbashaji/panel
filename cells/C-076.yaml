@@ -1,0 +1,40 @@
+id: C-076
+title: Steward starts with a one-time code and works once
+type: normal
+priority: 11
+lease_minutes: 20
+goal: |
+  Remove the need to paste the admin key into the Steward chat and the polling loop.
+  - New src/steward_code.ts: mintStewardCode(kv, repo) returns a random 32 character base64url code and stores only its SHA-256 under KV key stewardcode:<repo>:<hash> with TTL 600 s; consumeStewardCode(kv, repo, code) hashes, reads, deletes and returns true once, false for unknown, used or expired codes. authorizeSteward(env, api, repo, { admin_key, steward_session }) returns null when the admin key is right (existing constant time check) OR when steward_session equals the session of the live steward lease of that repo (stewardStatus active, not expired, not released); otherwise an error text. No secret or code ever appears in an answer or a log.
+  - src/tools.ts: steward_next accepts { code } on its FIRST call instead of admin_key (a valid code claims the lease and returns the session as before); later calls pass steward_session. steward_note, steward_release, takeover and publish_plan accept either admin_key or steward_session through authorizeSteward. A session is valid only while its lease is live and only for the repo of that lease. Update the tool descriptions: the Steward chat has no admin key and never asks for one.
+  - ONE SHOT: in src/steward.ts replace the briefing rule 'call steward_next again in 45 seconds (at most 8 times)' by: work through the problems of this briefing from the first to the last, then call steward_release and stop; when the list is empty answer 'STEWARD_IDLE: nothing to do' and call steward_release at once. Remove every other polling or retry instruction (also in src/protocol.ts and the kit instructions text). Do not call steward_next again unless the Steward needs a fresh briefing after publishing a plan.
+  - Tests: new test/steward_code.test.ts (mint, consume once, expiry, wrong repo, hash only in KV, authorize by key, by live session, by expired or released session, other repo), update test/steward.test.ts and test/steward_tools.test.ts for the new text and the code start (node:test and node:assert/strict like the other tests).
+inputs: []
+after: [C-001, C-033, C-034, C-052, C-061]
+provides:
+  - "mintStewardCode, consumeStewardCode, authorizeSteward and steward_next with a code"
+read:
+  - src/steward.ts
+  - src/tools.ts
+  - src/protocol.ts
+  - src/engine.ts
+allowed_paths:
+  - src/steward.ts
+  - src/steward_code.ts
+  - src/tools.ts
+  - src/protocol.ts
+  - test/steward_code.test.ts
+  - test/steward.test.ts
+  - test/steward_tools.test.ts
+outputs:
+  - src/steward.ts
+  - src/steward_code.ts
+  - src/tools.ts
+  - src/protocol.ts
+  - test/steward_code.test.ts
+  - test/steward.test.ts
+  - test/steward_tools.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The admin key keeps working exactly as before (owner and old flows). Existing protocol tests must stay green: change only the polling sentences.

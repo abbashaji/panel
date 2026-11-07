@@ -1,0 +1,38 @@
+id: C-077
+title: Panel route that mints a Steward start code
+type: normal
+priority: 11
+lease_minutes: 20
+goal: |
+  POST /panel/api/steward-code { repo, admin_key } in src/panel/actions.ts and src/panel/router.ts: needs the panel cookie like the other routes, checks the admin key with the same constant time admin gate as release (403 { error: 'forbidden' } otherwise, nothing minted), calls mintStewardCode(kv, repo) and answers { ok: true, code, expires_in: 600 }. At most 5 codes per minute per repo (small KV counter, 429 beyond). The code and the key are never logged and never put in an error text. Add StewardCodeBody and StewardCodeResult to src/panel/types.ts and mirror them in web/src/core/types.ts (parity test). Tests in test/panel_steward_code.test.ts: ok path, wrong key 403 mints nothing, no cookie 401, rate limit, KV missing gives 503 without leaking.
+inputs:
+  - from: C-076
+    kind: implementation
+    contract: |
+      src/steward_code.ts exports mintStewardCode(kv, repo): Promise<string>.
+after: [C-000, C-002, C-003, C-004, C-012, C-030, C-035, C-041, C-045, C-047, C-053, C-069, C-076]
+supersedes: [C-040, C-042]
+provides:
+  - "POST /panel/api/steward-code"
+read:
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/steward_code.ts
+allowed_paths:
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_steward_code.test.ts
+outputs:
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_steward_code.test.ts
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Keep every existing route and field.

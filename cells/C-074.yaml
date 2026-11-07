@@ -1,0 +1,35 @@
+id: C-074
+title: Panel sync link always fits the launcher and never collides with a start link
+type: normal
+priority: 12
+lease_minutes: 20
+goal: |
+  Two live bugs.
+  (1) 'this link was rejected: url too long / too many merged ids': web/src/launch/protocol.ts syncUrl keeps as many merged ids as fit into 400 characters (about 55 ids once the plan has many merged cells) but the launcher accepts at most 50 ids, and Chrome may percent-encode the commas (%2C) which makes the link longer than 400 for the launcher.
+  (2) Run ready opens no profile selector: web/src/launch/index.tsx doStartMany (and doStart) fire sendSync(..., true) as a hidden iframe link immediately before transport.go(startmany). Chrome shows one 'open external application' prompt at a time, so the sync link takes it and the real navigation is dropped (and a rejected sync also pops a modal error in the launcher).
+  Fix:
+  - syncUrl keeps at most 30 ids (newest first) AND stops when the URL with every comma counted as 3 characters would pass 330 characters. Throws when no id is left (unchanged).
+  - Only send a sync when the sorted set of merged ids differs from the last one sent for this repo (signature in localStorage key bp_sync_sig_<repo>, try/catch) and never within 5 seconds after any transport.go (keep a lastGoAt timestamp). Remove the forced sendSync(..., true) calls from doStart, doStartMany and open; the state-change effect keeps the normal throttled sync.
+  - Never call transport.silent and transport.go in the same tick.
+  - Tests in web/src/launch/launch.test.tsx: syncUrl with 120 ids stays within 30 ids and the length rule, with and without %2C; startMany fires exactly one transport.go and no silent link in the same tick; an unchanged merged set sends nothing; a changed set sends once; sync right after a go is delayed.
+inputs: []
+after: [C-010, C-012, C-023, C-029, C-032, C-044, C-045]
+supersedes: [C-039, C-040, C-042]
+provides:
+  - "Sync links that the launcher accepts and no collision with start links"
+read:
+  - web/src/launch/protocol.ts
+  - web/src/launch/index.tsx
+allowed_paths:
+  - web/src/launch/protocol.ts
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+outputs:
+  - web/src/launch/protocol.ts
+  - web/src/launch/index.tsx
+  - web/src/launch/launch.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  The launcher side (higher sync limits, no popup on a rejected sync) is C-075.
