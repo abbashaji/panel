@@ -63,7 +63,9 @@ export function CellDetails({
   const resumable = isResumable(cell);
   const meta = displayMeta(cell);
   const canOpenChat = (cell.status === "running" || cell.status === "expired") && !resumable;
-  const canRelease = cell.status !== "done" && cell.status !== "waiting";
+  // a ready cell that only has a reservation: Release is offered as "Cancel reservation"
+  const reservedOnly = cell.status === "ready" && !!cell.reservedBy;
+  const canRelease = cell.status !== "done" && cell.status !== "waiting" && !reservedOnly;
   // a reset cell (ready, not resumable, nobody holding it) has no holder, even if this browser remembers an old start
   const holder = cell.reservedBy ?? (cell.status === "ready" && !resumable ? null : launcher.owner(cell.id)) ?? null;
   const direct = `${cell.directDependents} direct, ${cell.transitiveDependents} total dependents`;
@@ -135,7 +137,7 @@ export function CellDetails({
           {cell.lastCommit ? (when ? `${cell.lastCommit.subject} \u00b7 ${when}` : cell.lastCommit.subject) : DASH}
         </Field>
         <Field label="Next step">{cell.lastCommit?.next || DASH}</Field>
-        <Field label="Holder">{holder ?? DASH}</Field>
+        <Field label="Holder">{reservedOnly ? `Reserved by ${cell.reservedBy}` : (holder ?? DASH)}</Field>
         {cell.pr && gh && (
           <Field label="Pull request">
             <a className="text-[#5B9DFF] underline" href={`${gh}/pull/${cell.pr.number}`} target="_blank" rel="noopener noreferrer">
@@ -165,6 +167,11 @@ export function CellDetails({
         {canRelease && (
           <button type="button" className={danger} onClick={() => onAdmin("release")}>
             Release cell
+          </button>
+        )}
+        {reservedOnly && (
+          <button type="button" className={danger} onClick={() => onAdmin("release")}>
+            Cancel reservation
           </button>
         )}
         {cell.status === "needs_human" && (
