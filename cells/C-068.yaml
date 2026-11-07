@@ -1,0 +1,31 @@
+id: C-068
+title: Auto-send userscript explains itself in the console and menu
+type: normal
+priority: 7
+goal: |
+  Found on a real Chrome with Tampermonkey: with no marker or with the script not injected the page shows nothing and the console is empty, so the owner cannot tell why nothing is sent. Change web/public/blueprint-autosend.user.js only in these ways:
+  - On every run print one console.info line prefixed '[blueprint-autosend]': script version, whether the autosend=1 marker was present, whether q matched the template, the number of allowed repos (never their names), and the decision (sending, skipped: no marker, skipped: template, skipped: repo not allowed, skipped: empty allowlist, skipped: tab done, skipped: rate limit, timeout, cancelled, sent).
+  - Register the menu command 'Blueprint auto-send: show status' which shows a banner with the same decision and the allowed repos count.
+  - Keep the page silent when there is no marker (normal claude.ai/new visits must show no banner).
+  - Replace the PANEL_HOST placeholder in @updateURL and @downloadURL by a safe approach: remove both lines (no auto update) and keep a comment telling the owner to add them with the panel host if wanted, so no request goes to an invalid host.
+  - Never log the prompt text, q, or any repo name. Selectors and limits stay in CONFIG.
+  - Extend web/src/userscript/autosend.test.ts: each decision prints exactly one info line with the right text, no line contains the repo or the prompt, status command shows a banner, no marker means no banner.
+inputs: []
+after: [C-065, C-066, C-045]
+supersedes: [C-040, C-042]
+provides:
+  - "Diagnosable auto-send userscript"
+read:
+  - web/public/blueprint-autosend.user.js
+  - web/src/userscript/autosend.test.ts
+allowed_paths:
+  - web/public/blueprint-autosend.user.js
+  - web/src/userscript/autosend.test.ts
+outputs:
+  - web/public/blueprint-autosend.user.js
+  - web/src/userscript/autosend.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Do not change the template match, the allowlist rule or the send logic. If the header edit means users must reinstall the script, say so in the PR text.
