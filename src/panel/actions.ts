@@ -12,11 +12,13 @@ import { engineOptions, toolHandlers } from "../tools.ts";
 import { json, readBounded, requirePanelAuth, timingSafeEqual } from "./auth.ts";
 import { STEWARD_BRANCH, parseLease, readTip, releaseSteward, stewardStatus } from "../steward.ts";
 import { buildPanelState, clearPanelCache, toPanelSteward } from "./state.ts";
-import type { PanelEnv, PanelStatus, PanelSteward, ReserveResult } from "./types.ts";
+import { STEWARD_CODE_TTL, mintStewardCode, type StewardCodeKv } from "../steward_code.ts";
+import type { PanelEnv, PanelStatus, PanelSteward, ReserveResult, StewardCodeResult } from "./types.ts";
 
 const CELL_RE = /^C-\d{3,5}$/;
 const WHO_RE = /^[\w .-]{1,40}$/;
-const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback", "/panel/api/steward-release"]);
+const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback", "/panel/api/steward-release", "/panel/api/steward-code"]);
+const CODE_RATE_MAX = 5; // codes per minute per repo
 
 /** The cell after the write, computed by the same logic as GET /panel/api/state. */
 export interface CellInfo {
@@ -168,6 +170,21 @@ export async function handlePanelAction(
   if (typeof body.repo !== "string" || !body.repo) return json(400, { error: "bad_repo" });
   const r = resolveRepo(env, body.repo);
   if ("error" in r) return json(400, { error: "bad_repo" });
+  if (path === "/panel/api/steward-code") {
+    // The admin gate above already ran: nothing below is reached without the right key. The code and the key are never logged or echoed.
+    const kv = env.OAUTH_KV as unknown as StewardCodeKv | undefined;
+    if (!kv) return json(503, { error: "kv_unavailable" });
+    try {
+      const rateKey = `stewardcode-rate:${r.repo}:${Math.floor(Date.now() / 60000)}`;
+      const used = Number.parseInt((await kv.get(rateKey)) ?? "0", 10) || 0;
+      if (used >= CODE_RATE_MAX) return json(429, { error: "rate_limited" }, { "retry-after": "60" });
+      await kv.put(rateKey, String(used + 1), { expirationTtl: 120 });
+      const code = await mintStewardCode(kv, r.repo);
+      return json(200, { ok: true, code, expires_in: STEWARD_CODE_TTL } satisfies StewardCodeResult);
+    } catch {
+      return json(503, { error: "kv_unavailable" });
+    }
+  }
   if (path === "/panel/api/steward-release") {
     try {
       const api = deps.api ?? createGitHubApi(env.GITHUB_TOKEN);
