@@ -77,7 +77,7 @@ All types are in `src/panel/types.ts` and must match the JSON below exactly.
 ### 3.3 Pinned claim and reservation
 
 - `next_cell` gains optional `cell_id` (and optional `who`, see Open points). Behavior: if that cell is ready (or reclaimable) and not reserved for someone else, claim/resume exactly it (same `CLAIMED`/`RESUME` reply format, so the C1 echo line still works). Otherwise reply `NOT_READY <id> <reason>` or `RESERVED <id> by <name>`. Never fall back to another cell.
-- Reservation: KV key `reserve:<repo>:<cell>` = `{who, at}`, TTL 600 s. `next_cell` without `cell_id` skips reserved cells (except for `who`'s own pinned call). The key is deleted on CLAIMED/RESUME of that cell.
+- Reservation: KV key `reserve:<repo>:<cell>` = `{who, at}`, TTL 600 s. `next_cell` without `cell_id` skips reserved cells (except for `who`'s own pinned call). The key is deleted on CLAIMED/RESUME of that cell and by an admin release or clear-feedback from the panel (including when the cell has no branch: the answer is then `{ok: true, result: "UNRESERVED <cell>", cell}`).
 - `POST /panel/api/reserve` `{repo, cell_id, who}` -> `{status: "reserved"|"not_ready"|"taken", detail}`.
 
 ### 3.4 Actions
