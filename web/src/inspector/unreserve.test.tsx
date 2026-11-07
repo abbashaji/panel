@@ -55,7 +55,7 @@ function makeCell(over: Partial<Record<string, unknown>> = {}): PanelCell {
 function Harness({ initial }: { initial: PanelCell }) {
   const [cell, setCell] = useState(initial);
   const [dialog, setDialog] = useState<{ action: AdminAction; id: string } | null>(null);
-  h.clearReservation = () => setCell((c) => ({ ...c, reservedBy: undefined }) as PanelCell);
+  h.clearReservation = () => setCell((c) => ({ ...c, reservedBy: null }) as PanelCell);
   return (
     <>
       <CellDetails cell={cell} repo="o/r" onAdmin={(a) => setDialog({ action: a, id: cell.id })} />
