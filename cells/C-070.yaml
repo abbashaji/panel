@@ -1,0 +1,28 @@
+id: C-070
+title: cell_help recognises failures that come from outside the cell
+type: normal
+priority: 7
+goal: |
+  E2E finding F2: a chat whose files were already correct got the class own_bug, was told to use apply_changes inside its paths and sat idle until a second failure; the real cause was the gate rejecting a dependency on a superseded cell, a fix only cell_fix replace (or the Steward) can give. In src/selfheal.ts cellHelp:
+  - New class stale_dependency: the problem text contains 'dependencies not merged yet' naming a cell id that is superseded (the cell's own after or inputs list a superseded cell whose superseders are merged, or not yet merged). Advice: call cell_fix kind 'replace' with the same goal and the after list rewritten to the superseders (show the exact corrected after list), then hand off. If the superseders are not merged yet, say so and say to wait for them instead of rework.
+  - New class outside_cell: the problem names a failing check, gate or CI message and the chat says its outputs exist (or all outputs of the cell are already on the branch and inside allowed_paths) so editing its own files cannot help. Advice: do not retry the same submit; if the message names a file outside allowed_paths use cell_fix blocker, if it names another cell or main use cell_fix replace or blocker as fits, otherwise escalate with cell_signal feedback AT ONCE (do not wait for a second failure) and say what was already tried.
+  - own_bug stays for failing tests in the cell's own files, but its advice also says: if the same failure repeats after one honest fix, move to outside_cell.
+  - The briefing keeps its size bound.
+  - Tests in a new test/selfheal_classify.test.ts: each class with a realistic problem text (including the exact gate message from the e2e run), advice contains the exact tool call, size bound, no secrets, old classes unchanged.
+inputs: []
+after: [C-050, C-059, C-061]
+provides:
+  - "cellHelp classes stale_dependency and outside_cell"
+read:
+  - src/selfheal.ts
+  - src/plan.ts
+allowed_paths:
+  - src/selfheal.ts
+  - test/selfheal_classify.test.ts
+outputs:
+  - src/selfheal.ts
+  - test/selfheal_classify.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Existing selfheal tests must stay green; only add classes and text.

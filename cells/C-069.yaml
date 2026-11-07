@@ -1,0 +1,29 @@
+id: C-069
+title: Admin release also cancels a reservation that has no branch yet
+type: normal
+priority: 6
+goal: |
+  E2E finding F3. src/panel/actions.ts clears reserve:<repo>:<cell> only when takeover answers RELEASED or RESUME. A cell that was reserved from the panel but never claimed has no branch, so release (with the admin key) answers 'nothing to release', the reservation stays for up to 10 minutes and the old name stays on the card.
+  - POST /panel/api/release and /panel/api/clear-feedback: after the admin check, if a reservation exists for that cell, delete it whatever takeover answered, call clearPanelCache and answer { ok: true, result: 'UNRESERVED <cell>', cell } when there was a reservation and the takeover result was not RELEASED or RESUME. If there is no reservation and nothing to release the answer is unchanged.
+  - The admin gate is unchanged (wrong key still gives 403 and deletes nothing).
+  - docs/panel-contracts.md 3.3: the reservation key is deleted on CLAIMED or RESUME of that cell and by an admin release or clear-feedback from the panel (including when the cell has no branch).
+  - Tests in test/panel_actions.test.ts: reserved cell without branch + release gives UNRESERVED and the next state has no reservedBy, wrong key leaves it, running cell release still RELEASED and clears, no reservation unchanged, KV failure does not fail the call.
+inputs: []
+after: [C-000, C-003, C-024, C-026, C-030, C-035, C-067]
+provides:
+  - "Admin release cancels a pending reservation"
+read:
+  - src/panel/actions.ts
+  - docs/panel-contracts.md
+allowed_paths:
+  - src/panel/actions.ts
+  - test/panel_actions.test.ts
+  - docs/panel-contracts.md
+outputs:
+  - src/panel/actions.ts
+  - test/panel_actions.test.ts
+  - docs/panel-contracts.md
+acceptance:
+  - cmd: "npm test"
+notes: |
+  Keep every existing answer field.

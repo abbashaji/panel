@@ -1,0 +1,31 @@
+id: C-071
+title: E2E smoke script runbook and sample cell corrections
+type: normal
+priority: 5
+goal: |
+  Fixes from the abbashaji/e2etest report (F3, F4, F5 and the unverified items).
+  - scripts/e2e-smoke.mjs: the reserve step needs a ready cell; when none is ready print SKIP (not FAIL) with the reason. The release check follows the contract after C-069: releasing a cell that was only reserved answers UNRESERVED and the next state has no reservedBy; releasing a running cell answers RELEASED and does the same. Add a steward check: GET state has steward.status in none, active, expired, released. Still never prints secrets.
+  - docs/e2e-runbook.md: say the panel label is 'Needs steward' (status id needs_human); the expected result for step 11 includes that after steward release the header shows 'Steward released' and the state field steward.status is 'released'; for step 8 add 'start three chats within one minute and check that three cards show Running at the same time (screenshot or note)'; for step 10 record the first line RESUME, the attempts counter and whether the old chat reports CONFLICT; add a step that checks the panel loads and shows the repo name, the Steward chip, the Run ready button and no replaced cells; add the line that the E-004 healing path should now go through cell_help (stale_dependency or outside_cell) and cell_fix replace without a human Steward, and that if a Steward was needed the owner writes that down as a finding.
+  - docs/e2e/E-003.yaml: remove the sentence in notes that gives the answer (the letter b) and the instruction that tells what to answer; the cell must stay deliberately unspecified. Put the expected answer only in docs/e2e-runbook.md under 'what to answer when the chat asks'.
+inputs: []
+after: [C-062, C-069]
+supersedes: [C-058]
+provides:
+  - "Corrected smoke script, runbook and sample cell"
+read:
+  - scripts/e2e-smoke.mjs
+  - docs/e2e-runbook.md
+  - docs/e2e/E-003.yaml
+allowed_paths:
+  - scripts/e2e-smoke.mjs
+  - docs/e2e-runbook.md
+  - docs/e2e/E-003.yaml
+outputs:
+  - scripts/e2e-smoke.mjs
+  - docs/e2e-runbook.md
+  - docs/e2e/E-003.yaml
+acceptance:
+  - cmd: "node --check scripts/e2e-smoke.mjs"
+  - cmd: "npm test"
+notes: |
+  Document what still cannot be verified without a real Windows PC.

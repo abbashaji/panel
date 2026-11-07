@@ -1,0 +1,25 @@
+id: C-072
+title: Panel offers Release on a cell that is only reserved
+type: normal
+priority: 5
+goal: |
+  Use the new answer UNRESERVED from C-069. In web/src/inspector/CellDetails.tsx a ready cell that has reservedBy shows a 'Cancel reservation' button (opens ReleaseDialog with the existing release action and the admin key like Release) and the holder line says 'Reserved by <name>'. After success the panel refreshes through refreshAfterAction so the name disappears at once. Tests in a new web/src/inspector/unreserve.test.tsx: button only for a ready cell with reservedBy, calls release once with the typed key, name gone after the answer, no button for a ready cell without reservation.
+inputs: []
+after: [C-024, C-032, C-045, C-054, C-069]
+supersedes: [C-040, C-042]
+provides:
+  - "Cancel reservation button"
+read:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/ReleaseDialog.tsx
+allowed_paths:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/unreserve.test.tsx
+outputs:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/inspector/unreserve.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Admin key stays in component state only.
