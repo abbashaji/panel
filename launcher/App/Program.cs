@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Windows.Forms;
 using BlueprintLauncher.Core;
 
@@ -8,15 +9,24 @@ namespace BlueprintLauncher.App;
 internal static class Program
 {
     private const string LastChoiceFile = "last-choice.txt";
+    private const string LogFile = "launcher.log";
+    private const int MaxLogBytes = 64 * 1024;
 
     [STAThread]
     private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
 
-        var parsed = ProtocolParser.Parse(args.Length == 1 ? args[0] : null);
+        var url = args.Length == 1 ? args[0] : null;
+        var parsed = ProtocolParser.Parse(url);
         if (!parsed.Ok)
         {
+            if (parsed.Kind == CommandKind.Sync || (url is not null && url.StartsWith("blueprint://sync", StringComparison.Ordinal)))
+            {
+                // A rejected sync is silent: one log line (no URL), no window.
+                LogRejectedSync(parsed.Reason);
+                return 3;
+            }
             MessageBox.Show(
                 "This link was rejected and nothing was launched.\r\n\r\nReason: " + parsed.Reason,
                 "Blueprint launcher", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -49,6 +59,32 @@ internal static class Program
             default:
                 Application.Run(new StartForm(parsed, records));
                 return 0;
+        }
+    }
+
+    /// <summary>Appends one line (time and reason, never the URL) to launcher.log; keeps the file under 64 KB by dropping the oldest half.</summary>
+    private static void LogRejectedSync(string? reason)
+    {
+        try
+        {
+            var dir = Path.Combine(LocalAppData, "BlueprintLauncher");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, LogFile);
+            var text = (reason ?? "unknown").Replace('\r', ' ').Replace('\n', ' ');
+            var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " sync rejected: " + text + Environment.NewLine;
+            File.AppendAllText(path, line);
+            if (new FileInfo(path).Length > MaxLogBytes)
+            {
+                var bytes = File.ReadAllBytes(path);
+                var start = bytes.Length / 2;
+                var nl = Array.IndexOf(bytes, (byte)'\n', start);
+                if (nl >= 0 && nl + 1 < bytes.Length) start = nl + 1;
+                File.WriteAllBytes(path, bytes[start..]);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Logging is best effort and must never show a window.
         }
     }
 
