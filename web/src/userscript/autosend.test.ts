@@ -202,3 +202,168 @@ describe('blueprint-autosend userscript', () => {
     expect((window as any).__bpAutoSend).toBeUndefined();
   });
 });
+
+describe('blueprint-autosend diagnostics', () => {
+  const PREFIX = '[blueprint-autosend]';
+  let info: any;
+  const lines = (): string[] => info.mock.calls.map((c: unknown[]) => String(c[0]));
+  const expectDecisions = (...d: string[]) => {
+    const l = lines();
+    expect(l).toHaveLength(d.length);
+    l.forEach((line, i) => {
+      expect(line.startsWith(PREFIX)).toBe(true);
+      expect(line.endsWith('decision=' + d[i])).toBe(true);
+    });
+  };
+
+  beforeEach(() => {
+    info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    info.mockRestore();
+    delete (window as any).GM_registerMenuCommand;
+    delete (globalThis as any).GM_registerMenuCommand;
+  });
+
+  it('no marker: one line, no banner', () => {
+    api = load();
+    setUrl(prompt(), null);
+    api.start();
+    expectDecisions('skipped: no marker');
+    expect(lines()[0]).toContain('marker=no');
+    expect(lines()[0]).toContain('allowed=1');
+    expect(document.getElementById('bp-autosend-banner')).toBeNull();
+  });
+
+  it('template mismatch: one line', () => {
+    api = load();
+    setUrl(STEWARD);
+    api.start();
+    expectDecisions('skipped: template');
+    expect(lines()[0]).toContain('marker=yes');
+    expect(lines()[0]).toContain('template=no match');
+  });
+
+  it('repo not allowed: one line without the repo', () => {
+    api = load();
+    setUrl(prompt('evil/repo'));
+    api.start();
+    expectDecisions('skipped: repo not allowed');
+    expect(lines()[0]).toContain('template=match');
+    expect(lines()[0]).not.toContain('evil');
+  });
+
+  it('empty allowlist: one line', () => {
+    api = load(null);
+    setUrl(prompt());
+    api.start();
+    expectDecisions('skipped: empty allowlist');
+    expect(lines()[0]).toContain('allowed=0');
+  });
+
+  it('tab done: one line on the second run', () => {
+    api = load();
+    buildDom(prompt());
+    setUrl(prompt());
+    api.start();
+    info.mockClear();
+    api.start();
+    expectDecisions('skipped: tab done');
+  });
+
+  it('rate limit: one line', () => {
+    api = load();
+    setUrl(prompt());
+    window.localStorage.setItem('bp_autosend_sends', JSON.stringify(Array(12).fill(Date.now())));
+    api.start();
+    expectDecisions('skipped: rate limit');
+  });
+
+  it('sending then sent: one line each', () => {
+    api = load();
+    const { click } = buildDom(prompt());
+    setUrl(prompt());
+    api.start();
+    expectDecisions('sending');
+    vi.advanceTimersByTime(4000);
+    expect(click).toHaveBeenCalledTimes(1);
+    expectDecisions('sending', 'sent');
+  });
+
+  it('timeout: one extra line', () => {
+    api = load();
+    buildDom('');
+    setUrl(prompt());
+    api.start();
+    vi.advanceTimersByTime(30001);
+    expectDecisions('sending', 'timeout');
+  });
+
+  it('cancelled: one extra line', () => {
+    api = load();
+    buildDom(prompt());
+    setUrl(prompt());
+    api.start();
+    vi.advanceTimersByTime(1000);
+    (document.querySelector('[data-bp-cancel]') as HTMLButtonElement).click();
+    expectDecisions('sending', 'cancelled');
+  });
+
+  it('no line contains the repo, the cell or the prompt text', () => {
+    api = load();
+    buildDom(prompt());
+    setUrl(prompt());
+    api.start();
+    vi.advanceTimersByTime(4000);
+    api.reset();
+    window.sessionStorage.clear();
+    setUrl(prompt('evil/repo'));
+    api.start();
+    expect(lines().length).toBeGreaterThan(2);
+    expect(info.mock.calls.every((c: unknown[]) => c.length === 1)).toBe(true);
+    for (const line of lines()) {
+      for (const bad of ['abbashaji', 'panel', 'evil', 'C-065', 'BLUEPRINT', 'Follow', 'reserved']) {
+        expect(line).not.toContain(bad);
+      }
+    }
+  });
+
+  it('status menu command is registered and shows a banner with decision and count', () => {
+    const reg = vi.fn();
+    (window as any).GM_registerMenuCommand = reg;
+    (globalThis as any).GM_registerMenuCommand = reg;
+    api = load();
+    const names = reg.mock.calls.map((c: unknown[]) => c[0]);
+    expect(names).toContain('Blueprint auto-send: show status');
+    expect(names).toContain('Blueprint auto-send: set allowed repos');
+    setUrl(prompt(), null);
+    api.start();
+    expect(document.getElementById('bp-autosend-banner')).toBeNull();
+    const call = reg.mock.calls.find((c: unknown[]) => c[0] === 'Blueprint auto-send: show status');
+    (call![1] as () => void)();
+    expect(bannerText()).toContain('skipped: no marker');
+    expect(bannerText()).toContain('Allowed repos: 1');
+    expect(bannerText()).not.toContain(REPO);
+  });
+
+  it('status banner keeps the Cancel button during the countdown', () => {
+    api = load();
+    buildDom(prompt());
+    setUrl(prompt());
+    api.start();
+    vi.advanceTimersByTime(1000);
+    api.showStatus();
+    expect(bannerText()).toContain('sending');
+    expect(document.querySelector('[data-bp-cancel]')).not.toBeNull();
+  });
+
+  it('header has no placeholder update URLs and matches the logged version', () => {
+    expect(src).not.toContain('PANEL_HOST');
+    expect(/^\/\/ @(updateURL|downloadURL)/m.test(src)).toBe(false);
+    const ver = /^\/\/ @version\s+(\S+)/m.exec(src)![1];
+    api = load();
+    setUrl(prompt(), null);
+    api.start();
+    expect(lines()[0]).toContain(' v' + ver + ' ');
+  });
+});

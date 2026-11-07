@@ -1,17 +1,17 @@
-// ADJUST ONCE: replace PANEL_HOST below with the host that serves the panel.
-// Both URLs use the path the panel serves: /panel/blueprint-autosend.user.js
+// No auto update on purpose: the header has no update or download URL, so no request
+// goes to an invalid host. To enable auto update, the owner adds @updateURL and
+// @downloadURL header lines pointing at the panel host and the path the panel serves:
+// /panel/blueprint-autosend.user.js
 // ==UserScript==
 // @name         Blueprint auto-send
 // @namespace    blueprint
-// @version      1.0.0
+// @version      1.1.0
 // @description  Clicks Send for a strictly matched Blueprint launcher prompt on claude.ai/new
 // @match        https://claude.ai/new*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @updateURL    https://PANEL_HOST/panel/blueprint-autosend.user.js
-// @downloadURL  https://PANEL_HOST/panel/blueprint-autosend.user.js
 // ==/UserScript==
 (function () {
   'use strict';
@@ -48,7 +48,31 @@
   var state = null;
   var memTab = false;
 
+  // ---- diagnostics: one console.info line per decision, never prompt, q or repo names ----
+  var VERSION = '1.1.0';
+  var LOG_PREFIX = '[blueprint-autosend]';
+  var lastDecision = 'not run yet';
+  var ctx = { marker: false, template: false, allowed: 0 };
+
   api.config = CONFIG;
+  api.version = VERSION;
+
+  api.begin = function (marker, template, allowed) {
+    ctx = { marker: !!marker, template: !!template, allowed: allowed | 0 };
+  };
+  api.decide = function (decision) {
+    lastDecision = decision;
+    try {
+      console.info(LOG_PREFIX + ' v' + VERSION
+        + ' marker=' + (ctx.marker ? 'yes' : 'no')
+        + ' template=' + (ctx.template ? 'match' : 'no match')
+        + ' allowed=' + ctx.allowed
+        + ' decision=' + decision);
+    } catch (e) { /* console optional */ }
+  };
+  api.statusText = function () {
+    return 'Blueprint auto-send status: ' + lastDecision + '. Allowed repos: ' + api.getAllowed().length + '.';
+  };
 
   api.normalize = function (s) {
     return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -228,6 +252,7 @@
     api.clearTimers();
     api.recordSend();
     btn.click();
+    api.decide('sent');
     api.banner('Blueprint sent ' + state.cell + '.', 'info');
   };
 
@@ -235,6 +260,7 @@
     if (!state || state.phase === 'done') return;
     api.clearTimers();
     state.phase = 'cancelled';
+    api.decide('cancelled');
     api.banner('Blueprint auto-send cancelled for this tab.', 'info');
   };
 
@@ -242,36 +268,47 @@
     if (!state || state.phase === 'done' || state.phase === 'cancelled') return;
     api.clearTimers();
     state.phase = 'timeout';
+    api.decide('timeout');
     api.banner('Blueprint auto-send: not sent, press Send yourself.', 'error');
   };
 
   // ---- entry: everything is captured once here ----
+  api.showStatus = function () {
+    return api.banner(api.statusText(), 'info', !!state && state.phase === 'countdown');
+  };
+
   api.start = function () {
     var params;
-    try { params = new URLSearchParams(window.location.search); } catch (e) { return { status: 'no-marker' }; }
+    try { params = new URLSearchParams(window.location.search); } catch (e) { api.begin(false, false, api.getAllowed().length); api.decide('skipped: no marker'); return { status: 'no-marker' }; }
     var q = params.get('q');
-    if (params.get('autosend') !== '1' || q === null || q === '') return { status: 'no-marker' };
-
-    var m = api.matchTemplate(q);
+    var marker = params.get('autosend') === '1';
+    var m = (q !== null && q !== '') ? api.matchTemplate(q) : null;
+    var allowed = api.getAllowed();
+    api.begin(marker, !!m, allowed.length);
+    if (!marker || q === null || q === '') { api.decide('skipped: no marker'); return { status: 'no-marker' }; }
     if (!m) {
       api.banner('Blueprint auto-send: not sent, the prompt does not match the launcher cell template.', 'error');
+      api.decide('skipped: template');
       return { status: 'bad-template' };
     }
-    var allowed = api.getAllowed();
     if (!allowed.length) {
       api.banner('Blueprint auto-send: not sent, set allowed repos first.', 'error');
+      api.decide('skipped: empty allowlist');
       return { status: 'no-allowlist' };
     }
     if (allowed.indexOf(m.repo.toLowerCase()) < 0) {
       api.banner('Blueprint auto-send: not sent, ' + m.repo + ' is not in the allowed repos.', 'error');
+      api.decide('skipped: repo not allowed');
       return { status: 'repo-not-allowed' };
     }
     if (api.tabDone()) {
       api.banner('Blueprint auto-send: already handled once in this tab.', 'error');
+      api.decide('skipped: tab done');
       return { status: 'once-per-tab' };
     }
     if (api.sendsInWindow() >= CONFIG.maxSends) {
       api.banner('Blueprint auto-send: not sent, rate limit reached (' + CONFIG.maxSends + ' per 10 minutes).', 'error');
+      api.decide('skipped: rate limit');
       return { status: 'rate-limited' };
     }
 
@@ -283,11 +320,13 @@
     state.poll = setInterval(api.tick, CONFIG.pollMs);
     state.timeout = setTimeout(api.onTimeout, CONFIG.timeoutMs);
     api.banner('Blueprint auto-send: waiting for the editor...', 'info');
+    api.decide('sending');
     return { status: 'waiting', cell: m.cell, repo: m.repo };
   };
 
   if (typeof GM_registerMenuCommand === 'function') {
     try { GM_registerMenuCommand('Blueprint auto-send: set allowed repos', api.promptAllowedRepos); } catch (e) { /* menu optional */ }
+    try { GM_registerMenuCommand('Blueprint auto-send: show status', api.showStatus); } catch (e) { /* menu optional */ }
   }
 
   if (window.__BP_TEST__) {
