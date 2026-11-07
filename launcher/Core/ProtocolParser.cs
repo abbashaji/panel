@@ -24,7 +24,8 @@ public sealed record ParseResult
 public static class ProtocolParser
 {
     public const int MaxUrlLength = 400;
-    private const int MaxMerged = 50;
+    public const int MaxSyncUrlLength = 2000;
+    private const int MaxMerged = 200;
     private const int MaxCells = 12;
     private const string Prefix = "blueprint://";
 
@@ -46,12 +47,19 @@ public static class ProtocolParser
     public static ParseResult Parse(string? url)
     {
         if (string.IsNullOrEmpty(url)) return ParseResult.Reject("empty url");
-        if (url.Length > MaxUrlLength) return ParseResult.Reject("url too long");
+        // Nothing is ever longer than the largest per-command limit; the exact limit is applied once the command is known.
+        if (url.Length > MaxSyncUrlLength) return ParseResult.Reject("url too long");
         foreach (var ch in url)
         {
             if (ch <= ' ' || ch >= (char)0x7F) return ParseResult.Reject("control, space or non-ASCII character");
         }
         if (!url.StartsWith(Prefix, StringComparison.Ordinal)) return ParseResult.Reject("bad scheme");
+
+        // Command name = text between the scheme and the first '?' or '/'. Only sync may use the long limit.
+        var nameEnd = url.IndexOfAny(new[] { '?', '/' }, Prefix.Length);
+        var name = nameEnd < 0 ? url.Substring(Prefix.Length) : url.Substring(Prefix.Length, nameEnd - Prefix.Length);
+        var limit = name == "sync" ? MaxSyncUrlLength : MaxUrlLength;
+        if (url.Length > limit) return ParseResult.Reject("url too long");
 
         var rest = url.Substring(Prefix.Length);
         if (rest.Contains('#')) return ParseResult.Reject("fragment not allowed");

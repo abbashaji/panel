@@ -399,4 +399,128 @@ public class ValidationTests
         Assert.False(ProtocolParser.Parse(padded + new string('0', ProtocolParser.MaxUrlLength - padded.Length + 1)).Ok);
         Assert.Equal(CommandKind.Start, ProtocolParser.Parse("blueprint://start?repo=a/b&cell=C-001&who=x").Kind);
     }
+
+    private static string SyncLink(int count, string idFormat = "000", string separator = ",")
+    {
+        var ids = Enumerable.Range(1, count).Select(i => "C-" + i.ToString(idFormat));
+        return "blueprint://sync?repo=abbashaji/panel&merged=" + string.Join(separator, ids);
+    }
+
+    [Fact]
+    public void SyncAccepts200IdsAndRejects201()
+    {
+        var ok = ProtocolParser.Parse(SyncLink(200));
+        Assert.True(ok.Ok, ok.Reason);
+        Assert.Equal(CommandKind.Sync, ok.Kind);
+        Assert.Equal(200, ok.Merged.Count);
+        var tooMany = ProtocolParser.Parse(SyncLink(201));
+        Assert.False(tooMany.Ok);
+        Assert.Contains("too many", tooMany.Reason);
+    }
+
+    [Fact]
+    public void SyncAccepts1500CharacterLink()
+    {
+        var url = SyncLink(182, "00000");
+        Assert.Equal(1500, url.Length);
+        var r = ProtocolParser.Parse(url);
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal(182, r.Merged.Count);
+        var slash = ProtocolParser.Parse(url.Replace("blueprint://sync?", "blueprint://sync/?"));
+        Assert.True(slash.Ok, slash.Reason);
+    }
+
+    [Fact]
+    public void SyncAcceptsEncodedCommas()
+    {
+        var enc = ProtocolParser.Parse(SyncLink(200, "000", "%2C"));
+        Assert.True(enc.Ok, enc.Reason);
+        Assert.Equal(200, enc.Merged.Count);
+        var mixed = ProtocolParser.Parse("blueprint://sync?repo=a/b&merged=C-001%2CC-002,C-003");
+        Assert.True(mixed.Ok, mixed.Reason);
+        Assert.Equal(new[] { "C-001", "C-002", "C-003" }, mixed.Merged);
+        var tooMany = ProtocolParser.Parse(SyncLink(201, "000", "%2C"));
+        Assert.False(tooMany.Ok);
+        Assert.Contains("too many", tooMany.Reason);
+    }
+
+    [Fact]
+    public void StartLinkOf401CharactersIsRejected()
+    {
+        var head = "blueprint://start?repo=a/b&cell=C-001&who=";
+        var r = ProtocolParser.Parse(head + new string('a', 401 - head.Length));
+        Assert.False(r.Ok);
+        Assert.Contains("long", r.Reason);
+        var slash = ProtocolParser.Parse("blueprint://start/?repo=a/b&cell=C-001&who=" + new string('a', 401 - head.Length - 1));
+        Assert.False(slash.Ok);
+        Assert.Contains("long", slash.Reason);
+    }
+
+    [Theory]
+    [InlineData("start")]
+    [InlineData("open")]
+    [InlineData("startmany")]
+    [InlineData("steward")]
+    public void NonSyncCommandsKeepTheLimitOf400(string command)
+    {
+        var head = $"blueprint://{command}?repo=a/b&cell=C-001&who=x&cells=C-001&pad=";
+        var at400 = ProtocolParser.Parse(head + new string('a', 400 - head.Length));
+        Assert.False(at400.Ok);
+        Assert.DoesNotContain("long", at400.Reason);
+        var at401 = ProtocolParser.Parse(head + new string('a', 401 - head.Length));
+        Assert.False(at401.Ok);
+        Assert.Contains("long", at401.Reason);
+        var at2001 = ProtocolParser.Parse(head + new string('a', 2001 - head.Length));
+        Assert.False(at2001.Ok);
+        Assert.Contains("long", at2001.Reason);
+    }
+
+    [Fact]
+    public void Every2001CharacterLinkIsRejectedOutright()
+    {
+        var head = "blueprint://sync?repo=a/b&merged=C-001&pad=";
+        var at2000 = ProtocolParser.Parse(head + new string('a', 2000 - head.Length));
+        Assert.False(at2000.Ok);
+        Assert.DoesNotContain("long", at2000.Reason);
+        var at2001 = ProtocolParser.Parse(head + new string('a', 2001 - head.Length));
+        Assert.False(at2001.Ok);
+        Assert.Contains("long", at2001.Reason);
+        Assert.Contains("long", ProtocolParser.Parse(new string('a', 2001)).Reason);
+    }
+
+    [Fact]
+    public void OnlyTheExactCommandSyncGetsTheLongLimit()
+    {
+        var url = SyncLink(182, "00000");
+        var other = ProtocolParser.Parse(url.Replace("blueprint://sync?", "blueprint://syncx?"));
+        Assert.False(other.Ok);
+        Assert.Contains("long", other.Reason);
+        var twoSlashes = ProtocolParser.Parse(url.Replace("blueprint://sync?", "blueprint://sync//?"));
+        Assert.False(twoSlashes.Ok);
+        var many = ProtocolParser.Parse(url.Replace("blueprint://sync?", "blueprint://startmany?"));
+        Assert.False(many.Ok);
+        Assert.Contains("long", many.Reason);
+    }
+
+    [Fact]
+    public void SyncKeepsEveryOtherRuleAtLargeSizes()
+    {
+        var good = SyncLink(200);
+        Assert.False(ProtocolParser.Parse(good + "&cell=C-001").Ok);
+        Assert.False(ProtocolParser.Parse(good + "&merged=C-001").Ok);
+        Assert.False(ProtocolParser.Parse(good + "#frag").Ok);
+        Assert.False(ProtocolParser.Parse(good + "\u00e9").Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace("C-100", "C-10x")).Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace("C-100,", ",")).Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace("merged=", "Merged=")).Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace("abbashaji/panel", "abbashaji")).Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace(",C-002,", "%252CC-002,")).Ok);
+        Assert.False(ProtocolParser.Parse(good.Replace("C-001", "C-001 ")).Ok);
+        var withDuplicates = ProtocolParser.Parse(good + ",C-001");
+        Assert.False(withDuplicates.Ok);
+        Assert.Contains("too many", withDuplicates.Reason);
+        var distinct = ProtocolParser.Parse(good.Replace("C-200", "C-001"));
+        Assert.True(distinct.Ok, distinct.Reason);
+        Assert.Equal(199, distinct.Merged.Count);
+    }
 }
