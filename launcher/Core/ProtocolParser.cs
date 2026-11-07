@@ -14,6 +14,8 @@ public sealed record ParseResult
     public string Repo { get; init; } = "";
     public string Cell { get; init; } = "";
     public string Who { get; init; } = "";
+    /// <summary>One-time Steward code; empty when the link carries none.</summary>
+    public string Code { get; init; } = "";
     public IReadOnlyList<string> Merged { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> Cells { get; init; } = Array.Empty<string>();
 
@@ -33,7 +35,7 @@ public static class ProtocolParser
     private static readonly string[] OpenKeys = { "repo", "cell" };
     private static readonly string[] SyncKeys = { "repo", "merged" };
     private static readonly string[] StartManyKeys = { "repo", "who", "cells" };
-    private static readonly string[] StewardKeys = { "repo", "who" };
+    private static readonly string[] StewardKeys = { "repo", "who", "code" };
 
     // ASCII-only on purpose (same meaning as a JavaScript \w).
     private static readonly Regex RepoRx = new(@"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\z", RegexOptions.CultureInvariant);
@@ -43,6 +45,9 @@ public static class ProtocolParser
     public static bool IsValidRepo(string? s) => s is not null && RepoRx.IsMatch(s);
     public static bool IsValidCell(string? s) => s is not null && CellRx.IsMatch(s);
     public static bool IsValidWho(string? s) => s is not null && WhoRx.IsMatch(s);
+
+    private static readonly Regex CodeRx = new(@"^[A-Za-z0-9_-]{16,64}\z", RegexOptions.CultureInvariant);
+    public static bool IsValidCode(string? s) => s is not null && CodeRx.IsMatch(s);
 
     public static ParseResult Parse(string? url)
     {
@@ -99,6 +104,8 @@ public static class ProtocolParser
         }
         foreach (var k in keys)
         {
+            // The Steward code is optional for compatibility with older links.
+            if (kind == CommandKind.Steward && k == "code") continue;
             if (!values.ContainsKey(k)) return ParseResult.Reject("missing key " + k);
         }
 
@@ -120,7 +127,13 @@ public static class ProtocolParser
         {
             var stewardWho = values["who"];
             if (!IsValidWho(stewardWho)) return ParseResult.Reject("invalid who");
-            return new ParseResult { Ok = true, Kind = kind, Repo = repo, Who = stewardWho };
+            var stewardCode = "";
+            if (values.TryGetValue("code", out var rawCode))
+            {
+                if (!IsValidCode(rawCode)) return ParseResult.Reject("invalid code");
+                stewardCode = rawCode;
+            }
+            return new ParseResult { Ok = true, Kind = kind, Repo = repo, Who = stewardWho, Code = stewardCode };
         }
 
         if (kind == CommandKind.StartMany)

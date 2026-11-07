@@ -60,13 +60,13 @@ internal sealed class StartForm : Form
         {
             Bounds = new Rectangle(Pad, 398, ContentWidth, 100),
             ReadOnly = true,
-            Text = (_steward ? PromptBuilder.BuildStewardPrompt(req.Repo) : PromptBuilder.BuildPrompt(req.Repo, req.Cell)).Replace("\r\n", "\n").Replace("\n", "\r\n"),
+            Text = (_steward ? StewardPromptShown(req) : PromptBuilder.BuildPrompt(req.Repo, req.Cell)).Replace("\r\n", "\n").Replace("\n", "\r\n"),
         };
         Controls.Add(promptBox);
 
         _footer = Labels.Create(
             _steward
-                ? "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. You type the admin key yourself in the chat; it never passes through the launcher."
+                ? StewardFooter(req)
                 : CellFooter(_settings.AutoSend),
             Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, _steward ? 36 : 56);
         Controls.Add(_footer);
@@ -91,6 +91,22 @@ internal sealed class StartForm : Form
         if (_steward) _confirm.Text = "Open Steward chat";
         LoadProfiles();
         _confirm.Click += (_, _) => Confirm();
+    }
+
+    /// <summary>Steward prompt for the review box; the code is shown masked (first 4 characters, then dots).</summary>
+    private static string StewardPromptShown(ParseResult req)
+    {
+        if (req.Code.Length == 0) return PromptBuilder.BuildStewardPrompt(req.Repo);
+        return PromptBuilder.BuildStewardPrompt(req.Repo, req.Code)
+            .Replace("code=" + req.Code, "code=" + PromptBuilder.MaskCode(req.Code));
+    }
+
+    private static string StewardFooter(ParseResult req)
+    {
+        const string common = "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. ";
+        return req.Code.Length > 0
+            ? common + "No admin key is needed: the one-time code expires in 10 minutes."
+            : common + "You type the admin key yourself in the chat; it never passes through the launcher.";
     }
 
     private static string CellFooter(bool autoSend)
@@ -175,7 +191,9 @@ internal sealed class StartForm : Form
         }
         try
         {
-            var url = _steward ? PromptBuilder.BuildStewardUrl(_req.Repo) : PromptBuilder.BuildUrl(_req.Repo, _req.Cell);
+            var url = _steward
+                ? (_req.Code.Length > 0 ? PromptBuilder.BuildStewardUrl(_req.Repo, _req.Code) : PromptBuilder.BuildStewardUrl(_req.Repo))
+                : PromptBuilder.BuildUrl(_req.Repo, _req.Cell);
             url = AutoSendOption.Apply(url, !_steward && _autoSend?.Checked == true, out var markError);
             var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
             if (!_steward) _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
