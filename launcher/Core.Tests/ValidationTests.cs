@@ -7,6 +7,53 @@ public class ValidationTests
     private const string Good = "blueprint://start?repo=abbashaji/panel&cell=C-008&who=Abbas";
 
     [Fact]
+    public void ParsesStewardWithCode()
+    {
+        var r = ProtocolParser.Parse("blueprint://steward?repo=abbashaji/panel&who=Abbas&code=AbCdEf0123456789_-xy");
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal(CommandKind.Steward, r.Kind);
+        Assert.Equal("AbCdEf0123456789_-xy", r.Code);
+        Assert.Equal("Abbas", r.Who);
+    }
+
+    [Fact]
+    public void StewardWithoutCodeHasEmptyCode()
+    {
+        var r = ProtocolParser.Parse("blueprint://steward?repo=a/b&who=Abbas");
+        Assert.True(r.Ok, r.Reason);
+        Assert.Equal("", r.Code);
+        Assert.Equal("", ProtocolParser.Parse(Good).Code);
+    }
+
+    [Theory]
+    [InlineData("AbCdEf0123456789", true)]
+    [InlineData("abcdefghijklmno", false)]
+    [InlineData("a_b-c_d-e_f-g_h-", true)]
+    [InlineData("abcdefghijklmnop!", false)]
+    [InlineData("abcdefghijklmnop qr", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ValidatesCodeShape(string? code, bool ok)
+    {
+        Assert.Equal(ok, ProtocolParser.IsValidCode(code));
+    }
+
+    [Fact]
+    public void CodeLengthBounds()
+    {
+        Assert.True(ProtocolParser.IsValidCode(new string('a', 16)));
+        Assert.True(ProtocolParser.IsValidCode(new string('a', 64)));
+        Assert.False(ProtocolParser.IsValidCode(new string('a', 65)));
+    }
+
+    [Fact]
+    public void CodeIsOnlyAcceptedForSteward()
+    {
+        Assert.False(ProtocolParser.Parse(Good + "&code=AbCdEf0123456789").Ok);
+        Assert.False(ProtocolParser.Parse("blueprint://open?repo=a/b&cell=C-001&code=AbCdEf0123456789").Ok);
+    }
+
+    [Fact]
     public void ParsesStart()
     {
         var r = ProtocolParser.Parse(Good);
