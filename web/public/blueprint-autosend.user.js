@@ -1,6 +1,6 @@
 // No auto update on purpose: the header has no update or download URL, so no request
-// goes to an invalid host. To enable auto update, the owner adds @updateURL and
-// @downloadURL header lines pointing at the panel host and the path the panel serves:
+// goes to an invalid host. To enable auto update, the owner adds the update and download
+// URL header lines, pointing at the panel host and the path the panel serves:
 // /panel/blueprint-autosend.user.js
 // ==UserScript==
 // @name         Blueprint auto-send
