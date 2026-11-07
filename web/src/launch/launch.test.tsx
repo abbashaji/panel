@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reserve } from "../core/api";
 import { usePanel } from "../core/store";
@@ -533,5 +533,142 @@ describe("startSteward", () => {
     expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
     expect(window.localStorage.getItem("bp_who")).toBe("Ann");
     expect(reserve).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncUrl limits", () => {
+  const ids = Array.from({ length: 120 }, (_, i) => `C-${String(i + 1).padStart(3, "0")}`);
+  const encoded = (u: string) => u.split(",").join("%2C");
+
+  it("keeps at most 30 newest ids and passes the length rule, also with %2C", () => {
+    const url = syncUrl(REPO, ids);
+    const list = url.split("merged=")[1]!.split(",");
+    expect(list.length).toBeLessThanOrEqual(30);
+    expect(list[0]).toBe("C-120");
+    expect(url.length).toBeLessThanOrEqual(330);
+    expect(encoded(url).length).toBeLessThanOrEqual(330);
+  });
+
+  it("keeps fewer ids when the repo name is long and still throws when none fits", () => {
+    const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
+    const url = syncUrl(repo, ids);
+    expect(url.split("merged=")[1]!.split(",").length).toBeGreaterThan(0);
+    expect(encoded(url).length).toBeLessThanOrEqual(330);
+    expect(() => syncUrl(REPO, [])).toThrow();
+  });
+});
+
+describe("LaunchProvider sync and start links", () => {
+  const toast = vi.fn();
+  let registered: {
+    start?: (id: string) => void;
+    startMany?: (ids: string[]) => void;
+    open?: (id: string) => void;
+    sync?: (ids: string[]) => void;
+  } = {};
+  const panel = {
+    repo: REPO,
+    state: {
+      cells: [
+        { id: "C-001", status: "done", reservedBy: null },
+        { id: "C-010", status: "ready", reservedBy: null },
+        { id: "C-011", status: "running", reservedBy: "Bob" },
+      ],
+    },
+    toast,
+    registerLauncher: (part: typeof registered) => {
+      registered = part;
+      return () => {};
+    },
+  };
+  let go: ReturnType<typeof vi.spyOn>;
+  let silent: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.localStorage.clear();
+    window.localStorage.setItem("bp_who", "Ann");
+    toast.mockReset();
+    registered = {};
+    vi.mocked(usePanel).mockReturnValue(panel as never);
+    vi.mocked(reserve).mockReset();
+    go = vi.spyOn(transport, "go").mockImplementation(() => {});
+    silent = vi.spyOn(transport, "silent").mockImplementation(() => {});
+    vi.spyOn(transport, "watch").mockImplementation(() => {});
+    render(
+      <LaunchProvider>
+        <div>child</div>
+      </LaunchProvider>,
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("sends the merged set once on mount and remembers its signature per repo", () => {
+    expect(silent).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(`bp_sync_sig_${REPO}`)).toBe("C-001");
+  });
+
+  it("startMany fires exactly one go and no silent link, also in the seconds after", async () => {
+    silent.mockClear();
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    await act(async () => {
+      registered.startMany!(["C-010"]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(silent).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(4000);
+    expect(silent).not.toHaveBeenCalled();
+  });
+
+  it("start sends no silent link before the confirm click", async () => {
+    silent.mockClear();
+    vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
+    await act(async () => {
+      registered.start!("C-010");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(silent).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Open claude.ai" }));
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(silent).not.toHaveBeenCalled();
+  });
+
+  it("an unchanged merged set sends nothing", () => {
+    vi.advanceTimersByTime(10000);
+    registered.sync!(["C-001"]);
+    registered.sync!(["C-001", "C-001"]);
+    vi.advanceTimersByTime(10000);
+    expect(silent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a changed merged set sends once", () => {
+    vi.advanceTimersByTime(3000);
+    registered.sync!(["C-001", "C-002"]);
+    expect(silent).toHaveBeenCalledTimes(2);
+    expect(silent).toHaveBeenLastCalledWith("blueprint://sync?repo=abbashaji%2Fpanel&merged=C-002,C-001");
+    registered.sync!(["C-002", "C-001"]);
+    vi.advanceTimersByTime(10000);
+    expect(silent).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem(`bp_sync_sig_${REPO}`)).toBe("C-001,C-002");
+  });
+
+  it("a sync right after a go is delayed until 5 seconds have passed", () => {
+    vi.advanceTimersByTime(3000);
+    registered.open!("C-011");
+    expect(go).toHaveBeenCalledTimes(1);
+    registered.sync!(["C-001", "C-002"]);
+    expect(silent).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(4999);
+    expect(silent).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(silent).toHaveBeenCalledTimes(2);
   });
 });
