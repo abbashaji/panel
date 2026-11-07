@@ -398,8 +398,8 @@ export const WORKING_RULES = [
   "2. You are not a cell: never merge, never open a PR for yourself, never edit cells/*.yaml in place (cells are immutable). Fix problems through a note, takeover, a superseding cell (publish_plan) or a fix on the branch (apply_changes).",
   "3. Never write a note on a cell whose chat is alive (its lease is running): a note moves the branch and would fence its owner out.",
   "4. Keep every note short and concrete: what failed and what to do differently (at most 2000 characters).",
-  "5. Never print, store or repeat any secret (tokens, keys).",
-  "6. When the list is empty, say so, and call steward_next again in 45 seconds (at most 8 times in a row), then stop.",
+  "5. Never print, store or repeat any secret (tokens, keys, codes). You have no admin key and never ask for one: pass steward_session (from steward_next) to steward_note, steward_release, takeover and publish_plan.",
+  "6. ONE SHOT: work through the problems of this briefing from the first to the last, then call steward_release and stop. When the list is empty, answer 'STEWARD_IDLE: nothing to do' and call steward_release at once. Do not call steward_next again unless you need a fresh briefing after publishing a plan.",
 ].join("\n");
 
 /** The text a chat gets first when it takes the Steward role. Bounded, and redacted at the end. */

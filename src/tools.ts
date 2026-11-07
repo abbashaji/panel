@@ -14,6 +14,7 @@ import { cellClear, cellHelp, cellNote, cellSync, type HealOptions } from "./sel
 import { cellFix } from "./selfheal_fix.ts";
 import { claimSteward, gatherBriefing, leaseMinutesOf, noteCell, redact, releaseSteward } from "./steward.ts";
 import type { ClaimOptions, ReserveKv } from "./claim.ts";
+import { authorizeSteward, consumeStewardCode, type StewardCodeKv } from "./steward_code.ts";
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -78,8 +79,8 @@ export function toolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: A
     preflight: run((api, r, a) => engine.preflight(api, r, opts, a.cell_id)),
     ci_result: run((api, r, a) => engine.ciResult(api, r, opts, a)),
     init_blueprint: run((api, r, a) => engine.initBlueprint(api, r, opts, a)),
-    publish_plan: run(async (api, r, a) => (await engine.checkAdmin(env.ADMIN_TOKEN, a.admin_key)) ?? engine.publishPlan(api, r, opts, a)),
-    takeover: run(async (api, r, a) => (await engine.checkAdmin(env.ADMIN_TOKEN, a.admin_key)) ?? engine.takeoverCell(api, r, opts, a.cell_id, !!a.force, { handoff: !!a.handoff, clear_feedback: !!a.clear_feedback })),
+    publish_plan: run(async (api, r, a) => (await authorizeSteward(env, api, r, { admin_key: a.admin_key, steward_session: sessionOf(a.steward_session) }, opts)) ?? engine.publishPlan(api, r, opts, a)),
+    takeover: run(async (api, r, a) => (await authorizeSteward(env, api, r, { admin_key: a.admin_key, steward_session: sessionOf(a.steward_session) }, opts)) ?? engine.takeoverCell(api, r, opts, a.cell_id, !!a.force, { handoff: !!a.handoff, clear_feedback: !!a.clear_feedback })),
     cell_signal: run((api, r, a) => cellSignal(api, r, opts, a)),
   };
   return withWarning(env, raw);
@@ -91,23 +92,33 @@ const sessionOf = (s: unknown): string | undefined => (typeof s === "string" && 
 const PROBLEM_LINE = /^\d+\. (C-\d+) /gm;
 
 /**
- * The Steward tools: steward_next, steward_note, steward_release. All three need the owner's admin_key (checked first, in
- * constant time, fails closed without ADMIN_TOKEN) and no answer ever contains a secret. Kept apart from toolHandlers, whose
+ * The Steward tools: steward_next, steward_note, steward_release. The Steward chat has no admin key: steward_next starts with a
+ * one-time code (steward_code.ts) and later calls pass steward_session; the owner's admin_key still works (checked in constant
+ * time, fails closed without ADMIN_TOKEN). All go through authorizeSteward and no answer ever contains a secret. Kept apart from toolHandlers, whose
  * tool list (the 11 cell tools) is asserted exactly by test/tools.test.ts; buildServer registers both sets.
  */
 export function stewardToolHandlers(env: Env, opts: engine.EngineOptions, apiFactory: ApiFactory = createGitHubApi): Record<string, (args: any) => Promise<string>> {
   const run = makeRun(env, apiFactory);
   const secretsOf = (a: any): string[] =>
-    [env.ADMIN_TOKEN, env.GITHUB_TOKEN, env.MCP_AUTH_TOKEN, env.EXT_TOKEN, a?.admin_key].filter((s): s is string => typeof s === "string" && s.length > 0);
+    [env.ADMIN_TOKEN, env.GITHUB_TOKEN, env.MCP_AUTH_TOKEN, env.EXT_TOKEN, a?.admin_key, a?.code].filter((s): s is string => typeof s === "string" && s.length > 0);
   const sopts = { mainBranch: opts.mainBranch, now: opts.now, uuid: opts.uuid };
   const guard = (fn: (a: any) => Promise<string>) => async (a: any): Promise<string> => redact(await fn(a), secretsOf(a));
-  const admin = (a: any) => engine.checkAdmin(env.ADMIN_TOKEN, a?.admin_key);
+  const auth = (api: GitHubApi, r: string, a: any) => authorizeSteward(env, api, r, { admin_key: a?.admin_key, steward_session: sessionOf(a?.steward_session) }, sopts);
 
   const raw = {
     steward_next: guard(run(async (api, r, a) => {
-      const denied = await admin(a);
-      if (denied) return denied;
-      const claim = await claimSteward(api, r, typeof a.who === "string" ? a.who : "steward", sessionOf(a.session), sopts);
+      let session = sessionOf(a.steward_session ?? a.session);
+      if (typeof a.code === "string" && a.code) {
+        // First call: a one-time code instead of the admin key. It is consumed before anything else and works once.
+        const kv = env.OAUTH_KV as unknown as StewardCodeKv | undefined;
+        if (!kv) return "STEWARD_CODE_UNAVAILABLE: this connector has no code store; ask the owner.";
+        if (!(await consumeStewardCode(kv, r, a.code))) return "STEWARD_CODE_INVALID: the code is unknown, used or expired. Ask the owner for a new one-time code.";
+        session = undefined;
+      } else {
+        const denied = await auth(api, r, a);
+        if (denied) return denied;
+      }
+      const claim = await claimSteward(api, r, typeof a.who === "string" ? a.who : "steward", session, sopts);
       if (claim.status === "STEWARD_BUSY" || claim.status === "STEWARD_FAILED") return claim.text;
       const lm = await leaseMinutesOf(api, r, opts.mainBranch);
       const head = claim.status === "CREATED" ? "STEWARD_STARTED" : claim.status === "ADOPTED" ? "STEWARD_RESUMED" : "STEWARD_REFRESHED";
@@ -138,21 +149,22 @@ export function stewardToolHandlers(env: Env, opts: engine.EngineOptions, apiFac
       }
       const lines = [
         `${head} session=${claim.session} repo=${r} (lease ${lm} min, renewed by every steward call)`,
-        `Pass session=${claim.session} on every later steward call (steward_next, steward_note, steward_release).`,
+        `Pass steward_session=${claim.session} on every later call (steward_note, steward_release, takeover, publish_plan, steward_next). You have no admin key and never ask for one.`,
+        "ONE SHOT: work through the problems below from the first to the last, then call steward_release and stop.",
       ];
       if (changes) lines.push(changes);
       return [...lines, "", briefing].join("\n");
     })),
     steward_note: guard(run(async (api, r, a) => {
-      const denied = await admin(a);
+      const denied = await auth(api, r, a);
       if (denied) return denied;
       if (typeof a.cell_id !== "string" || typeof a.note !== "string") return "BAD_ARGS: steward_note needs cell_id and note";
       return noteCell(api, r, a.cell_id, redact(a.note, secretsOf(a)));
     })),
     steward_release: guard(run(async (api, r, a) => {
-      const denied = await admin(a);
+      const denied = await auth(api, r, a);
       if (denied) return denied;
-      const session = sessionOf(a.session);
+      const session = sessionOf(a.steward_session ?? a.session);
       if (!session) return "NOT_STEWARD: pass the session you got from steward_next";
       return (await releaseSteward(api, r, session, !!a.handoff, sopts)).text;
     })),
@@ -282,13 +294,13 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.init_blueprint(a)));
 
   server.registerTool("publish_plan", {
-    description: "OWNER or STEWARD ONLY (needs admin_key): add NEW cells (cells/C-NNN.yaml) to main, e.g. a superseding cell. Validated as a whole; existing cells are never changed.",
-    inputSchema: { repo, admin_key: z.string().optional(), cells: z.array(z.object({ id: z.string(), yaml: z.string() })), message: z.string().optional() },
+    description: "OWNER or STEWARD ONLY (admin_key for the owner, steward_session for the Steward; the Steward chat has no admin key and never asks for one): add NEW cells (cells/C-NNN.yaml) to main, e.g. a superseding cell. Validated as a whole; existing cells are never changed.",
+    inputSchema: { repo, admin_key: z.string().optional(), steward_session: z.string().optional(), cells: z.array(z.object({ id: z.string(), yaml: z.string() })), message: z.string().optional() },
   }, async (a) => text(await h.publish_plan(a)));
 
   server.registerTool("takeover", {
-    description: "OWNER or STEWARD ONLY (needs admin_key): take over a running cell whose chat died (force, handoff, clear_feedback). Cell agents never call this; expired cells come back through next_cell.",
-    inputSchema: { repo, admin_key: z.string().optional(), cell_id: z.string(), force: z.boolean().optional(), handoff: z.boolean().optional(), clear_feedback: z.boolean().optional() },
+    description: "OWNER or STEWARD ONLY (admin_key for the owner, steward_session for the Steward; the Steward chat has no admin key and never asks for one): take over a running cell whose chat died (force, handoff, clear_feedback). Cell agents never call this; expired cells come back through next_cell.",
+    inputSchema: { repo, admin_key: z.string().optional(), steward_session: z.string().optional(), cell_id: z.string(), force: z.boolean().optional(), handoff: z.boolean().optional(), clear_feedback: z.boolean().optional() },
   }, async (a) => text(await h.takeover(a)));
 
   server.registerTool("cell_signal", {
@@ -297,18 +309,18 @@ export function buildServer(env: Env, apiFactory: ApiFactory = createGitHubApi):
   }, async (a) => text(await h.cell_signal(a)));
 
   server.registerTool("steward_next", {
-    description: "STEWARD ONLY (needs admin_key): the first call of a chat the owner told 'you are the Steward' (every other chat starts with next_cell). First call returns STEWARD_STARTED with a session to pass on every later call, plus the briefing; later calls with the session refresh the lease and return the new briefing and what changed; a dead Steward is resumed (STEWARD_RESUMED); a live one gives STEWARD_BUSY.",
-    inputSchema: { repo, admin_key: z.string().optional(), who: z.string().optional(), session: z.string().optional() },
+    description: "STEWARD ONLY: the first call of a chat the owner told 'you are the Steward' (every other chat starts with next_cell). The Steward chat has no admin key and never asks for one: pass the one-time code the owner gave you as code (it works once, for 10 minutes). It returns STEWARD_STARTED with a session (pass it as steward_session on every later call) plus the briefing. ONE SHOT: work through the briefing from the first problem to the last, call steward_release and stop; call steward_next again (with steward_session) only for a fresh briefing after publishing a plan. A dead Steward is resumed (STEWARD_RESUMED); a live one gives STEWARD_BUSY.",
+    inputSchema: { repo, code: z.string().optional().describe("one-time code of the owner, first call only"), steward_session: z.string().optional(), admin_key: z.string().optional(), who: z.string().optional(), session: z.string().optional() },
   }, async (a) => text(await h.steward_next(a)));
 
   server.registerTool("steward_note", {
-    description: "STEWARD ONLY (needs admin_key): leave a short note on a cell that has a branch; the next chat that resumes it sees the note first. Only for dead, released or feedback cells, never a live one.",
-    inputSchema: { repo, admin_key: z.string().optional(), cell_id: z.string(), note: z.string() },
+    description: "STEWARD ONLY (pass steward_session; the Steward chat has no admin key and never asks for one): leave a short note on a cell that has a branch; the next chat that resumes it sees the note first. Only for dead, released or feedback cells, never a live one.",
+    inputSchema: { repo, steward_session: z.string().optional(), admin_key: z.string().optional(), cell_id: z.string(), note: z.string() },
   }, async (a) => text(await h.steward_note(a)));
 
   server.registerTool("steward_release", {
-    description: "STEWARD ONLY (needs admin_key): give up the Steward role (handoff: true when a fresh chat should take over). Needs the session of steward_next.",
-    inputSchema: { repo, admin_key: z.string().optional(), session: z.string(), handoff: z.boolean().optional() },
+    description: "STEWARD ONLY (pass steward_session; the Steward chat has no admin key and never asks for one): give up the Steward role (handoff: true when a fresh chat should take over). Call it when the briefing is worked through or empty. Needs the session of steward_next.",
+    inputSchema: { repo, steward_session: z.string().optional(), admin_key: z.string().optional(), session: z.string().optional(), handoff: z.boolean().optional() },
   }, async (a) => text(await h.steward_release(a)));
 
   const cellId = z.string();
