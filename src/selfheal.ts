@@ -19,7 +19,7 @@ const SCAN_PAGES = 5;
 export const HEAL_TOOLS = { note: "cell_note", sync: "cell_sync", clear: "cell_clear" } as const;
 
 export type HealKind = "note" | "sync" | "clear";
-export type ProblemClass = "stale_branch" | "spec_gap" | "scope_violation" | "broken_main" | "own_bug" | "unknown";
+export type ProblemClass = "stale_branch" | "spec_gap" | "scope_violation" | "broken_main" | "own_bug" | "stale_dependency" | "outside_cell" | "unknown";
 
 export interface HealOptions extends EngineOptions {
   /** values that must never appear in an answer or a note (env values) */
@@ -135,7 +135,7 @@ export function withAmendments(yaml: string, list: Amendment[]): string {
 }
 
 // ---------------------------------------------------------------- authority
-interface Ctx {
+export interface Ctx {
   id: string;
   snap: Snapshot;
   plan: Loaded;
@@ -200,11 +200,32 @@ export interface Facts {
   ownMention: boolean;
   mainRed: boolean;
   missingContract: boolean;
+  /** ids of the cell's own unmerged dependencies that other cells supersede */
+  staleDeps?: string[];
+  /** the chat says its outputs already exist (also detected from the problem text) */
+  outputsDone?: boolean;
 }
 
-/** stale_branch, spec_gap, scope_violation, broken_main, own_bug or unknown. First match wins, in this order. */
+const STALE_DEP_RE = /dependenc(?:y|ies)\s+not\s+merged\s+yet/i;
+const CELL_ID_RE = /\bC-\d{3,}\b/gi;
+const GATE_RE = /\b(?:gate|ci|checks?|preflight|submit_cell|submit|workflow|pipeline|rejected|rejects?|refus(?:ed|es))\b/i;
+const OUTPUTS_DONE_RE = /\b(?:outputs?|files?)\b[^.]{0,60}?\b(?:exists?|(?:are|were|is) (?:(?:all|already|now) )*(?:there|present|correct|done|committed|in place|on the branch))\b|\balready (?:correct|committed|on the branch)\b/i;
+
+/** Does the problem name one of the cell's own superseded dependencies (a cell id from staleDeps)? */
+function namesStaleDep(problem: string, stale: string[] | undefined): boolean {
+  if (!stale || stale.length === 0) return false;
+  return [...problem.matchAll(CELL_ID_RE)].some((m) => stale.includes(m[0].toUpperCase()));
+}
+
+/**
+ * stale_dependency, outside_cell, scope_violation, broken_main, spec_gap, stale_branch, own_bug or unknown. First match wins, in this order.
+ * stale_dependency: the gate says "dependencies not merged yet" and names a superseded dependency of the cell (only cell_fix replace helps).
+ * outside_cell: a gate/CI/check message while the chat says its outputs already exist (editing its own files cannot help).
+ */
 export function classifyProblem(problem: string, f: Facts): ProblemClass {
   const t = problem.toLowerCase();
+  if (STALE_DEP_RE.test(t) && namesStaleDep(problem, f.staleDeps)) return "stale_dependency";
+  if (GATE_RE.test(t) && (f.outputsDone || OUTPUTS_DONE_RE.test(t))) return "outside_cell";
   if (f.outside.length > 0 || SCOPE_RE.test(t)) return "scope_violation";
   if (f.mainRed && FAIL_RE.test(t) && !f.ownMention) return "broken_main";
   if ((f.missingContract && !f.ownMention) || SPEC_RE.test(t)) return "spec_gap";
@@ -241,7 +262,14 @@ export function pathAllowed(p: string, patterns: string[]): boolean {
 }
 
 // ---------------------------------------------------------------- evidence
-interface Evidence {
+export interface StaleDep {
+  id: string;
+  superseders: string[];
+  /** superseders that are not merged yet */
+  pending: string[];
+}
+
+export interface Evidence {
   behind: number;
   ahead: number;
   mainRed: string | null;
@@ -250,9 +278,43 @@ interface Evidence {
   missingContract: string[];
   unmerged: string[];
   dependents: string[];
+  staleDeps: StaleDep[];
+  correctedAfter: string[];
 }
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/**
+ * Pure: the cell's unmerged hard dependencies (after, implementation inputs) that another cell supersedes, and the cell's after list
+ * rewritten to the superseders (other entries kept, no duplicates).
+ */
+export function staleDepsOf(cells: Record<string, any>, id: string, merged: { has(x: string): boolean }): { staleDeps: StaleDep[]; correctedAfter: string[] } {
+  const by: Record<string, string[]> = {};
+  for (const [k, cc] of Object.entries(cells)) for (const x of strs(cc?.supersedes)) if (k !== id && k !== x) (by[x] ||= []).push(k);
+  const c = cells[id] ?? {};
+  const inputs: any[] = Array.isArray(c.inputs) ? c.inputs : [];
+  const after = strs(c.after);
+  const hard = [...new Set([...after, ...inputs.filter((i) => i && i.kind === "implementation").map((i) => String(i.from ?? ""))])];
+  const staleDeps: StaleDep[] = hard
+    .filter((d) => d !== id && d in cells && !merged.has(d) && (by[d]?.length ?? 0) > 0)
+    .sort()
+    .map((d) => {
+      const sup = [...by[d]].sort();
+      return { id: d, superseders: sup, pending: sup.filter((s) => !merged.has(s)) };
+    });
+  const stale = new Map(staleDeps.map((s) => [s.id, s] as const));
+  const correctedAfter: string[] = [];
+  const push = (x: string): void => {
+    if (x !== id && !correctedAfter.includes(x)) correctedAfter.push(x);
+  };
+  for (const a of after) {
+    const s = stale.get(a);
+    if (s) s.superseders.forEach(push);
+    else push(a);
+  }
+  for (const s of staleDeps) s.superseders.forEach(push);
+  return { staleDeps, correctedAfter };
+}
 
 /** Title of the newest failed gate run that is not a cell run (a run of main), or null. */
 async function redMain(api: GitHubApi, repo: string, opts: HealOptions): Promise<string | null> {
@@ -297,7 +359,7 @@ async function gather(api: GitHubApi, repo: string, opts: HealOptions, ctx: Ctx,
     .sort()
     .map(title);
 
-  return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents };
+  return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents, ...staleDepsOf(plan.cells, id, merged) };
 }
 
 // ---------------------------------------------------------------- help
@@ -307,12 +369,18 @@ function escalateText(repo: string, ctx: Ctx, heals: Heal[]): string {
 }
 
 /** The allowed actions for a class, each with its exact tool call. */
-function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, pending: boolean): string[] {
+function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, pending: boolean, ev?: Evidence): string[] {
   const sync = call(HEAL_TOOLS.sync, repo, id, base);
   const note = call(HEAL_TOOLS.note, repo, id, base, 'text="<decision or assumption, max 2000 chars>"');
   const fb = call("cell_signal", repo, id, base, 'kind="feedback", text="<what, why, proposed fix>"');
   const pre = `preflight(repo=${q(repo)}, cell_id=${q(id)})`;
   const fix = "apply_changes(repo, cell_id, base, message, next, ops) with paths inside allowed_paths only";
+  const sd = ev?.staleDeps ?? [];
+  const pendingSup = [...new Set(sd.flatMap((s) => s.pending))];
+  const names = sd.length ? sd.map((s) => `${s.id} (superseded by ${s.superseders.join(", ")})`).join("; ") : "a superseded cell (see the problem)";
+  const replace = call("cell_fix", repo, id, base, `kind="replace", cells=[{same title, goal, inputs, provides, read, allowed_paths, outputs, acceptance and notes as now; "after": ${JSON.stringify(ev?.correctedAfter ?? [])}}]`);
+  const blocker = call("cell_fix", repo, id, base, 'kind="blocker", cells=[{a small cell that owns the file outside allowed_paths or the missing change}]');
+  const release = call("cell_signal", repo, id, base, 'kind="release", next="replacement published; claim it with next_cell"');
   const by: Record<ProblemClass, string[]> = {
     stale_branch: [
       `${sync}: merges main into your branch (never changes main; one heal; free when already up to date). Continue with the base it returns.`,
@@ -336,6 +404,20 @@ function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, p
     own_bug: [
       `fix it with ${fix}, many files per call, then ${pre}.`,
       `if you learned something a later chat needs: ${note} (one heal). Same failure twice: ${fb}.`,
+      `if the same failure repeats after one honest fix, stop editing: it is outside_cell, so file ${fb} at once, naming the failing check and what you tried.`,
+    ],
+    stale_dependency: [
+      `the gate rejects a dependency on superseded cell(s) ${names}; your files are not the problem and apply_changes cannot fix it. Publish the replacement: ${replace}`,
+      pendingSup.length
+        ? `the superseder(s) ${pendingSup.join(", ")} are not merged yet: do not rework your files. Wait for them to merge; the replacement only becomes ready after them.`
+        : "the superseders are merged, so the corrected after list above is final: do not rework your files.",
+      `then hand off (use the base the cell_fix answer returns): ${release} and stop. Never retry the same submit_cell.`,
+    ],
+    outside_cell: [
+      "do not retry the same submit_cell: your outputs already exist, so editing your own files cannot change this message.",
+      `if the message names a file outside allowed_paths: ${blocker}`,
+      `if it names another cell or main (red, behind, unmerged): ${replace.replace(/cells=\[\{.*$/, "cells=[{this cell with the corrected after/inputs}])")} or ${blocker.replace(/cells=\[\{.*$/, "cells=[{the missing work}])")} as fits; main only behind: ${sync}.`,
+      `anything else, or unsure: ${fb} AT ONCE (do not wait for a second failure), saying what you already tried (outputs on the branch, submit/preflight result, the exact message).`,
     ],
     unknown: [
       `if the branch is behind main: ${sync}; then ${pre} to see the real failure.`,
@@ -347,7 +429,7 @@ function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, p
   return out;
 }
 
-function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev: Evidence, left: number, amendments: Amendment[]): string {
+export function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev: Evidence, left: number, amendments: Amendment[]): string {
   const id = ctx.id;
   const c = ctx.plan.cells[id] as unknown as Record<string, any>;
   const base = short(ctx.branch.oid);
@@ -359,7 +441,8 @@ function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev
   L.push(`PROBLEM (as you told me): ${cap(problem || "(none given)", 250)}`);
   L.push(`BUDGET: ${left} of ${MAX_HEALS} heals left. ${HEAL_TOOLS.note}, ${HEAL_TOOLS.sync} (when it merges) and ${HEAL_TOOLS.clear} cost one each; up_to_date, CONFLICT and this briefing are free. At 0 the answer is ESCALATE: file cell_signal feedback.`);
   L.push("ALLOWED ACTIONS (nothing else; every call needs your current base):");
-  actionsFor(cls, repo, id, base, pending).forEach((a, k) => L.push(`${k + 1}. ${cap(a, 400)}`));
+  const lim = cls === "stale_dependency" || cls === "outside_cell" ? 900 : 400;
+  actionsFor(cls, repo, id, base, pending, ev).forEach((a, k) => L.push(`${k + 1}. ${cap(a, lim)}`));
 
   L.push("WHY IT MAY BE BLOCKED:");
   const ev1: string[] = [];
@@ -367,6 +450,7 @@ function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemClass, ev
   if (ev.mainRed) ev1.push(`main CI is red: newest main run "${ev.mainRed}" failed`);
   if (ev.outside.length) ev1.push(`the problem mentions files outside allowed_paths: ${list(ev.outside, 6, 160)}`);
   if (ev.missingContract.length) ev1.push(`no contract text for the input(s) from: ${list(ev.missingContract, 6, 120)}`);
+  if (ev.staleDeps.length) ev1.push(`a dependency is superseded: ${list(ev.staleDeps.map((s) => `${s.id} -> ${s.superseders.join("+")}${s.pending.length ? ` (${s.pending.join(", ")} not merged yet)` : " (merged)"}`), 4, 200)}`);
   if (ev.unmerged.length) ev1.push(`a dependency is not merged: ${list(ev.unmerged, 5, 200)}`);
   if (!ev1.length) ev1.push("nothing found beyond what you reported (not behind main, main not red, no unmerged dependency)");
   ev1.forEach((e) => L.push(`- ${cap(e, 220)}`));
@@ -403,7 +487,7 @@ export async function cellHelp(api: GitHubApi, repo: string, opts: HealOptions, 
       if (left <= 0) return escalateText(repo, ctx, sc.heals);
       const problem = oneLine(String(a.problem ?? ""), 2000);
       const ev = await gather(api, repo, opts, ctx, problem);
-      const cls = classifyProblem(problem, { behind: ev.behind, outside: ev.outside, ownMention: ev.ownMention, mainRed: !!ev.mainRed, missingContract: ev.missingContract.length > 0 });
+      const cls = classifyProblem(problem, { behind: ev.behind, outside: ev.outside, ownMention: ev.ownMention, mainRed: !!ev.mainRed, missingContract: ev.missingContract.length > 0, staleDeps: ev.staleDeps.map((s) => s.id) });
       return briefing(repo, ctx, problem, cls, ev, left, sc.notes);
     },
     BRIEFING_MAX_CHARS,
