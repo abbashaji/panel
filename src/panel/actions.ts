@@ -210,18 +210,29 @@ export async function handlePanelAction(
     const text = await (deps.takeover ?? defaultTakeover)(env, r.repo, cell, body.admin_key, path === "/panel/api/release" ? "release" : "clear");
     const result = String(text).replace(/\s+/g, " ").slice(0, 200);
     const ok = /^(RELEASED|RESUME)\b/.test(text);
-    if (!ok) return json(200, { ok, result });
     // The cell is free again: the old reservation must not keep the old name on it (advisory, errors ignored).
+    // A reserved cell that was never claimed has no branch, so the takeover answers 'nothing to release':
+    // the reservation is deleted anyway and the answer says UNRESERVED.
     const rkv = env.OAUTH_KV as unknown as ReserveKv | undefined;
+    let held = false;
     if (rkv) {
       try {
-        await clearReservation(rkv, r.repo, cell);
+        held = (await getReservation(rkv, r.repo, cell)) !== null;
       } catch {
         /* advisory only */
       }
+      if (ok || held) {
+        try {
+          await clearReservation(rkv, r.repo, cell);
+        } catch {
+          /* advisory only */
+        }
+      }
     }
+    if (!ok && !held) return json(200, { ok, result });
     clearPanelCache();
     const info = await cellInfoOf(env, r.repo, cell, deps);
+    if (!ok) return json(200, { ok: true, result: `UNRESERVED ${cell}`, cell: info ?? undefined });
     return json(200, { ok, result, ...(info ? { cell: info } : {}) });
   } catch {
     return json(502, { error: "upstream_error" });
