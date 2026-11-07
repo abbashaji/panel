@@ -131,18 +131,20 @@ export async function readFiles(
 }
 
 // ---------------------------------------------------------------- automatic main sync (submit_cell, preflight)
-/** When cell/<id> is behind main, merge main into it (never touches main, costs no heal). null = go on; text = stop (CONFLICT). */
-async function syncMain(api: GitHubApi, repo: string, opts: EngineOptions, id: string): Promise<string | null> {
+/** When cell/<id> is behind main, merge main into it (never touches main, costs no heal). stop = the CONFLICT text to return; line = the SYNCED note to add to the answer (empty when nothing was merged). */
+async function syncMain(api: GitHubApi, repo: string, opts: EngineOptions, id: string): Promise<{ stop: string | null; line: string }> {
   const cmp = await api.compare(repo, opts.mainBranch, branchOf(id)).catch(() => null);
-  if (!cmp || cmp.behind === 0) return null;
+  if (!cmp || cmp.behind === 0) return { stop: null, line: "" };
   const snap = await api.snapshot(repo, opts.mainBranch, 0);
   const prev = snap.branches[branchOf(id)]?.message ?? "";
   const res = await api.mergeBranch(repo, branchOf(id), opts.mainBranch, carry(prev, `sync(${id}): merge ${opts.mainBranch}`));
   if (res.status === "conflict") {
     const files = (res.files ?? []).slice(0, 12).join(", ");
-    return `CONFLICT ${id} (sync): ${opts.mainBranch} and your branch changed the same file(s)${files ? `: ${files}` : ""}. This is NOT a takeover: the cell is still yours and nothing was changed. Resolve those files inside allowed_paths with apply_changes, then call again; or call cell_help.`;
+    return { line: "", stop: `CONFLICT ${id} (sync): ${opts.mainBranch} and your branch changed the same file(s)${files ? `: ${files}` : ""}. This is NOT a takeover: the cell is still yours and nothing was changed. Resolve those files inside allowed_paths with apply_changes, then call again; or call cell_help.` };
   }
-  return null;
+  const tip = res.oid ?? (await api.branchTip(repo, branchOf(id)))?.oid;
+  const line = res.status === "merged" && tip ? `SYNCED ${opts.mainBranch} into your branch (no takeover). New base=${short(tip)}. Continue with this base.` : "";
+  return { stop: null, line };
 }
 
 // ---------------------------------------------------------------- submit_cell
@@ -166,18 +168,19 @@ export async function submitCell(
   const files = await api.changedFiles(repo, opts.mainBranch, branchOf(id));
   if (files.length === 0) return `NOTHING_TO_SUBMIT ${id}: the branch has no changes compared with ${opts.mainBranch}`;
 
-  const stop = await syncMain(api, repo, opts, id);
-  if (stop) return stop;
+  const sync = await syncMain(api, repo, opts, id);
+  if (sync.stop) return sync.stop;
+  const note = sync.line ? `\n${sync.line}` : "";
 
   const title = `cell(${id}): ${oneLine(String(cell.title ?? id), 120)}`;
   const body = String(args.summary ?? "").slice(0, 2000);
   try {
     const pr = await api.createPr(repo, { title, head: branchOf(id), base: opts.mainBranch, body });
-    return `PR #${pr.number} opened (${files.length} files); call ci_result`;
+    return `PR #${pr.number} opened (${files.length} files); call ci_result${note}`;
   } catch (e) {
     const again = await api.findPr(repo, branchOf(id));
-    if (again?.state === "open") return `PR #${again.number} already open; call ci_result`;
-    return `ERROR: could not open the pull request: ${errText(e)}`;
+    if (again?.state === "open") return `PR #${again.number} already open; call ci_result${note}`;
+    return `ERROR: could not open the pull request: ${errText(e)}${note}`;
   }
 }
 
@@ -186,14 +189,15 @@ export async function preflight(api: GitHubApi, repo: string, opts: EngineOption
   if (!ID_RE.test(id)) return `BAD_CELL_ID ${id}`;
   const tip = await api.branchTip(repo, branchOf(id));
   if (!tip) return `NOT_CLAIMED ${id}: there is no branch ${branchOf(id)}. Call next_cell first.`;
-  const stop = await syncMain(api, repo, opts, id);
-  if (stop) return stop;
+  const sync = await syncMain(api, repo, opts, id);
+  if (sync.stop) return sync.stop;
+  const note = sync.line ? `\n${sync.line}` : "";
   try {
     await api.dispatch(repo, "cell-preflight.yml", opts.mainBranch, { cell_id: id });
   } catch (e) {
-    return `ERROR: could not start the preflight: ${errText(e)}`;
+    return `ERROR: could not start the preflight: ${errText(e)}${note}`;
   }
-  return `started preflight ${id}; keep working, then call ci_result once`;
+  return `started preflight ${id}; keep working, then call ci_result once${note}`;
 }
 
 // ---------------------------------------------------------------- ci_result
