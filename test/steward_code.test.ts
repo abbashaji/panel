@@ -39,8 +39,8 @@ function setup(): FakeGitHub {
   return gh;
 }
 
+let n = 0; // shared: two fake repos must never mint the same session id
 function engine(gh: FakeGitHub): EngineOptions {
-  let n = 0;
   return { mainBranch: "main", historyPages: 1, now: () => gh.clock, sleep: async () => {}, uuid: () => `u${++n}` };
 }
 
