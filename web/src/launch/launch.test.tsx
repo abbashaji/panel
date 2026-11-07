@@ -629,9 +629,11 @@ describe("LaunchProvider sync and start links", () => {
   it("start sends no silent link before the confirm click", async () => {
     silent.mockClear();
     vi.mocked(reserve).mockResolvedValue({ status: "reserved", detail: "ok" });
-    registered.start!("C-010");
-    await vi.advanceTimersByTimeAsync(0);
-    await screen.findByRole("dialog");
+    await act(async () => {
+      registered.start!("C-010");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(silent).not.toHaveBeenCalled();
     expect(go).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Open claude.ai" }));
