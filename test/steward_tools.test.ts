@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import * as engine from "../src/engine.ts";
 import type { EngineOptions } from "../src/engine.ts";
 import { stewardToolHandlers, toolHandlers, type Env } from "../src/tools.ts";
+import { mintStewardCode } from "../src/steward_code.ts";
 import { FakeGitHub } from "./fakegh.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -203,4 +204,139 @@ test("a refresh tells what changed since the last call (advisory KV)", async () 
   const second = await h.steward_next({ admin_key: KEY, session });
   assert.ok(second.startsWith("STEWARD_REFRESHED"), second);
   assert.ok(second.includes("CHANGES since your last steward_next: new problems: C-000"), second);
+});
+
+// ---------------------------------------------------------------- one-time code start, session auth, one shot
+function fakeKv(now: () => number) {
+  const store = new Map<string, { v: string; exp: number }>();
+  return {
+    store,
+    get: async (k: string) => {
+      const e = store.get(k);
+      if (!e || e.exp <= now()) return null;
+      return e.v;
+    },
+    put: async (k: string, v: string, o?: { expirationTtl?: number }) => {
+      store.set(k, { v, exp: now() + (o?.expirationTtl ?? 1e9) * 1000 });
+    },
+    delete: async (k: string) => {
+      store.delete(k);
+    },
+  };
+}
+
+test("steward_next starts with a one-time code, without any admin key, and the code works once", async () => {
+  const fx = seed();
+  const kv = fakeKv(() => fx.clock);
+  const h = steward(fx, envOf({ ADMIN_TOKEN: KEY, OAUTH_KV: kv as any }));
+  const code = await mintStewardCode(kv, "o/r");
+  const started = await h.steward_next({ code, who: "alice" });
+  assert.ok(started.startsWith("STEWARD_STARTED session=steward-"), started);
+  assert.ok(started.includes("repo=o/r"));
+  assert.ok(started.includes("STEWARD BRIEFING for"));
+  assert.ok(started.includes("ONE SHOT"));
+  assert.ok(started.includes("steward_session=" + sessionOf(started)));
+  assert.ok(!/45 seconds|at most 8 times/.test(started));
+  assert.ok(!started.includes(code));
+  assert.ok(fx.refs.has("steward/lease"));
+  const tip = fx.refs.get("steward/lease");
+  const again = await h.steward_next({ code });
+  assert.ok(again.startsWith("STEWARD_CODE_INVALID"), again);
+  assert.ok(!again.includes(code));
+  assert.equal(fx.refs.get("steward/lease"), tip);
+});
+
+test("a code works without ADMIN_TOKEN; bad, foreign and missing-store codes are refused and write nothing", async () => {
+  const fx = seed();
+  const kv = fakeKv(() => fx.clock);
+  const h = steward(fx, envOf({ OAUTH_KV: kv as any }));
+  fx.calls.length = 0;
+  for (const bad of ["A".repeat(32), "nope", await mintStewardCode(kv, "o/other")]) {
+    assert.ok((await h.steward_next({ code: bad })).startsWith("STEWARD_CODE_INVALID"));
+  }
+  assert.deepEqual(writes(fx), []);
+  assert.ok(!fx.refs.has("steward/lease"));
+  assert.ok((await steward(fx, envOf()).steward_next({ code: "A".repeat(32) })).startsWith("STEWARD_CODE_UNAVAILABLE"));
+  const started = await h.steward_next({ code: await mintStewardCode(kv, "o/r") });
+  assert.ok(started.startsWith("STEWARD_STARTED"), started);
+  // an expired code is refused
+  const old = await mintStewardCode(kv, "o/r");
+  fx.tick(601 * 1000);
+  assert.ok((await h.steward_next({ code: old })).startsWith("STEWARD_CODE_INVALID"));
+});
+
+test("a live Steward holds the lease: a second valid code gets STEWARD_BUSY", async () => {
+  const fx = seed();
+  const kv = fakeKv(() => fx.clock);
+  const h = steward(fx, envOf({ OAUTH_KV: kv as any }));
+  await h.steward_next({ code: await mintStewardCode(kv, "o/r"), who: "alice" });
+  const tip = fx.refs.get("steward/lease");
+  const out = await h.steward_next({ code: await mintStewardCode(kv, "o/r"), who: "mallory" });
+  assert.ok(out.startsWith("STEWARD_BUSY"), out);
+  assert.equal(fx.refs.get("steward/lease"), tip);
+});
+
+test("steward_session replaces the admin key for next, note, release, takeover and publish_plan", async () => {
+  const fx = seed();
+  await engine.nextCell(fx, "o/r", opts(fx), "claim"); // C-000 has a branch
+  const kv = fakeKv(() => fx.clock);
+  const env = envOf({ OAUTH_KV: kv as any }); // no ADMIN_TOKEN at all
+  const h = steward(fx, env);
+  const cells = toolHandlers(env, opts(fx), () => fx);
+  const session = sessionOf(await h.steward_next({ code: await mintStewardCode(kv, "o/r") }));
+
+  assert.ok((await h.steward_next({ steward_session: session })).startsWith("STEWARD_REFRESHED session=" + session));
+  const noted = await h.steward_note({ steward_session: session, cell_id: "C-000", note: "start with the types" });
+  assert.ok(noted.startsWith("NOTED C-000"), noted);
+  assert.ok((await cells.publish_plan({ steward_session: session, cells: [] })).startsWith("NOTHING_TO_PUBLISH"));
+  const tk = await cells.takeover({ steward_session: session, cell_id: "C-000" });
+  assert.ok(!/^(ADMIN_|NOT_STEWARD)/.test(tk), tk);
+
+  // a wrong session or no credentials: refused, nothing written
+  fx.calls.length = 0;
+  const before = state(fx);
+  assert.ok((await h.steward_next({ steward_session: "steward-other" })).startsWith("NOT_STEWARD"));
+  assert.ok((await h.steward_note({ steward_session: "steward-other", cell_id: "C-000", note: "x" })).startsWith("NOT_STEWARD"));
+  assert.ok((await h.steward_release({ steward_session: "steward-other" })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.publish_plan({ steward_session: "steward-other", cells: [] })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.takeover({ steward_session: "steward-other", cell_id: "C-000", force: true })).startsWith("NOT_STEWARD"));
+  assert.ok((await h.steward_note({ cell_id: "C-000", note: "x" })).startsWith("ADMIN_NOT_CONFIGURED"));
+  assert.equal(state(fx), before);
+  assert.deepEqual(writes(fx), []);
+
+  // the session ends with the release: it opens nothing any more
+  const rel = await h.steward_release({ steward_session: session });
+  assert.ok(rel.startsWith("STEWARD_RELEASED"), rel);
+  assert.ok((await h.steward_note({ steward_session: session, cell_id: "C-000", note: "x" })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.publish_plan({ steward_session: session, cells: [] })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.takeover({ steward_session: session, cell_id: "C-000" })).startsWith("NOT_STEWARD"));
+});
+
+test("an expired steward_session opens nothing; the admin key still works as before", async () => {
+  const fx = seed();
+  const kv = fakeKv(() => fx.clock);
+  const env = envOf({ ADMIN_TOKEN: KEY, OAUTH_KV: kv as any });
+  const h = steward(fx, env);
+  const cells = toolHandlers(env, opts(fx), () => fx);
+  const session = sessionOf(await h.steward_next({ code: await mintStewardCode(kv, "o/r") }));
+  fx.tick(DAY);
+  assert.ok((await h.steward_note({ steward_session: session, cell_id: "C-000", note: "x" })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.publish_plan({ steward_session: session, cells: [] })).startsWith("NOT_STEWARD"));
+  assert.ok((await cells.publish_plan({ admin_key: KEY, cells: [] })).startsWith("NOTHING_TO_PUBLISH"));
+  assert.ok((await cells.publish_plan({ cells: [] })).startsWith("ADMIN_ONLY"));
+});
+
+test("neither the code nor the admin key appears in any answer of the code flow", async () => {
+  const fx = seed();
+  const kv = fakeKv(() => fx.clock);
+  const h = steward(fx, envOf({ ADMIN_TOKEN: KEY, OAUTH_KV: kv as any }));
+  const code = await mintStewardCode(kv, "o/r");
+  const outs: string[] = [];
+  const first = await h.steward_next({ code });
+  outs.push(first, await h.steward_next({ code }), await h.steward_next({ code: "bad-" + code }));
+  const session = sessionOf(first);
+  outs.push(await h.steward_next({ steward_session: session, code: "x" + code }));
+  outs.push(await h.steward_note({ steward_session: session, cell_id: "C-900", note: "the code is " + code + " and the key " + KEY }));
+  outs.push(await h.steward_release({ steward_session: session }));
+  for (const o of outs) assert.ok(!o.includes(code) && !o.includes(KEY), o);
 });

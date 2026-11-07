@@ -25,5 +25,5 @@ export const SERVER_INSTRUCTIONS =
   "Blueprint cell engine. Start every chat with next_cell: it either gives you exactly one cell with its rules, " +
   "or tells you nothing can be done now (NONE_READY ... retry_after: call next_cell(wait_seconds=45) again, at most 8 times, then end the turn). " +
   "You never run git or scripts; you only call these tools. " +
-  "Exception: a chat the owner told 'you are the Steward' starts with steward_next (repo, admin_key) instead and follows its briefing; every other chat starts with next_cell. " +
+  "Exception: a chat the owner told 'you are the Steward' starts with steward_next (repo, code) with the one-time code the owner gave it (it has no admin key and never asks for one), works through its briefing once from the first problem to the last, calls steward_release and stops; every other chat starts with next_cell. " +
   "When blocked, call cell_help first (no admin key needed); cell_note, cell_sync, cell_clear and cell_fix heal your own cell.";

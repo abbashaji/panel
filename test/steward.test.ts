@@ -237,8 +237,11 @@ test("briefing: project, rules, counts, ordered problems, actions, working rules
   assert.match(text, /dependents: 1/);
   assert.match(text, /allowed: .*clear_feedback/);
   assert.match(text, /allowed: .*publish_plan/);
-  assert.match(text, /45 seconds/);
-  assert.ok(text.trimEnd().endsWith("then stop."));
+  assert.match(text, /ONE SHOT: work through the problems of this briefing from the first to the last, then call steward_release and stop/);
+  assert.match(text, /STEWARD_IDLE: nothing to do/);
+  assert.match(text, /no admin key and never ask for one/);
+  assert.ok(!/45 seconds|at most 8 times/.test(text));
+  assert.ok(text.trimEnd().endsWith("after publishing a plan."));
   assert.ok(text.lastIndexOf("WORKING RULES") > text.indexOf("PROBLEM LIST"));
 });
 
@@ -248,7 +251,8 @@ test("briefing: empty list says so; docs are bounded", async () => {
   const big = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join("\n");
   const text = buildBriefing(briefingInput(gh, snap, [{ path: "BLUEPRINT.md", text: big }, ...Array.from({ length: 10 }, (_, i) => ({ path: `docs/d${i}.md`, text: big }))]));
   assert.match(text, /EMPTY: no open problems/);
-  assert.match(text, /45 seconds/);
+  assert.match(text, /answer 'STEWARD_IDLE: nothing to do' and call steward_release at once/);
+  assert.ok(!/45 seconds|steward_next again in/.test(text));
   assert.ok(text.length < 12000, `briefing too long: ${text.length}`);
 });
 
