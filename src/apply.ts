@@ -25,6 +25,18 @@ export function bytes(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
+export const CONFLICT_HINT = "If your last preflight or submit reported SYNCED, use the new base it gave; otherwise the cell was taken over.";
+
+/** True when `base` is behind the tip of cell/<id> only by Worker commits that carry the same lock: every commit from the tip down to (not including) base has a subject starting with sync(<id>): or heal(<id>):. Looks at 20 commits at most. */
+export async function movedBySync(api: GitHubApi, repo: string, id: string, base: string): Promise<boolean> {
+  const commits = await api.branchCommits(repo, branchOf(id), 1, 20).catch(() => null);
+  if (!commits) return false;
+  const at = commits.findIndex((c) => c.oid.startsWith(base));
+  if (at < 1) return false; // base not found within 20 commits, or it is the tip itself
+  const own = new RegExp(`^(sync|heal)\\(${id}\\):`);
+  return commits.slice(0, at).every((c) => own.test(subjectOf(c.message)));
+}
+
 /** First 12 hex chars of SHA-256 over [cell_id, message, ops with sorted keys]. */
 async function reqHash(cellId: string, message: string, ops: Op[]): Promise<string> {
   const canon = ops.map((o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
@@ -58,8 +70,10 @@ export async function applyChanges(
   if (!branch) return notClaimed(api, repo, id);
   const base = String(args.base ?? "").trim().toLowerCase();
   if (!/^[0-9a-f]{7,40}$/.test(base)) return "MISSING_BASE: pass base = the 7-character sha from the last CLAIMED / RESUME / ok response";
-  const baseOk = branch.oid.startsWith(base);
-  const conflictText = `CONFLICT ${id}: ${branchOf(id)} is at ${short(branch.oid)}, not ${base.slice(0, 7)}: the cell was taken over or another chat is writing. Nothing was written. Stop and call next_cell.`;
+  let baseOk = branch.oid.startsWith(base);
+  let bySync = false;
+  if (!baseOk && (await movedBySync(api, repo, id, base))) baseOk = bySync = true;
+  const conflictText = `CONFLICT ${id}: ${branchOf(id)} is at ${short(branch.oid)}, not ${base.slice(0, 7)}. ${CONFLICT_HINT} Nothing was written. Stop and call next_cell.`;
 
   const allowed = slist(cell, "allowed_paths");
   const problems: string[] = [];
@@ -126,7 +140,7 @@ export async function applyChanges(
     return `ERROR: could not create the commit: ${errText(e)}`;
   }
   const moved = await api.fastForward(repo, branchOf(id), oid);
-  if (moved === "ok") return `ok ${short(oid)} ${entries.length} file${entries.length === 1 ? "" : "s"} (next base=${short(oid)})`;
+  if (moved === "ok") return `ok ${short(oid)} ${entries.length} file${entries.length === 1 ? "" : "s"} (next base=${short(oid)})${bySync ? `\nbase moved by an automatic sync; new base=${short(oid)}` : ""}`;
   if (moved === "missing") return notClaimed(api, repo, id);
   return `CONFLICT ${id}: ${branchOf(id)} moved while you were writing (taken over, or another chat is writing). Nothing was written. Stop and call next_cell.`;
 }
