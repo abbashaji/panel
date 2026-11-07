@@ -11,8 +11,10 @@ This runbook was written by a cell chat that has no real GitHub, no real browser
 - The exact names and arguments of `cell_help`, `cell_note`, `cell_sync`, `cell_clear` and `cell_fix` (they exist since C-061). Read each tool's description in the chat before using it; where this runbook says what to pass, treat it as a hint.
 - How the Worker learns which repo to use. `docs/deploy.md` does not say. Every call passes `owner/name`, and `GITHUB_TOKEN` must be able to reach the test repo; if your Worker has a default repository setting, point it at the test repo.
 - The name of the steward field in `GET /panel/api/state`. The contract file does not list it. The smoke script reads `state.steward` (override with `STEWARD_FIELD`).
-- What Release does to a reservation. The smoke script expects that after Release the cell has no `reservedBy`.
-- Everything on Windows: the launcher, icons, browser profiles, `startmany`.
+- The exact JSON field that carries the Release answer. The smoke script reads `status` and expects `UNRESERVED` for a cell that was only reserved and `RELEASED` for a running cell (contract after C-069); in both cases the next state has no `reservedBy`.
+- The panel text for the steward states ('Needs steward', 'Steward released') is taken from the cell text, not from a screenshot.
+- Everything on Windows: the launcher, icons, browser profiles, `startmany`, the `blueprint://` registry entry, the confirm window and the firewall test. Without a real Windows PC with Chrome and Edge, step 12 stays unverified.
+- Starting three chats within one minute (step 8) and the real 60 minute lease expiry (step 10) need real claude.ai chats and real waiting time.
 - The sample plan has five cells, not six: the spec gap sits in E-003 (a parallel cell) and the path gap in E-004 (also parallel), so E-005 is the integration cell.
 
 ## 1. Prerequisites
@@ -103,6 +105,17 @@ Then, in a chat, ask it to call `publish_plan` with the five cells (it needs the
 - [ ] The counts in the sidebar are ready 1, waiting 4.
 - [ ] Every status has an icon and a text label, not only a color.
 
+## 6a. Check the panel header
+
+Stay on the panel from step 6 and reload it once.
+
+**Expected**
+
+- [ ] The page loads without an error and shows the repo name `<you>/panel-e2e`.
+- [ ] The Steward chip is visible.
+- [ ] The **Run ready** button is visible.
+- [ ] No replaced cells are listed (none of the ids in `REPLACED_IDS`, default `C-052` and `C-058`).
+
 ## 7. Run the smoke script
 
 The script needs Node 18, no packages. It prints no secret. Set the variables in your shell (do not put them in a file that is committed):
@@ -119,12 +132,13 @@ PowerShell: `$env:WORKER_URL = '...'` and so on, then `node scripts/e2e-smoke.mj
 
 Optional variables: `CELL_ID` (reserve this cell instead of the first ready one), `REPLACED_IDS` (default `C-052,C-058`, ids that must not appear in the state), `STEWARD_FIELD` (default `steward`).
 
-The script checks: an unauthenticated state call gives 401, login and the cookie flags, the state shape and counts, replaced cells absent, the steward field, reserve then `reservedBy` visible within 3 seconds, release then no `reservedBy` and a new status within 10 seconds.
+The script checks: an unauthenticated state call gives 401, login and the cookie flags, the state shape and counts, replaced cells absent, `steward.status` is one of `none`, `active`, `expired`, `released`, reserve then `reservedBy` visible within 3 seconds, release then no `reservedBy` and a new status within 10 seconds. The release answers `UNRESERVED` for a cell that was only reserved and `RELEASED` for a running cell. The reserve step needs a ready cell: when none is ready it prints SKIP with the reason, not FAIL.
 
 **Expected**
 
 - [ ] A table with PASS on every row, exit code 0 (`echo $?` prints 0).
 - [ ] Without `ADMIN_KEY` the two release rows say SKIP, not FAIL.
+- [ ] When no cell is ready the reserve rows say SKIP with the reason, not FAIL.
 - [ ] No password or key appears in the output.
 - [ ] A FAIL on the steward row means the field name differs (see section 0), not that the Worker is broken.
 
@@ -135,12 +149,12 @@ Start the skeleton first, then the three parallel cells together.
 1. In the panel select C-001 and press Start (double click works too). Without the launcher, open a new chat and paste the prompt from `docs/panel-contracts.md` section 4.2 with `cell_id=C-001`. Press Send yourself.
 2. Wait for C-001 to turn green (merged). The panel polls every 5 seconds.
 3. C-002, C-003 and C-004 are now ready. Open three browsers or profiles, logged in to claude.ai. In the panel press **Run ready** and choose one profile per cell (needs the Windows launcher, section 12). Without the launcher, start three chats by hand, one per cell, each with its own `cell_id`.
-4. Press Send in each chat. Each starts with its CLAIMED line.
+4. Press Send in each chat. Start all three chats within one minute and check that three cards show Running at the same time (screenshot or note). Each chat starts with its CLAIMED line.
 
 **Expected**
 
 - [ ] C-001 goes ready, running, done. `hello.txt` is on `main`.
-- [ ] Three cells show running at the same time, each with its own lease bar.
+- [ ] Three cells show running at the same time, each with its own lease bar (screenshot or note, chats started within one minute).
 - [ ] Each chat's first line is `CLAIMED C-00N base=... repo=...`.
 - [ ] While a cell is only reserved (before Send) the card shows it as reserved and nobody else can start it.
 - [ ] C-002 merges. C-003 and C-004 do not finish yet (steps 9 and 10).
@@ -152,17 +166,19 @@ The tools `cell_help`, `cell_note`, `cell_sync`, `cell_clear` and `cell_fix` com
 **9a. Spec gap (C-003).** The cell text refers to a contract it does not list. The chat must not guess.
 
 - The chat reports the gap with `cell_note`.
-- You answer in the cell: the line format is just the letter `b`. Add it as a contract to the cell (`cell_fix`, or edit `cells/C-003.yaml` on `main`), then clear the note (`cell_clear`) so the chat can go on.
+- You answer in the cell with the text under "What to answer when the chat asks" below. Add it as a contract to the cell (`cell_fix`, or edit `cells/C-003.yaml` on `main`), then clear the note (`cell_clear`) so the chat can go on.
 
 **Expected**
 
-- [ ] The panel shows C-003 as needing attention (the `needs_human` color and label), not silently stuck.
+- [ ] The panel shows C-003 as needing attention: the label is **Needs steward** (status id `needs_human`), not silently stuck.
 - [ ] After your answer the chat continues, writes `parts/b.txt` with `b`, and C-003 merges.
+
+**What to answer when the chat asks.** The sample cell E-003 is deliberately unspecified and does not contain the answer. When the chat asks about the missing line format, answer: the line is just the letter `b`.
 
 **9b. Path gap (C-004).** The goal needs `manifest.txt`, which is outside `allowed_paths`.
 
 - The chat cannot write `manifest.txt` and asks for help with `cell_help`.
-- You or the Steward repair the cell with `cell_fix` (add `manifest.txt` to `allowed_paths` and `outputs`).
+- The healing path should now go through `cell_help` (problem class `stale_dependency` or `outside_cell`) and `cell_fix` with kind replace (add `manifest.txt` to `allowed_paths` and `outputs`), without a human Steward. If a Steward was needed, the owner writes that down as a finding in the results sheet.
 
 **Expected**
 
@@ -189,9 +205,9 @@ Use a cell that is running and has made at least one commit.
 
 **Expected**
 
-- [ ] The card shows **Ready to resume** (expired) or ready again after Release, and the attempts counter is unchanged or one higher.
-- [ ] The new chat's first line is `RESUME C-00N base=... repo=...` and it goes on from the last commit's `next:`.
-- [ ] The old chat, if you reopen it, gets `CONFLICT` and stops.
+- [ ] The card shows **Ready to resume** (expired) or ready again after Release. Record the attempts counter before and after (unchanged or one higher).
+- [ ] The new chat's first line is `RESUME C-00N base=... repo=...` (record that first line) and it goes on from the last commit's `next:`.
+- [ ] Record whether the old chat, when you reopen it, reports `CONFLICT` and stops.
 
 ## 11. Steward: start and release
 
@@ -206,7 +222,7 @@ Use this on a spare cell that is stuck (for example a cell you left in step 9b w
 
 - [ ] The panel and the state show a steward and its status while it runs.
 - [ ] The Steward repairs or hands over the stuck cell and leaves a short note on it.
-- [ ] After `steward_release` the steward field is empty again (`null`) and the smoke script still passes.
+- [ ] After `steward_release` the panel header shows **Steward released** and the state field `steward.status` is `released`, and the smoke script still passes.
 
 ## 12. Windows launcher check
 
@@ -250,6 +266,7 @@ Copy this, fill it in, and keep it with the release notes.
 | 4 init_blueprint | | |
 | 5 Publish plan | | |
 | 6 Panel | | |
+| 6a Panel header | | |
 | 7 Smoke script | | |
 | 8 Three chats | | |
 | 9 Heal | | |

@@ -2,6 +2,8 @@
 // End to end smoke test for the Blueprint Panel. Node 18+, no dependencies.
 // Env: WORKER_URL, PANEL_PASSWORD, REPO (owner/name). Optional: ADMIN_KEY, CELL_ID, REPLACED_IDS, STEWARD_FIELD.
 // Prints a PASS / FAIL / SKIP table and exits 1 on any FAIL. Never prints secrets.
+// Contract after C-069: releasing a cell that was only reserved answers UNRESERVED, releasing a running cell answers RELEASED;
+// in both cases the next state has no reservedBy. state.steward.status is one of none, active, expired, released.
 
 const WORKER_URL = (process.env.WORKER_URL || '').trim().replace(/\/+$/, '');
 const PASSWORD = process.env.PANEL_PASSWORD || '';
@@ -16,6 +18,7 @@ const REPLACED = (process.env.REPLACED_IDS || 'C-052,C-058')
 const WHO = 'e2e-smoke';
 const STATUSES = ['done', 'running', 'ready', 'waiting', 'expired', 'needs_human', 'needs_split'];
 const AFTER_RELEASE = ['ready', 'expired', 'waiting'];
+const STEWARD_STATUSES = ['none', 'active', 'expired', 'released'];
 
 const rows = [];
 let cookie = '';
@@ -178,24 +181,29 @@ async function main() {
     return present.length ? fail('still listed: ' + present.join(', ')) : pass('checked ' + (REPLACED.join(', ') || 'none'));
   });
 
-  await step('steward status field', async () => {
+  await step('steward.status is valid', async () => {
     const v = state[STEWARD_FIELD];
     if (v === undefined) return fail('state.' + STEWARD_FIELD + ' missing (set STEWARD_FIELD if named differently)');
-    if (v === null) return pass('no steward running');
-    return isObj(v) && typeof v.status === 'string' ? pass('status ' + v.status) : fail('state.' + STEWARD_FIELD + ' has no string status');
+    if (v === null) return fail('state.' + STEWARD_FIELD + ' is null, expected an object with status ' + STEWARD_STATUSES.join(', '));
+    if (!isObj(v) || typeof v.status !== 'string') return fail('state.' + STEWARD_FIELD + ' has no string status');
+    return STEWARD_STATUSES.includes(v.status) ? pass('status ' + v.status) : fail('status ' + v.status + ' is not one of ' + STEWARD_STATUSES.join(', '));
   });
 
-  const target = PIN_CELL || (state.cells.find((c) => c.status === 'ready') || {}).id;
+  const firstReady = state.cells.find((c) => c.status === 'ready');
+  const targetCell = PIN_CELL ? state.cells.find((c) => c.id === PIN_CELL) : firstReady;
+  const target = PIN_CELL || (firstReady || {}).id;
   const cellOf = (s) => s.cells.find((c) => c.id === target);
   let reserved = false;
   await step('reserve a ready cell', async () => {
-    if (!target) return skip('no ready cell (set CELL_ID or publish the sample plan)');
+    if (!target || !targetCell) return skip(PIN_CELL ? PIN_CELL + ' is not in the state' : 'no ready cell, and reserve needs one (publish the sample plan or wait until a cell is ready)');
+    if (targetCell.status !== 'ready') return skip(target + ' is ' + targetCell.status + ', not ready');
     const r = await call('/panel/api/reserve', { method: 'POST', body: { repo: REPO, cell_id: target, who: WHO } });
     const status = isObj(r.json) ? r.json.status : undefined;
     if (r.status === 200 && status === 'reserved') {
       reserved = true;
       return pass(target + ' reserved');
     }
+    if (/not_ready/i.test(String(status))) return skip(target + ' was no longer ready (' + status + ')');
     return fail('HTTP ' + r.status + ' status ' + status + ' for ' + target);
   });
 
@@ -208,10 +216,14 @@ async function main() {
   let released = false;
   await step('release (admin)', async () => {
     if (!ADMIN_KEY) return skip('ADMIN_KEY not set');
-    if (!target) return skip('no target cell');
+    if (!reserved) return skip('this script reserved nothing, so there is nothing to release');
+    const before = cellOf(await getState());
+    const expected = before && before.status === 'running' ? 'RELEASED' : 'UNRESERVED';
     const r = await call('/panel/api/release', { method: 'POST', body: { repo: REPO, cell_id: target, admin_key: ADMIN_KEY } });
-    released = r.status === 200;
-    return released ? pass('HTTP 200 for ' + target) : fail('HTTP ' + r.status);
+    if (r.status !== 200) return fail('HTTP ' + r.status);
+    released = true;
+    const answer = isObj(r.json) && typeof r.json.status === 'string' ? r.json.status : '';
+    return answer.toUpperCase() === expected ? pass(answer + ' for ' + target) : fail('expected ' + expected + ', got ' + (answer || 'no status') + ' for ' + target);
   });
 
   await step('state shows no reservedBy and new status within 10 s', async () => {
