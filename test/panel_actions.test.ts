@@ -156,14 +156,73 @@ test("clear-feedback: RESUME answer deletes the reservation and answers status r
   assert.equal(kv.m.has(`reserve:${REPO}:C-003`), false);
 });
 
-test("a failed release keeps the reservation and has no cell", async () => {
+test("a failed release without a reservation is unchanged: ok false, no cell", async () => {
   const kv = fakeKv();
-  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: "x" }));
   const deps: ActionDeps = { takeover: async () => "NOT_RUNNING C-003: no branch", cellInfo: info("ready") };
-  const j = await (await post(mkEnv(kv), "/panel/api/release", adminBody, deps))!.json();
-  assert.equal(j.ok, false);
-  assert.equal(j.cell, undefined);
+  for (const p of ["/panel/api/release", "/panel/api/clear-feedback"]) {
+    const j = await (await post(mkEnv(kv), p, adminBody, deps))!.json();
+    assert.equal(j.ok, false);
+    assert.match(j.result, /NOT_RUNNING/);
+    assert.equal(j.cell, undefined);
+  }
+  assert.equal(kv.m.size, 0);
+});
+
+test("reserved cell without branch: release and clear-feedback answer UNRESERVED and the reservation is gone", async () => {
+  for (const p of ["/panel/api/release", "/panel/api/clear-feedback"]) {
+    const kv = fakeKv();
+    kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: new Date().toISOString() }));
+    let reserved: string | null = "Ann";
+    const deps: ActionDeps = {
+      takeover: async () => "NOT_RUNNING C-003: nothing to release",
+      cellInfo: async (_e, _r, cell) => {
+        reserved = kv.m.has(`reserve:${REPO}:${cell}`) ? "Ann" : null;
+        return { id: cell, status: "ready", resumable: false };
+      },
+    };
+    const res = await post(mkEnv(kv), p, adminBody, deps);
+    assert.equal(res!.status, 200);
+    const j = await res!.json();
+    assert.equal(j.ok, true);
+    assert.equal(j.result, "UNRESERVED C-003");
+    assert.deepEqual(j.cell, { id: "C-003", status: "ready", resumable: false });
+    assert.equal(kv.m.has(`reserve:${REPO}:C-003`), false);
+    assert.equal(reserved, null);
+  }
+});
+
+test("wrong admin key leaves a reservation without branch untouched", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: new Date().toISOString() }));
+  let calls = 0;
+  const deps: ActionDeps = { takeover: async () => (calls++, "NOT_RUNNING C-003"), cellInfo: info("ready") };
+  for (const p of ["/panel/api/release", "/panel/api/clear-feedback"]) {
+    const res = await post(mkEnv(kv), p, { ...adminBody, admin_key: "nope" }, deps);
+    assert.equal(res!.status, 403);
+  }
+  assert.equal(calls, 0);
   assert.equal(kv.m.has(`reserve:${REPO}:C-003`), true);
+});
+
+test("running cell release still answers RELEASED and clears the reservation", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: new Date().toISOString() }));
+  const deps: ActionDeps = { takeover: async () => "RELEASED C-003: handed off", cellInfo: info("ready") };
+  const j = await (await post(mkEnv(kv), "/panel/api/release", adminBody, deps))!.json();
+  assert.equal(j.ok, true);
+  assert.match(j.result, /^RELEASED/);
+  assert.equal(kv.m.has(`reserve:${REPO}:C-003`), false);
+});
+
+test("KV failure on a not-released cell does not fail the call", async () => {
+  const kv = fakeKv();
+  const broken = { ...kv, get: async () => { throw new Error("kv down"); }, delete: async () => { throw new Error("kv down"); } };
+  const deps: ActionDeps = { takeover: async () => "NOT_RUNNING C-003: no branch", cellInfo: info("ready") };
+  const res = await post(mkEnv(broken as any), "/panel/api/release", adminBody, deps);
+  assert.equal(res!.status, 200);
+  const j = await res!.json();
+  assert.equal(j.ok, false);
+  assert.match(j.result, /NOT_RUNNING/);
 });
 
 test("KV failure does not fail release or clear-feedback", async () => {
