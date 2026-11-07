@@ -7,6 +7,10 @@ export const WHO_RE = /^[\w .-]{1,40}$/;
 export const MAX_URL = 400;
 /** most cells one startmany link may carry */
 export const MAX_CELLS = 12;
+/** most merged ids one sync link may carry (the launcher accepts 50) */
+export const MAX_SYNC_IDS = 30;
+/** sync link budget with every comma counted as 3 characters (Chrome may encode it as %2C) */
+export const MAX_SYNC_URL = 330;
 
 const enc = encodeURIComponent;
 
@@ -56,8 +60,9 @@ export function openUrl(repo: string, cell: string): string {
 }
 
 /**
- * blueprint://sync?repo=&merged=C-001,C-002. Invalid ids are dropped, duplicates removed. When the list would pass
- * the 400 character limit the highest ids are kept. Throws when no valid id is left.
+ * blueprint://sync?repo=&merged=C-001,C-002. Invalid ids are dropped, duplicates removed. At most 30 ids are kept
+ * (the highest first) and the link, with every comma counted as 3 characters, stays within 330 characters.
+ * Throws when no valid id is left.
  */
 export function syncUrl(repo: string, merged: readonly string[]): string {
   need(REPO_RE, repo, "repo");
@@ -66,8 +71,9 @@ export function syncUrl(repo: string, merged: readonly string[]): string {
   const kept: string[] = [];
   let len = head.length;
   for (const id of ids) {
-    const add = id.length + (kept.length ? 1 : 0);
-    if (len + add > MAX_URL) break;
+    if (kept.length >= MAX_SYNC_IDS) break;
+    const add = id.length + (kept.length ? 3 : 0);
+    if (len + add > MAX_SYNC_URL) break;
     kept.push(id);
     len += add;
   }

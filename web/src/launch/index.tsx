@@ -9,6 +9,8 @@ import { CELL_RE, MAX_CELLS, WHO_RE, openUrl, startManyUrl, startUrl, stewardUrl
 const WHO_KEY = "bp_who";
 const OWN_KEY = "bp_own";
 const SYNC_THROTTLE_MS = 3000;
+/** no sync link this soon after a start/open/steward link: Chrome shows one external-app prompt at a time */
+const GO_QUIET_MS = 5000;
 const HINT = "Nothing opened? Install the launcher first: run launcher/install.ps1, then try again.";
 
 /** Display name kept in localStorage; empty when none is saved. */
@@ -51,6 +53,25 @@ function rememberOwn(repo: string, id: string): void {
 const mergedIds = (s: PanelState | null): string[] => (s ? s.cells.filter((c) => c.status === "done").map((c) => c.id) : []);
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+const sigKey = (repo: string): string => `bp_sync_sig_${repo}`;
+
+/** signature (sorted merged ids) of the last sync link sent for this repo */
+function readSig(repo: string): string | null {
+  try {
+    return readStore(sigKey(repo));
+  } catch {
+    return null;
+  }
+}
+
+function writeSig(repo: string, sig: string): void {
+  try {
+    writeStore(sigKey(repo), sig);
+  } catch {
+    // the next change sends again
+  }
+}
+
 type Refresher = { refreshAfterAction?: () => unknown; refresh?: () => unknown };
 
 /** Re-reads the panel state after a write. Uses refreshAfterAction, else refresh; does nothing when the panel has neither. */
@@ -76,30 +97,53 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   const refresh = makeRefresh(panel);
   const live = useRef({ repo, state, toast, refresh });
   live.current = { repo, state, toast, refresh };
-  const syncMark = useRef({ at: 0, key: "" });
+  const syncMark = useRef({ at: 0 });
+  const lastGoAt = useRef(0);
+  const syncTimer = useRef<number | null>(null);
   const busy = useRef(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [name, setName] = useState("");
   const [nameErr, setNameErr] = useState("");
 
-  /** silent blueprint://sync, throttled; sends only valid merged ids */
-  const sendSync = useCallback((ids: string[], force: boolean) => {
+  /**
+   * silent blueprint://sync. Sends only when the sorted set of merged ids differs from the last one sent for this repo,
+   * at most every SYNC_THROTTLE_MS and never within GO_QUIET_MS after a go; a sync that is too early is delayed.
+   */
+  const sendSync = useCallback(function run(ids: string[]) {
     const valid = [...new Set(ids)].filter((i) => CELL_RE.test(i)).sort();
     if (valid.length === 0) return;
+    if (syncTimer.current !== null) {
+      window.clearTimeout(syncTimer.current); // the newest call replaces a delayed one
+      syncTimer.current = null;
+    }
     const r = live.current.repo;
-    const key = `${r} ${valid.join(",")}`;
+    const sig = valid.join(",");
+    if (readSig(r) === sig) return;
     const now = Date.now();
-    const m = syncMark.current;
-    if (now - m.at < SYNC_THROTTLE_MS || (!force && key === m.key)) return;
+    const wait = Math.max(syncMark.current.at + SYNC_THROTTLE_MS, lastGoAt.current + GO_QUIET_MS) - now;
+    if (wait > 0) {
+      syncTimer.current = window.setTimeout(() => {
+        syncTimer.current = null;
+        run(ids);
+      }, wait);
+      return;
+    }
     let url: string;
     try {
       url = syncUrl(r, valid);
     } catch {
       return;
     }
-    m.at = now;
-    m.key = key;
+    syncMark.current.at = now;
+    writeSig(r, sig);
     transport.silent(url);
+  }, []);
+
+  /** the only place that opens a launcher link: remembers when, so no sync link follows closely */
+  const fire = useCallback((url: string) => {
+    lastGoAt.current = Date.now();
+    transport.go(url);
+    transport.watch(() => live.current.toast(HINT, "info"));
   }, []);
 
   const isMine = useCallback((id: string): boolean => {
@@ -135,7 +179,6 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
           return;
         }
         rememberOwn(r, id);
-        sendSync(mergedIds(live.current.state), true);
         setDlg({ phase: "confirm", id, url, who });
       } finally {
         busy.current = false;
@@ -197,9 +240,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
           return;
         }
         for (const id of ok) rememberOwn(r, id);
-        sendSync(mergedIds(live.current.state), true);
-        transport.go(url);
-        transport.watch(() => live.current.toast(HINT, "info"));
+        fire(url);
       } finally {
         busy.current = false;
       }
@@ -244,12 +285,10 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
         say(`Cannot build the launcher link: ${errText(e)}`, "error");
         return;
       }
-      sendSync(mergedIds(s), true);
       again();
-      transport.go(url);
-      transport.watch(() => live.current.toast(HINT, "info"));
+      fire(url);
     },
-    [sendSync],
+    [fire],
   );
 
   /** open blueprint://steward; no reservation, the Worker lease decides who wins (a second chat gets STEWARD_BUSY) */
@@ -262,10 +301,9 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
       say(`Cannot build the launcher link: ${errText(e)}`, "error");
       return;
     }
-    transport.go(url);
-    transport.watch(() => live.current.toast(HINT, "info"));
+    fire(url);
     again();
-  }, []);
+  }, [fire]);
 
   const startSteward = useCallback(() => {
     const who = readWho();
@@ -285,7 +323,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   }, [isMine]);
 
   useEffect(
-    () => registerLauncher({ start, startMany, startSteward, open, owner, sync: (ids: string[]) => sendSync(ids, true) }),
+    () => registerLauncher({ start, startMany, startSteward, open, owner, sync: (ids: string[]) => sendSync(ids) }),
     [registerLauncher, start, startMany, startSteward, open, owner, sendSync],
   );
 
@@ -293,11 +331,19 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   useEffect(() => {
     if (!state) return;
     const merged = mergedIds(state);
-    sendSync(merged, false);
+    sendSync(merged);
     const own = readOwn(repo);
     const keep = own.filter((id) => !merged.includes(id));
     if (keep.length !== own.length) writeOwn(repo, keep);
   }, [state, repo, sendSync]);
+
+  // a delayed sync must not fire after the provider is gone
+  useEffect(
+    () => () => {
+      if (syncTimer.current !== null) window.clearTimeout(syncTimer.current);
+    },
+    [],
+  );
 
   const submitName = (e: FormEvent) => {
     e.preventDefault();
@@ -319,8 +365,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     if (dlg?.phase !== "confirm") return;
     const { url } = dlg;
     setDlg(null);
-    transport.go(url);
-    transport.watch(() => live.current.toast(HINT, "info"));
+    fire(url);
   };
 
   const box =
