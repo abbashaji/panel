@@ -22,12 +22,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blueprintlib import (  # noqa: E402
-    BRANCH_RE, acceptance_cmds, git, hard_deps, load_cells, load_config, matches, merged_from_git,
+    BRANCH_RE, acceptance_cmds, git, hard_deps, load_cells, load_config, matches, merged_from_git, superseders,
     slist, validate,
 )
 
 MAX_SUMMARY_LINES = 30
 
+
+
+def unmerged_deps(cell, cells, merged):
+    """Hard dependencies that are not satisfied. A dependency that was superseded and never merged itself is
+    satisfied once every cell that supersedes it is merged (the same rule the Worker and ready_cells use)."""
+    sup = superseders(cells)
+    out = []
+    for d in hard_deps(cell):
+        if d in merged:
+            continue
+        by = sup.get(d)
+        if by and all(x in merged for x in by):
+            continue
+        out.append(d)
+    return out
 
 def tail(text: str, n: int = 20) -> str:
     return "\n".join(text.strip().splitlines()[-n:])
@@ -65,7 +80,7 @@ def static_check(trusted, work, branch, title, base_ref, preflight=False):
     merged = merged_from_git(work, base_ref)
     if cid in merged:
         problems.append(f"{cid} is already merged")
-    unmerged = [d for d in hard_deps(cell) if d not in merged]
+    unmerged = unmerged_deps(cell, cells, merged)
     if unmerged:
         problems.append("dependencies not merged yet: " + ", ".join(unmerged))
 
