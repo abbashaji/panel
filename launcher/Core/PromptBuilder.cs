@@ -69,6 +69,29 @@ public static class PromptBuilder
             + "Call steward_next again after each solved problem.";
     }
 
+    /// <summary>Fixed keyless steward template. The only inserted text is the validated repo and code.</summary>
+    public static string BuildStewardPrompt(string repo, string code)
+    {
+        if (!ProtocolParser.IsValidRepo(repo)) throw new ArgumentException("invalid repo", nameof(repo));
+        if (!ProtocolParser.IsValidCode(code)) throw new ArgumentException("invalid code", nameof(code));
+        var r = Strip(repo);
+        return "You are the Steward of " + r + ".\n"
+            + "Call steward_next with repo, who and code=" + code + ". The code works once and expires in 10 minutes.\n"
+            + "You have no admin key and must never ask for one.\n"
+            + "Solve the problems in the briefing from the first to the last, then call steward_release and stop. "
+            + "Do not poll or call steward_next again unless you need a fresh briefing after publishing a plan.";
+    }
+
+    public static string BuildStewardUrl(string repo, string code)
+        => BaseUrl + Uri.EscapeDataString(BuildStewardPrompt(repo, code));
+
+    /// <summary>First 4 characters of the code, then dots. For display only.</summary>
+    public static string MaskCode(string code)
+    {
+        if (!ProtocolParser.IsValidCode(code)) throw new ArgumentException("invalid code", nameof(code));
+        return code.Substring(0, 4) + new string('\u2022', 8);
+    }
+
     public static string BuildStewardUrl(string repo)
         => BaseUrl + Uri.EscapeDataString(BuildStewardPrompt(repo));
 
