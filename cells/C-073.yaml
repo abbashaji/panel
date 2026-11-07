@@ -1,0 +1,35 @@
+id: C-073
+title: The automatic main sync no longer looks like a takeover
+type: normal
+priority: 12
+lease_minutes: 20
+goal: |
+  Bug seen live on C-070. The chat committed work (267d7a8), then its preflight made the Worker merge main into the branch (sync(C-070): merge main, 6ba80c3). The chat then saw a tip it did not make, and the next call answered 'CONFLICT ... the cell was taken over', so it stopped although nothing was taken over.
+  Fix in src/engine.ts, src/apply.ts and src/signal.ts:
+  1. syncMain (preflight and submit_cell) returns the new tip and the calling tool adds a line to its answer: 'SYNCED main into your branch (no takeover). New base=<7 sha>. Continue with this base.' Keep CONFLICT (sync) as it is.
+  2. apply_changes and cell_signal: when the branch tip is not the given base, list the branch commits from the tip down to the given base (api.branchCommits, bounded to 20 commits). If EVERY commit after the base has a subject starting with 'sync(<id>):' or 'heal(<id>):' (Worker commits that carry the same lock), do not answer CONFLICT: continue as if base were the tip, and add 'base moved by an automatic sync; new base=<sha>' to the ok answer. If any other commit is in between (claim, adopt, a different lock, another WIP) keep the CONFLICT answer unchanged.
+  3. The CONFLICT text itself says what to check: 'If your last preflight or submit reported SYNCED, use the new base it gave; otherwise the cell was taken over.'
+  4. Tests in a new test/sync_ownership.test.ts with test/fakegh.ts (node:test, assert/strict, same style as the other tests in test/): preflight on a behind branch returns the SYNCED line with the new base; apply_changes with the old base after a sync commit succeeds with the new base; the same after a heal commit; after an adopt commit it still answers CONFLICT; after a sync then an adopt it still answers CONFLICT; cell_signal behaves the same; no sync needed leaves the answers unchanged.
+inputs: []
+after: [C-001, C-052, C-061]
+provides:
+  - "Auto sync keeps chat ownership: no false CONFLICT"
+read:
+  - src/engine.ts
+  - src/apply.ts
+  - src/signal.ts
+  - src/api.ts
+allowed_paths:
+  - src/engine.ts
+  - src/apply.ts
+  - src/signal.ts
+  - test/sync_ownership.test.ts
+outputs:
+  - src/engine.ts
+  - src/apply.ts
+  - src/signal.ts
+  - test/sync_ownership.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The project's tests use node:test and node:assert/strict (no vitest). Existing protocol and conflict tests must stay green.

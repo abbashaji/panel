@@ -22,4 +22,3 @@ acceptance:
   - cmd: grep -qx b parts/b.txt
 notes: |
   Expected: the chat finds that no contract is given and reports it with cell_note instead of guessing.
-  The runbook tells the owner what to answer: the line is just the letter b.

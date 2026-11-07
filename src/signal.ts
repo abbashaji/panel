@@ -7,6 +7,7 @@ import type { GitHubApi } from "./api.ts";
 import { ID_RE } from "./plan.ts";
 import { branchOf, errText, invalidText, loadPlan, notClaimed, oneLine, short, type EngineOptions } from "./common.ts";
 import { carry } from "./trailers.ts";
+import { CONFLICT_HINT, movedBySync } from "./apply.ts";
 
 export async function cellSignal(
   api: GitHubApi,
@@ -31,9 +32,13 @@ export async function cellSignal(
   if (!branch) return notClaimed(api, repo, id);
   const base = String(a.base ?? "").trim().toLowerCase();
   if (!/^[0-9a-f]{7,40}$/.test(base)) return "MISSING_BASE: pass base = the 7-character sha from the last CLAIMED / RESUME / ok response";
+  let bySync = false;
   if (!branch.oid.startsWith(base)) {
-    const tip = oneLine(branch.message.split("\n", 1)[0] ?? "", 120);
-    return `CONFLICT ${id}: ${branchOf(id)} is at ${short(branch.oid)}, not ${base.slice(0, 7)}: the cell was taken over or another chat is writing. Nothing was written. Stop and call next_cell. tip: ${tip}`;
+    if (await movedBySync(api, repo, id, base)) bySync = true;
+    else {
+      const tip = oneLine(branch.message.split("\n", 1)[0] ?? "", 120);
+      return `CONFLICT ${id}: ${branchOf(id)} is at ${short(branch.oid)}, not ${base.slice(0, 7)}. ${CONFLICT_HINT} Nothing was written. Stop and call next_cell. tip: ${tip}`;
+    }
   }
 
   let subject: string;
@@ -54,7 +59,8 @@ export async function cellSignal(
     const tip = oneLine(branch.message.split("\n", 1)[0] ?? "", 120);
     return `CONFLICT ${id}: ${branchOf(id)} moved while you were writing (taken over, or another chat is writing). Nothing was written. Stop and call next_cell. tip: ${tip}`;
   }
-  if (a.kind === "heartbeat") return `ok ${short(oid)} (next base=${short(oid)})`;
-  if (a.kind === "release") return `released ${id}: the lease is over; another chat will adopt it`;
-  return `feedback recorded for ${id}: stop now; a human decides`;
+  const note = bySync ? `\nbase moved by an automatic sync; new base=${short(oid)}` : "";
+  if (a.kind === "heartbeat") return `ok ${short(oid)} (next base=${short(oid)})${note}`;
+  if (a.kind === "release") return `released ${id}: the lease is over; another chat will adopt it${note}`;
+  return `feedback recorded for ${id}: stop now; a human decides${note}`;
 }
