@@ -3,7 +3,7 @@
 
 ## Blueprint Panel
 
-The Blueprint Panel is a web page served by the Worker (same origin, no CORS) plus a small offline Windows launcher. The panel shows every cell as a left-to-right dependency graph colored by status, highlights the bottleneck, lets a teammate start a cell, and lets the owner Release or Hand over a stuck cell. The launcher opens the chosen browser profile on `claude.ai/new?q=<prompt>`; the teammate presses Send. It replaces `blueprint-limit-ext`; automatic release at the usage limit and automatic chat-link capture are gone (use Release in the panel; the chat link is an optional paste box).
+The Blueprint Panel is a web page served by the Worker (same origin, no CORS) plus a small offline Windows launcher. The panel shows every cell as a left-to-right dependency graph colored by status, highlights the bottleneck, lets a teammate start a cell, and lets the owner Release or Hand over a stuck cell. The launcher opens the chosen browser profile on `claude.ai/new?q=<prompt>`. By default the prompt is pre-filled and you press Send; auto-send is an opt-in helper, see `docs/autosend.md`. It replaces `blueprint-limit-ext`; automatic release at the usage limit and automatic chat-link capture are gone (use Release in the panel; the chat link is an optional paste box).
 
 Design details and contracts: `docs/panel-contracts.md`. What is not verified: `docs/panel-integration.md`.
 

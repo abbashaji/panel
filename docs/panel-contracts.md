@@ -7,7 +7,7 @@ The confirmed contracts for the Blueprint Panel. Every later cell codes against 
 A web panel plus a small Windows launcher, replacing `blueprint-limit-ext`.
 
 - **Panel** (web, served by the existing Worker): shows every cell as a left-to-right dependency graph, color-coded by status; finds the bottleneck; lets a teammate start a cell; lets the owner Release / Hand over a stuck cell.
-- **Launcher** (Windows, local, offline): opens the chosen browser profile on `claude.ai/new?q=<prompt>`; the teammate presses Send.
+- **Launcher** (Windows, local, offline): opens the chosen browser profile on `claude.ai/new?q=<prompt>`. By default the prompt is pre-filled and the teammate presses Send; auto-send is an opt-in helper, see `docs/autosend.md`.
 - **No extension.** Lost on purpose: automatic release at the usage limit (use Release in the panel) and automatic chat-link capture (optional paste box).
 
 ### 1.1 Decisions already made (do not reopen)
@@ -16,7 +16,7 @@ A web panel plus a small Windows launcher, replacing `blueprint-limit-ext`.
 2. Local-first launcher on Windows only; no Worker fallback for launching.
 3. Browser data never reaches a web page or service. The profile picker lives in the launcher's own window.
 4. The panel sends only `repo + cell id` (plus the display name `who`) to the launcher. The launcher builds the prompt itself from a fixed template.
-5. The prompt is pre-filled, never auto-sent. The launcher always shows a confirm window.
+5. By default the prompt is pre-filled and the teammate presses Send; auto-send is an opt-in helper (`docs/autosend.md`). The launcher always shows a confirm window.
 6. Any teammate can use Open chat on a running or lease expired cell; the launcher opens it when this PC has a local record of the chat.
 7. Local records are deleted when the cell is merged (green), or after 14 days.
 8. Stack: React 18 + TypeScript + Vite, Tailwind, Radix UI, `@xyflow/react` + dagre (rankdir LR), TanStack Query, Vitest. Launcher: C# .NET 8 WinForms, self-contained single exe.
@@ -93,7 +93,7 @@ The only input is a URL; treat it as hostile.
 - `blueprint://start?repo=<owner/name>&cell=<C-NNN>&who=<name>`: confirm window, then launch.
 - `blueprint://open?repo=&cell=`: "my cell" window (open claude.ai in the saved profile; optional chat link box).
 - `blueprint://sync?repo=<owner/name>&merged=C-001,C-002`: silent; deletes local records of merged cells.
-- `blueprint://startmany?repo=<owner/name>&who=<name>&cells=C-001,C-002,...`: 1 to 12 distinct cell ids. The launcher shows a profile picker for the cells and starts one cell per chosen profile (each start keeps its own confirm window; nothing is auto-sent).
+- `blueprint://startmany?repo=<owner/name>&who=<name>&cells=C-001,C-002,...`: 1 to 12 distinct cell ids. The launcher shows a profile picker for the cells and starts one cell per chosen profile (each start keeps its own confirm window; nothing is auto-sent unless the Auto-send checkbox is on, see 4.6).
 
 ### 4.1 Validation (reject otherwise)
 
@@ -137,6 +137,13 @@ Chat link accepted only if it matches `^https://claude\.ai/chat/[0-9a-f-]{36}$`.
 ### 4.5 Registration and network
 
 `HKCU\Software\Classes\blueprint` (no admin rights). The installer script is readable text. The launcher opens **no network connection** (test: no `System.Net` usage; firewall-block test).
+
+### 4.6 Auto-send (opt-in)
+
+- By default the prompt is pre-filled and the teammate presses Send. Auto-send is an opt-in helper; details in `docs/autosend.md`.
+- It applies to cell chats only (`start` and `startmany`). It never applies to the Steward: the Steward window has no checkbox and its URL is never marked.
+- The setting is one bool, `autoSend` (default false), in `%LOCALAPPDATA%\BlueprintLauncher\settings.json`.
+- When on, the launcher appends `&autosend=1` through `PromptBuilder.WithAutoSend`, which accepts only a URL built for a valid repo and cell from the fixed template. The launcher itself stays offline; the click is done by a userscript in the browser after a 3 second cancel banner.
 
 ## 5. UI spec
 
