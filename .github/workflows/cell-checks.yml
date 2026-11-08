@@ -128,6 +128,9 @@ jobs:
         # Without it, a Python default applies, so a brand-new repo needs no setup at all.
         run: |
           if [ -f trusted/.github/blueprint-setup.sh ]; then
+            # the job's own command, read here (never through GITHUB_OUTPUT) and passed as an environment variable
+            ACCEPT_CMD="$(jq -r '.cmds[${{ matrix.index }}]' check/check.json)"
+            export ACCEPT_CMD
             cd work && bash ../trusted/.github/blueprint-setup.sh
           else
             cd work
