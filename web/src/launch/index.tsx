@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { reserve } from "../core/api";
+import { ApiError, reserve, stewardCode } from "../core/api";
 import { readStore, writeStore } from "../core/storage";
 import { usePanel } from "../core/store";
 import type { PanelState, ReserveResult } from "../core/types";
+import OwnerKeyDialog, { forgetOwnerKey, readOwnerKey, saveOwnerKey } from "./OwnerKeyDialog";
 import { CELL_RE, MAX_CELLS, WHO_RE, openUrl, startManyUrl, startUrl, stewardUrl, syncUrl, transport } from "./protocol";
 
 const WHO_KEY = "bp_who";
@@ -88,7 +89,11 @@ function makeRefresh(panel: object): () => void {
   };
 }
 
-type Dlg = { phase: "name"; id?: string; many?: string[]; steward?: boolean } | { phase: "confirm"; id: string; url: string; who: string } | null;
+type Dlg =
+  | { phase: "name"; id?: string; many?: string[]; steward?: boolean }
+  | { phase: "confirm"; id: string; url: string; who: string }
+  | { phase: "key"; who: string; wrong: boolean; asked: boolean } // no key in here: the dialog keeps the typed key itself
+  | null;
 
 /** Registers the launcher hooks with usePanel().registerLauncher and renders the start dialog. */
 export default function LaunchProvider({ children }: { children?: ReactNode }) {
@@ -291,19 +296,58 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     [fire],
   );
 
-  /** open blueprint://steward; no reservation, the Worker lease decides who wins (a second chat gets STEWARD_BUSY) */
-  const doSteward = useCallback((who: string) => {
-    const { repo: r, toast: say, refresh: again } = live.current;
-    let url: string;
-    try {
-      url = stewardUrl(r, who);
-    } catch (e) {
-      say(`Cannot build the launcher link: ${errText(e)}`, "error");
-      return;
-    }
-    fire(url);
-    again();
-  }, [fire]);
+  /**
+   * Trade the admin key for a short-lived code and open blueprint://steward with it; no reservation, the Worker lease decides
+   * who wins (a second chat gets STEWARD_BUSY). The key goes to the Worker only: never into a link, toast, log or state.
+   * reasked: the key was already asked for again after a 403. remember: set only when the key was just typed.
+   */
+  const runSteward = useCallback(
+    async (who: string, key: string, reasked: boolean, remember?: boolean) => {
+      if (busy.current) return;
+      busy.current = true;
+      const { repo: r, toast: say, refresh: again } = live.current;
+      try {
+        let code: string;
+        try {
+          code = (await stewardCode(r, key)).code;
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 403) {
+            forgetOwnerKey();
+            if (reasked) say("The admin key was not accepted.", "error");
+            else setDlg({ phase: "key", who, wrong: true, asked: true });
+            return;
+          }
+          say(e instanceof ApiError ? `Could not start the steward (HTTP ${e.status}).` : "Could not start the steward.", "error");
+          return;
+        }
+        if (remember !== undefined) saveOwnerKey(key, remember);
+        let url: string;
+        try {
+          url = stewardUrl(r, who, code);
+        } catch (e) {
+          say(`Cannot build the launcher link: ${errText(e)}`, "error");
+          return;
+        }
+        fire(url);
+        again();
+      } finally {
+        busy.current = false;
+      }
+    },
+    [fire],
+  );
+
+  const doSteward = useCallback(
+    (who: string) => {
+      const key = readOwnerKey();
+      if (key === null) {
+        setDlg({ phase: "key", who, wrong: false, asked: false });
+        return;
+      }
+      void runSteward(who, key, false);
+    },
+    [runSteward],
+  );
 
   const startSteward = useCallback(() => {
     const who = readWho();
@@ -361,6 +405,13 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     else if (id) void doStart(id, v);
   };
 
+  const submitKey = (key: string, remember: boolean) => {
+    if (dlg?.phase !== "key") return;
+    const { who, asked } = dlg;
+    setDlg(null);
+    void runSteward(who, key, asked, remember);
+  };
+
   const confirm = () => {
     if (dlg?.phase !== "confirm") return;
     const { url } = dlg;
@@ -377,7 +428,13 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   return (
     <>
       {children}
-      <Dialog.Root open={dlg !== null} onOpenChange={(o) => !o && setDlg(null)}>
+      <OwnerKeyDialog
+        open={dlg?.phase === "key"}
+        wrong={dlg?.phase === "key" && dlg.wrong}
+        onSubmit={submitKey}
+        onCancel={() => setDlg(null)}
+      />
+      <Dialog.Root open={dlg !== null && dlg.phase !== "key"} onOpenChange={(o) => !o && setDlg(null)}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
           {dlg?.phase === "name" && (

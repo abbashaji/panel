@@ -4,6 +4,8 @@
 export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 export const CELL_RE = /^C-\d{3,5}$/;
 export const WHO_RE = /^[\w .-]{1,40}$/;
+/** one-time steward code the Worker hands out (C-077) */
+export const CODE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 export const MAX_URL = 400;
 /** most cells one startmany link may carry */
 export const MAX_CELLS = 12;
@@ -45,11 +47,14 @@ export function startManyUrl(repo: string, who: string, cells: readonly string[]
   return fit(`blueprint://startmany?repo=${enc(repo)}&who=${enc(who)}&cells=${cells.join(",")}`);
 }
 
-/** blueprint://steward?repo=&who=  (same checks as startUrl; no cell) */
-export function stewardUrl(repo: string, who: string): string {
+/** blueprint://steward?repo=&who=[&code=]  (same checks as startUrl; no cell; a given code must match CODE_RE; whole link max 400) */
+export function stewardUrl(repo: string, who: string, code?: string): string {
   need(REPO_RE, repo, "repo");
   need(WHO_RE, who, "name");
-  return fit(`blueprint://steward?repo=${enc(repo)}&who=${enc(who)}`);
+  const base = `blueprint://steward?repo=${enc(repo)}&who=${enc(who)}`;
+  if (code === undefined) return fit(base);
+  need(CODE_RE, code, "code");
+  return fit(`${base}&code=${code}`);
 }
 
 /** blueprint://open?repo=&cell= */

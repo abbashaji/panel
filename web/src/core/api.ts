@@ -139,3 +139,17 @@ export async function stewardRelease(repo: string, adminKey: string): Promise<St
   const res = await post("/steward-release", body);
   return (await res.json()) as StewardReleaseResult;
 }
+
+/** Answer of POST /steward-code: a short-lived code for blueprint://steward. */
+export interface StewardCodeResult {
+  ok: boolean;
+  code: string;
+  expires_in: number;
+}
+
+/** Admin action: trades the admin key for a short-lived steward code, so the key never goes into a link. Never log `adminKey`. 403 gives ApiError status 403. */
+export async function stewardCode(repo: string, adminKey: string): Promise<StewardCodeResult> {
+  if (mock) return { ok: true, code: "sample-steward-code-0001", expires_in: 300 };
+  const res = await post("/steward-code", { repo, admin_key: adminKey });
+  return (await res.json()) as StewardCodeResult;
+}
