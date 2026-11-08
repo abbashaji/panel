@@ -1,17 +1,26 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reserve } from "../core/api";
+import { ApiError, reserve, stewardCode } from "../core/api";
 import { usePanel } from "../core/store";
 import LaunchProvider from "./index";
 import RunReadyDialog from "./RunReadyDialog";
+import OwnerKeyDialog from "./OwnerKeyDialog";
 import { openUrl, startManyUrl, startUrl, stewardUrl, syncUrl, transport } from "./protocol";
 
 vi.mock("../core/store", () => ({ usePanel: vi.fn() }));
-vi.mock("../core/api", () => ({ reserve: vi.fn() }));
+vi.mock("../core/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../core/api")>()),
+  reserve: vi.fn(),
+  stewardCode: vi.fn(),
+}));
 
 const REPO = "abbashaji/panel";
 const SYNC_ALL = `blueprint://sync?repo=abbashaji%2Fpanel&merged=C-001`;
+const KEY = "k-test-secret-1";
+const CODE = "abcDEF0123456789_-xyz";
+const CODE_OK = { ok: true, code: CODE, expires_in: 300 };
+const STEWARD_URL = `blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`;
 
 describe("protocol builders", () => {
   it("build encoded URLs from valid input", () => {
@@ -459,6 +468,20 @@ describe("stewardUrl", () => {
     const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
     expect(() => stewardUrl(repo, "x".repeat(40))).not.toThrow();
   });
+
+  it("adds a valid code", () => {
+    expect(stewardUrl(REPO, "Ann", CODE)).toBe(`blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`);
+    expect(stewardUrl(REPO, "Ann", "a".repeat(16))).toContain("&code=");
+    expect(stewardUrl(REPO, "Ann", "a".repeat(64))).toContain("&code=");
+  });
+
+  it("refuses a bad code and a link over 400 characters", () => {
+    for (const code of ["", "short", "a".repeat(15), "a".repeat(65), `${"a".repeat(16)}&x=1`, `${"a".repeat(16)}\n`, "a b".repeat(8)]) {
+      expect(() => stewardUrl(REPO, "Ann", code)).toThrow();
+    }
+    const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
+    expect(() => stewardUrl(repo, "x".repeat(40), "c".repeat(64))).toThrow(/too long/);
+  });
 });
 
 describe("startSteward", () => {
@@ -488,6 +511,8 @@ describe("startSteward", () => {
     go = vi.spyOn(transport, "go").mockImplementation(() => {});
     vi.spyOn(transport, "silent").mockImplementation(() => {});
     watch = vi.spyOn(transport, "watch").mockImplementation(() => {});
+    window.sessionStorage.clear();
+    vi.mocked(stewardCode).mockReset();
     render(
       <LaunchProvider>
         <div>child</div>
@@ -504,23 +529,30 @@ describe("startSteward", () => {
     expect(registered.startSteward).toBeTypeOf("function");
   });
 
-  it("fires the steward URL once, without reserving, then refreshes", () => {
+  it("fires the steward URL with the code once, without reserving, then refreshes", async () => {
     window.localStorage.setItem("bp_who", "Ann");
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
     registered.startSteward!();
-    expect(go).toHaveBeenCalledTimes(1);
-    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(go).toHaveBeenCalledWith(STEWARD_URL);
     expect(reserve).not.toHaveBeenCalled();
     expect(refreshAfterAction).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the launcher hint when the launcher is missing", () => {
+  it("shows the launcher hint when the launcher is missing", async () => {
     window.localStorage.setItem("bp_who", "Ann");
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
     watch.mockImplementation((onMissing: () => void) => onMissing());
     registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
     expect(toast).toHaveBeenCalledWith("Nothing opened? Install the launcher first: run launcher/install.ps1, then try again.", "info");
   });
 
   it("asks for a name first when none is saved", async () => {
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
     registered.startSteward!();
     const input = await screen.findByLabelText("Display name");
     expect(go).not.toHaveBeenCalled();
@@ -530,9 +562,169 @@ describe("startSteward", () => {
     fireEvent.change(input, { target: { value: "Ann" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
-    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
+    expect(go).toHaveBeenCalledWith(STEWARD_URL);
     expect(window.localStorage.getItem("bp_who")).toBe("Ann");
     expect(reserve).not.toHaveBeenCalled();
+  });
+});
+
+describe("startSteward owner key", () => {
+  const toast = vi.fn();
+  let registered: { startSteward?: () => void } = {};
+  const panel = {
+    repo: REPO,
+    state: { cells: [] },
+    toast,
+    registerLauncher: (part: typeof registered) => {
+      registered = part;
+      return () => {};
+    },
+  };
+  let go: ReturnType<typeof vi.spyOn>;
+
+  const enter = (value: string, remember = false) => {
+    fireEvent.change(screen.getByLabelText("Admin key"), { target: { value } });
+    if (remember) fireEvent.click(screen.getByLabelText(/Remember on this computer/));
+    fireEvent.click(screen.getByRole("button", { name: "Start steward" }));
+  };
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem("bp_who", "Ann");
+    toast.mockReset();
+    registered = {};
+    vi.mocked(usePanel).mockReturnValue(panel as never);
+    vi.mocked(stewardCode).mockReset();
+    go = vi.spyOn(transport, "go").mockImplementation(() => {});
+    vi.spyOn(transport, "silent").mockImplementation(() => {});
+    vi.spyOn(transport, "watch").mockImplementation(() => {});
+    render(
+      <LaunchProvider>
+        <div>child</div>
+      </LaunchProvider>,
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("a stored key means no dialog", async () => {
+    window.localStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
+    registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+    expect(stewardCode).toHaveBeenCalledWith(REPO, KEY);
+    expect(go).toHaveBeenCalledWith(STEWARD_URL);
+  });
+
+  it("no key asks once, then a remembered key needs no dialog", async () => {
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    expect(screen.getByText(/plain browser storage/)).toBeTruthy();
+    expect(stewardCode).not.toHaveBeenCalled();
+    enter(KEY, true);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(2));
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+    expect(stewardCode).toHaveBeenCalledTimes(2);
+  });
+
+  it("remember writes localStorage and not sessionStorage", async () => {
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    enter(KEY, true);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(window.localStorage.getItem("bp_owner_key")).toBe(KEY);
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("not remembering writes sessionStorage only", async () => {
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    enter(KEY, false);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBe(KEY);
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("a 403 clears the stored key and asks again once", async () => {
+    window.localStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockRejectedValueOnce(new ApiError(403, "forbidden")).mockResolvedValueOnce(CODE_OK);
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    expect(screen.getByRole("alert").textContent).toMatch(/not accepted/);
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+    expect(go).not.toHaveBeenCalled();
+    enter("k-other-key-2");
+    await waitFor(() => expect(go).toHaveBeenCalledWith(STEWARD_URL));
+    expect(stewardCode).toHaveBeenLastCalledWith(REPO, "k-other-key-2");
+  });
+
+  it("a second 403 stops with a toast and opens nothing", async () => {
+    window.localStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockRejectedValue(new ApiError(403, "forbidden"));
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    enter("k-other-key-2");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The admin key was not accepted.", "error"));
+    expect(go).not.toHaveBeenCalled();
+    expect(stewardCode).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("the opened URL has the code and never the key; no toast shows the key or the code", async () => {
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockResolvedValue(CODE_OK);
+    registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    const url = String(go.mock.calls[0]![0]);
+    expect(url).toContain(`code=${CODE}`);
+    expect(url).not.toContain(KEY);
+    for (const c of toast.mock.calls) {
+      expect(String(c[0])).not.toContain(KEY);
+      expect(String(c[0])).not.toContain(CODE);
+    }
+  });
+
+  it("another error shows a toast without the key", async () => {
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockRejectedValue(new ApiError(500, `boom ${KEY}`));
+    registered.startSteward!();
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(String(toast.mock.calls[0]![0])).not.toContain(KEY);
+    expect(go).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBe(KEY);
+  });
+});
+
+describe("OwnerKeyDialog", () => {
+  afterEach(cleanup);
+
+  it("Forget the key removes the key from both storages", () => {
+    window.localStorage.setItem("bp_owner_key", KEY);
+    window.sessionStorage.setItem("bp_owner_key", KEY);
+    render(<OwnerKeyDialog open onSubmit={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Forget the key" }));
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("hands the key to onSubmit with the remember choice", () => {
+    const onSubmit = vi.fn();
+    render(<OwnerKeyDialog open onSubmit={onSubmit} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Admin key"), { target: { value: ` ${KEY} ` } });
+    fireEvent.click(screen.getByRole("button", { name: "Start steward" }));
+    expect(onSubmit).toHaveBeenCalledWith(KEY, false);
   });
 });
 
