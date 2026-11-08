@@ -1,19 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
-
-// The cookie check itself belongs to auth.ts; here a stand-in reads a header so the route's order of gates is what is tested.
-vi.mock("../src/panel/auth.ts", async (orig) => {
-  const real: any = await orig();
-  return {
-    ...real,
-    requirePanelAuth: async (req: Request) => (req.headers.get("x-test-cookie") === "ok" ? null : real.json(401, { error: "unauthorized" })),
-  };
-});
-
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { handlePanelAction } from "../src/panel/actions.ts";
+import { COOKIE, makeSession } from "../src/panel/auth.ts";
 
-const REPO = "owner/name";
+const PATH = "/panel/api/steward-code";
+const REPO = "o/r";
 const KEY = "s3cret-admin-key";
-const ctx = {} as ExecutionContext;
+const ctx = {} as any;
 
 function fakeKv() {
   const m = new Map<string, string>();
@@ -24,66 +17,69 @@ function fakeKv() {
     delete: async (k: string) => void m.delete(k),
   };
 }
-function env(kv: unknown) {
-  return { ADMIN_TOKEN: KEY, OAUTH_KV: kv, GITHUB_REPO: REPO, ALLOWED_REPOS: REPO } as any;
+function mkEnv(kv: unknown): any {
+  return { PANEL_TOKEN: "pw", ADMIN_TOKEN: KEY, ALLOWED_REPOS: REPO, GITHUB_TOKEN: "x", OAUTH_KV: kv };
 }
-function post(body: unknown, cookie = true) {
-  return new Request("https://x.test/panel/api/steward-code", {
-    method: "POST",
-    headers: cookie ? { "x-test-cookie": "ok", "content-type": "application/json" } : { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function call(env: any, body: unknown, cookie = true): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (cookie) headers.cookie = `${COOKIE}=${await makeSession(env)}`;
+  const req = new Request(`https://x.test${PATH}`, { method: "POST", headers, body: JSON.stringify(body) });
+  return (await handlePanelAction(req, env, ctx, PATH))!;
 }
-const call = (e: any, body: unknown, cookie = true) => handlePanelAction(post(body, cookie), e, ctx, "/panel/api/steward-code");
 const codeKeys = (kv: { m: Map<string, string> }) => [...kv.m.keys()].filter((k) => k.startsWith("stewardcode:"));
 
-describe("POST /panel/api/steward-code", () => {
-  it("mints a code with the right key", async () => {
-    const kv = fakeKv();
-    const res = (await call(env(kv), { repo: REPO, admin_key: KEY }))!;
-    expect(res.status).toBe(200);
-    const out: any = await res.json();
-    expect(out.ok).toBe(true);
-    expect(out.expires_in).toBe(600);
-    expect(out.code).toMatch(/^[A-Za-z0-9_-]{32}$/);
-    expect(codeKeys(kv)).toHaveLength(1);
-  });
+test("steward-code: mints a code with the right key", async () => {
+  const kv = fakeKv();
+  const res = await call(mkEnv(kv), { repo: REPO, admin_key: KEY });
+  assert.equal(res.status, 200);
+  const out: any = await res.json();
+  assert.equal(out.ok, true);
+  assert.equal(out.expires_in, 600);
+  assert.match(out.code, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(codeKeys(kv).length, 1);
+});
 
-  it("wrong key is 403 and mints nothing", async () => {
-    const kv = fakeKv();
-    const res = (await call(env(kv), { repo: REPO, admin_key: "nope" }))!;
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "forbidden" });
-    expect(kv.m.size).toBe(0);
-  });
+test("steward-code: wrong key is 403 and mints nothing", async () => {
+  const kv = fakeKv();
+  const res = await call(mkEnv(kv), { repo: REPO, admin_key: "nope" });
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "forbidden" });
+  assert.equal(kv.m.size, 0);
+});
 
-  it("no cookie is 401 and mints nothing", async () => {
-    const kv = fakeKv();
-    const res = (await call(env(kv), { repo: REPO, admin_key: KEY }, false))!;
-    expect(res.status).toBe(401);
-    expect(kv.m.size).toBe(0);
-  });
+test("steward-code: no cookie is 401 and mints nothing", async () => {
+  const kv = fakeKv();
+  const res = await call(mkEnv(kv), { repo: REPO, admin_key: KEY }, false);
+  assert.equal(res.status, 401);
+  assert.equal(kv.m.size, 0);
+});
 
-  it("allows 5 codes per minute per repo, then 429", async () => {
-    const kv = fakeKv();
-    for (let i = 0; i < 5; i++) expect((await call(env(kv), { repo: REPO, admin_key: KEY }))!.status).toBe(200);
-    const res = (await call(env(kv), { repo: REPO, admin_key: KEY }))!;
-    expect(res.status).toBe(429);
-    expect(codeKeys(kv)).toHaveLength(5);
-  });
+test("steward-code: 5 codes per minute per repo, then 429", async () => {
+  const kv = fakeKv();
+  const env = mkEnv(kv);
+  for (let i = 0; i < 5; i++) assert.equal((await call(env, { repo: REPO, admin_key: KEY })).status, 200);
+  const res = await call(env, { repo: REPO, admin_key: KEY });
+  assert.equal(res.status, 429);
+  assert.equal(codeKeys(kv).length, 5);
+});
 
-  it("KV missing is 503 without leaking key or code", async () => {
-    const res = (await call(env(undefined), { repo: REPO, admin_key: KEY }))!;
-    expect(res.status).toBe(503);
-    const text = await res.text();
-    expect(text).not.toContain(KEY);
-    expect(text).not.toMatch(/[A-Za-z0-9_-]{32}/);
-  });
+test("steward-code: KV missing is 503 without leaking key or code", async () => {
+  const res = await call(mkEnv(undefined), { repo: REPO, admin_key: KEY });
+  assert.equal(res.status, 503);
+  const text = await res.text();
+  assert.ok(!text.includes(KEY));
+  assert.doesNotMatch(text, /[A-Za-z0-9_-]{32}/);
+});
 
-  it("a failing KV is 503 without leaking", async () => {
-    const kv = { get: async () => { throw new Error(`boom ${KEY}`); }, put: async () => {}, delete: async () => {} };
-    const res = (await call(env(kv), { repo: REPO, admin_key: KEY }))!;
-    expect(res.status).toBe(503);
-    expect(await res.text()).not.toContain(KEY);
-  });
+test("steward-code: a failing KV is 503 without leaking", async () => {
+  const kv = {
+    get: async () => {
+      throw new Error(`boom ${KEY}`);
+    },
+    put: async () => {},
+    delete: async () => {},
+  };
+  const res = await call(mkEnv(kv), { repo: REPO, admin_key: KEY });
+  assert.equal(res.status, 503);
+  assert.ok(!(await res.text()).includes(KEY));
 });
