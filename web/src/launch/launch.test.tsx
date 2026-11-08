@@ -1,16 +1,19 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reserve } from "../core/api";
+import { reserve, stewardCode } from "../core/api";
 import { usePanel } from "../core/store";
 import LaunchProvider from "./index";
+import OwnerKeyDialog from "./OwnerKeyDialog";
 import RunReadyDialog from "./RunReadyDialog";
 import { openUrl, startManyUrl, startUrl, stewardUrl, syncUrl, transport } from "./protocol";
 
 vi.mock("../core/store", () => ({ usePanel: vi.fn() }));
-vi.mock("../core/api", () => ({ reserve: vi.fn() }));
+vi.mock("../core/api", () => ({ reserve: vi.fn(), stewardCode: vi.fn() }));
 
 const REPO = "abbashaji/panel";
+const KEY = "s3cret-admin-key";
+const CODE = "fakeStewardCode0123456789";
 const SYNC_ALL = `blueprint://sync?repo=abbashaji%2Fpanel&merged=C-001`;
 
 describe("protocol builders", () => {
@@ -449,6 +452,16 @@ describe("LaunchProvider refreshes after every start path", () => {
 });
 
 describe("stewardUrl", () => {
+  it("adds a valid code, and refuses a bad code or a link over 400 characters", () => {
+    expect(stewardUrl(REPO, "Ann", CODE)).toBe(`blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`);
+    for (const code of ["", "short", "x".repeat(15), "x".repeat(65), `${CODE}&x=1`, `${CODE}\n`, "has space 0123456789"]) {
+      expect(() => stewardUrl(REPO, "Ann", code)).toThrow();
+    }
+    expect(() => stewardUrl(REPO, "Ann", "x".repeat(64))).not.toThrow();
+    const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
+    expect(() => stewardUrl(repo, "x".repeat(40), "c".repeat(64))).toThrow(/too long/);
+  });
+
   it("builds the steward link from valid input", () => {
     expect(stewardUrl(REPO, "Ann B")).toBe("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann%20B");
   });
@@ -482,6 +495,9 @@ describe("startSteward", () => {
     window.localStorage.clear();
     toast.mockReset();
     refreshAfterAction.mockReset();
+    window.sessionStorage.clear();
+    vi.mocked(stewardCode).mockReset();
+    vi.mocked(stewardCode).mockResolvedValue({ ok: true, code: CODE, expires_in: 300 });
     registered = {};
     vi.mocked(usePanel).mockReturnValue(panel as never);
     vi.mocked(reserve).mockReset();
@@ -504,23 +520,144 @@ describe("startSteward", () => {
     expect(registered.startSteward).toBeTypeOf("function");
   });
 
-  it("fires the steward URL once, without reserving, then refreshes", () => {
+  const typeKey = async (value: string, remember = false) => {
+    const input = await screen.findByLabelText("Admin key");
+    fireEvent.change(input, { target: { value } });
+    if (remember) fireEvent.click(screen.getByRole("checkbox", { name: "Remember on this computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  };
+  const forbidden = () => Object.assign(new Error("Wrong admin key"), { status: 403 });
+
+  it("a stored key means no dialog", async () => {
     window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", KEY);
     registered.startSteward!();
-    expect(go).toHaveBeenCalledTimes(1);
-    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
-    expect(reserve).not.toHaveBeenCalled();
-    expect(refreshAfterAction).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+    expect(stewardCode).toHaveBeenCalledTimes(1);
+    expect(stewardCode).toHaveBeenCalledWith(REPO, KEY);
   });
 
-  it("shows the launcher hint when the launcher is missing", () => {
+  it("no key asks once, and the next start needs no dialog", async () => {
     window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    expect(go).not.toHaveBeenCalled();
+    expect(stewardCode).not.toHaveBeenCalled();
+    await typeKey(KEY);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(stewardCode).toHaveBeenCalledWith(REPO, KEY);
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+    registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(2));
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+  });
+
+  it("Remember on this computer writes localStorage and not sessionStorage", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    await typeKey(KEY, true);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(window.localStorage.getItem("bp_owner_key")).toBe(KEY);
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("not remembering writes sessionStorage only", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    await typeKey(KEY);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBe(KEY);
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("a 403 clears the stored key and asks again once", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", "old-wrong-key");
+    vi.mocked(stewardCode).mockRejectedValueOnce(forbidden());
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("not accepted");
+    expect(go).not.toHaveBeenCalled();
+    await typeKey(KEY);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(stewardCode).mock.calls.map((c) => c[1])).toEqual(["old-wrong-key", KEY]);
+  });
+
+  it("a second 403 stops with a toast and forgets the key", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", "old-wrong-key");
+    vi.mocked(stewardCode).mockRejectedValue(forbidden());
+    registered.startSteward!();
+    await typeKey("another-wrong-key");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The admin key was not accepted.", "error"));
+    expect(stewardCode).toHaveBeenCalledTimes(2);
+    expect(go).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Admin key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("the opened URL has the code and never the key, and no toast shows either", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    await typeKey(KEY, true);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    const url = String(go.mock.calls[0]![0]);
+    expect(url).toContain(`&code=${CODE}`);
+    expect(url).not.toContain(KEY);
+    for (const call of toast.mock.calls) {
+      expect(String(call[0])).not.toContain(KEY);
+      expect(String(call[0])).not.toContain(CODE);
+    }
+  });
+
+  it("another error shows a toast without the key and opens nothing", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", KEY);
+    vi.mocked(stewardCode).mockRejectedValue(new Error(`boom ${KEY}`));
+    registered.startSteward!();
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Could not get a steward code. Try again.", "error"));
+    expect(go).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("bp_owner_key")).toBe(KEY);
+  });
+
+  it("Cancel opens nothing and keeps nothing", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    registered.startSteward!();
+    await screen.findByLabelText("Admin key");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByLabelText("Admin key")).toBeNull());
+    expect(stewardCode).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("fires the steward URL once with the code, without reserving, then refreshes", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", KEY);
+    registered.startSteward!();
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(go).toHaveBeenCalledWith(`blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`);
+    expect(reserve).not.toHaveBeenCalled();
+    await waitFor(() => expect(refreshAfterAction).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows the launcher hint when the launcher is missing", async () => {
+    window.localStorage.setItem("bp_who", "Ann");
+    window.localStorage.setItem("bp_owner_key", KEY);
     watch.mockImplementation((onMissing: () => void) => onMissing());
     registered.startSteward!();
-    expect(toast).toHaveBeenCalledWith("Nothing opened? Install the launcher first: run launcher/install.ps1, then try again.", "info");
+    expect(toast).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Nothing opened? Install the launcher first: run launcher/install.ps1, then try again.", "info"),
+    );
   });
 
   it("asks for a name first when none is saved", async () => {
+    window.localStorage.setItem("bp_owner_key", KEY);
     registered.startSteward!();
     const input = await screen.findByLabelText("Display name");
     expect(go).not.toHaveBeenCalled();
@@ -530,9 +667,35 @@ describe("startSteward", () => {
     fireEvent.change(input, { target: { value: "Ann" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
-    expect(go).toHaveBeenCalledWith("blueprint://steward?repo=abbashaji%2Fpanel&who=Ann");
+    expect(go).toHaveBeenCalledWith(`blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`);
     expect(window.localStorage.getItem("bp_who")).toBe("Ann");
     expect(reserve).not.toHaveBeenCalled();
+  });
+});
+
+describe("OwnerKeyDialog", () => {
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
+
+  it("Forget the key removes the key from both storages", () => {
+    window.localStorage.setItem("bp_owner_key", "k1");
+    window.sessionStorage.setItem("bp_owner_key", "k2");
+    render(<OwnerKeyDialog open retry={false} onSubmit={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Forget the key" }));
+    expect(window.localStorage.getItem("bp_owner_key")).toBeNull();
+    expect(window.sessionStorage.getItem("bp_owner_key")).toBeNull();
+  });
+
+  it("says that a remembered key sits in plain browser storage, and hands the key to onSubmit", () => {
+    const onSubmit = vi.fn();
+    render(<OwnerKeyDialog open retry={false} onSubmit={onSubmit} onCancel={() => {}} />);
+    expect(screen.getByText(/plain text in this browser's storage/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Admin key"), { target: { value: ` ${KEY} ` } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onSubmit).toHaveBeenCalledWith(KEY, false);
   });
 });
 

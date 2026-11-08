@@ -8,7 +8,7 @@ import { setMockMode } from "../core/api";
 import { STATUS_META } from "../core/status";
 import { POLL_MS } from "../core/store";
 import { transport } from "../launch/protocol";
-import { ADMIN_KEY, NOW, REPO, createFakeWorker, type FakeWorker } from "./fakeWorker";
+import { ADMIN_KEY, NOW, REPO, STEWARD_CODE, createFakeWorker, type FakeWorker } from "./fakeWorker";
 
 const WHO = "Tester";
 const REPO_Q = "abbashaji%2Fpanel";
@@ -95,9 +95,10 @@ describe("panel app with a fake Worker", () => {
     const fake = createFakeWorker();
     await mount(fake);
     expect(screen.queryByRole("button", { name: "Resume steward" })).toBeNull();
+    window.localStorage.setItem("bp_owner_key", ADMIN_KEY);
     fireEvent.click(await screen.findByRole("button", { name: "Start steward" }));
-    expect(go).toHaveBeenCalledTimes(1);
-    expect(go).toHaveBeenCalledWith(`blueprint://steward?repo=${REPO_Q}&who=${WHO}`);
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    expect(go).toHaveBeenCalledWith(`blueprint://steward?repo=${REPO_Q}&who=${WHO}&code=${STEWARD_CODE}`);
   });
 
   it("2. releasing a running cell with the admin key changes the card at once and after the poll", async () => {
