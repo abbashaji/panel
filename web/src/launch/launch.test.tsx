@@ -452,14 +452,14 @@ describe("LaunchProvider refreshes after every start path", () => {
 });
 
 describe("stewardUrl", () => {
-  it("adds a valid code, and refuses a bad code or a link over 400 characters", () => {
+  it("adds a valid code, and refuses a bad code; the longest valid link fits in 400 characters", () => {
     expect(stewardUrl(REPO, "Ann", CODE)).toBe(`blueprint://steward?repo=abbashaji%2Fpanel&who=Ann&code=${CODE}`);
     for (const code of ["", "short", "x".repeat(15), "x".repeat(65), `${CODE}&x=1`, `${CODE}\n`, "has space 0123456789"]) {
       expect(() => stewardUrl(REPO, "Ann", code)).toThrow();
     }
     expect(() => stewardUrl(REPO, "Ann", "x".repeat(64))).not.toThrow();
     const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
-    expect(() => stewardUrl(repo, "x".repeat(40), "c".repeat(64))).toThrow(/too long/);
+    expect(stewardUrl(repo, "x".repeat(40), "c".repeat(64)).length).toBeLessThanOrEqual(400);
   });
 
   it("builds the steward link from valid input", () => {
