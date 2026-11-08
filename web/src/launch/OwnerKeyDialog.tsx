@@ -84,7 +84,7 @@ function KeyForm({ retry, onSubmit, onCancel }: FormProps) {
 
   return (
     <Dialog.Content className={box}>
-      <Dialog.Title className="text-base font-semibold">Admin key</Dialog.Title>
+      <Dialog.Title className="text-base font-semibold">Admin key needed</Dialog.Title>
       <Dialog.Description className="mt-2 text-sm">
         Enter the admin key once to start the steward. It is sent only to this panel's server and is never put in a link. If you
         tick Remember on this computer, the key is kept as plain text in this browser's storage; otherwise it is kept only until
