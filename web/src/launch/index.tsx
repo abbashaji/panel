@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { reserve } from "../core/api";
+import { reserve, stewardCode } from "../core/api";
+import OwnerKeyDialog, { forgetOwnerKey, readOwnerKey, saveOwnerKey } from "./OwnerKeyDialog";
 import { readStore, writeStore } from "../core/storage";
 import { usePanel } from "../core/store";
 import type { PanelState, ReserveResult } from "../core/types";
@@ -52,6 +53,8 @@ function rememberOwn(repo: string, id: string): void {
 
 const mergedIds = (s: PanelState | null): string[] => (s ? s.cells.filter((c) => c.status === "done").map((c) => c.id) : []);
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** HTTP status of an ApiError-like error, or 0 */
+const statusOf = (e: unknown): number => (typeof e === "object" && e !== null && typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : 0);
 
 const sigKey = (repo: string): string => `bp_sync_sig_${repo}`;
 
@@ -104,6 +107,27 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   const [dlg, setDlg] = useState<Dlg>(null);
   const [name, setName] = useState("");
   const [nameErr, setNameErr] = useState("");
+  const [keyAsk, setKeyAsk] = useState<{ retry: boolean } | null>(null);
+  const keyResolve = useRef<((key: string | null) => void) | null>(null);
+  const stewardBusy = useRef(false);
+
+  /** asks for the admin key; the answer travels only through this promise, never through React state */
+  const askKey = useCallback(
+    (retry: boolean) =>
+      new Promise<string | null>((resolve) => {
+        keyResolve.current?.(null);
+        keyResolve.current = resolve;
+        setKeyAsk({ retry });
+      }),
+    [],
+  );
+
+  const answerKey = (key: string | null) => {
+    const done = keyResolve.current;
+    keyResolve.current = null;
+    setKeyAsk(null);
+    done?.(key);
+  };
 
   /**
    * silent blueprint://sync. Sends only when the sorted set of merged ids differs from the last one sent for this repo,
@@ -292,18 +316,53 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
   );
 
   /** open blueprint://steward; no reservation, the Worker lease decides who wins (a second chat gets STEWARD_BUSY) */
-  const doSteward = useCallback((who: string) => {
-    const { repo: r, toast: say, refresh: again } = live.current;
-    let url: string;
-    try {
-      url = stewardUrl(r, who);
-    } catch (e) {
-      say(`Cannot build the launcher link: ${errText(e)}`, "error");
-      return;
-    }
-    fire(url);
-    again();
-  }, [fire]);
+  const doSteward = useCallback(
+    async (who: string) => {
+      if (stewardBusy.current) return;
+      stewardBusy.current = true;
+      const { repo: r, toast: say, refresh: again } = live.current;
+      try {
+        let key = readOwnerKey();
+        let retried = false;
+        for (;;) {
+          if (!key) {
+            key = await askKey(retried);
+            if (!key) return; // cancelled
+          }
+          let code: string;
+          try {
+            code = (await stewardCode(r, key)).code;
+          } catch (e) {
+            if (statusOf(e) !== 403) {
+              say("Could not get a steward code. Try again.", "error");
+              return;
+            }
+            forgetOwnerKey(); // the stored or typed key is wrong
+            key = null;
+            if (retried) {
+              say("The admin key was not accepted.", "error");
+              return;
+            }
+            retried = true;
+            continue;
+          }
+          let url: string;
+          try {
+            url = stewardUrl(r, who, code);
+          } catch {
+            say("Cannot build the launcher link.", "error");
+            return;
+          }
+          fire(url);
+          again();
+          return;
+        }
+      } finally {
+        stewardBusy.current = false;
+      }
+    },
+    [fire, askKey],
+  );
 
   const startSteward = useCallback(() => {
     const who = readWho();
@@ -313,7 +372,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
       setDlg({ phase: "name", steward: true });
       return;
     }
-    doSteward(who);
+    void doSteward(who);
   }, [doSteward]);
 
   /** my name for my own cells; for others' cells their name */
@@ -356,7 +415,7 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
     writeStore(WHO_KEY, v);
     const { id, many, steward } = dlg;
     setDlg(null);
-    if (steward) doSteward(v);
+    if (steward) void doSteward(v);
     else if (many) void doStartMany(many, v);
     else if (id) void doStart(id, v);
   };
@@ -429,6 +488,15 @@ export default function LaunchProvider({ children }: { children?: ReactNode }) {
           )}
         </Dialog.Portal>
       </Dialog.Root>
+      <OwnerKeyDialog
+        open={keyAsk !== null}
+        retry={keyAsk?.retry === true}
+        onSubmit={(key, remember) => {
+          saveOwnerKey(key, remember);
+          answerKey(key);
+        }}
+        onCancel={() => answerKey(null)}
+      />
     </>
   );
 }
