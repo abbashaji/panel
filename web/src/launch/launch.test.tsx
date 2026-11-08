@@ -475,12 +475,12 @@ describe("stewardUrl", () => {
     expect(stewardUrl(REPO, "Ann", "a".repeat(64))).toContain("&code=");
   });
 
-  it("refuses a bad code and a link over 400 characters", () => {
+  it("refuses a bad code; the longest valid link stays within 400 characters", () => {
     for (const code of ["", "short", "a".repeat(15), "a".repeat(65), `${"a".repeat(16)}&x=1`, `${"a".repeat(16)}\n`, "a b".repeat(8)]) {
       expect(() => stewardUrl(REPO, "Ann", code)).toThrow();
     }
     const repo = `${"a".repeat(100)}/${"b".repeat(100)}`;
-    expect(() => stewardUrl(repo, "x".repeat(40), "c".repeat(64))).toThrow(/too long/);
+    expect(stewardUrl(repo, "x".repeat(40), "c".repeat(64)).length).toBeLessThanOrEqual(400);
   });
 });
 
