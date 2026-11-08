@@ -6,6 +6,8 @@ import type { PanelCell, PanelCounts, PanelState, PanelStatus, PanelSteward, Ste
 export const REPO = "abbashaji/panel";
 export const ADMIN_KEY = "s3cret-admin-key";
 export const PASSWORD = "open-sesame";
+/** the launch code the fake hands out for POST /steward-code (matches ^[A-Za-z0-9_-]{16,64}$) */
+export const STEWARD_CODE = "fakeStewardCode0123456789";
 /** The fixed 'now' of the fake: tests call vi.setSystemTime(NOW). */
 export const NOW = Date.parse("2026-01-01T12:00:00Z");
 
@@ -164,6 +166,8 @@ export function createFakeWorker(opts: { requireLogin?: boolean } = {}): FakeWor
     }
 
     if (body.admin_key !== ADMIN_KEY) return text("Wrong admin key", 403);
+
+    if (path === "/steward-code") return json({ ok: true, code: STEWARD_CODE, expires_in: 300 });
 
     if (path === "/steward-release") {
       const steward: PanelSteward = { status: "released", holder: null, minutesLeft: null, expiredMinutesAgo: null, problems: 0 };

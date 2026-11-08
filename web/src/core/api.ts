@@ -139,3 +139,17 @@ export async function stewardRelease(repo: string, adminKey: string): Promise<St
   const res = await post("/steward-release", body);
   return (await res.json()) as StewardReleaseResult;
 }
+
+/** Answer of POST /steward-code: a short-lived one-time code for the steward link. */
+export interface StewardCodeResult {
+  ok: boolean;
+  code: string;
+  expires_in: number;
+}
+
+/** Asks the Worker for a steward launch code. `adminKey` goes only in the request body. 403 gives ApiError status 403. */
+export async function stewardCode(repo: string, adminKey: string): Promise<StewardCodeResult> {
+  if (mock) return { ok: true, code: "mockstewardcode0123456789", expires_in: 300 };
+  const res = await post("/steward-code", { repo, admin_key: adminKey });
+  return (await res.json()) as StewardCodeResult;
+}
