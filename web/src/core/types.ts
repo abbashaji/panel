@@ -94,3 +94,14 @@ export interface StewardReleaseResult {
   result: string;
   steward: PanelSteward;
 }
+
+/** POST /panel/api/steward-code: mints a one-time Steward start code (admin key required). */
+export interface StewardCodeBody {
+  repo: string;
+  admin_key: string;
+}
+export interface StewardCodeResult {
+  ok: true;
+  code: string;
+  expires_in: number;
+}

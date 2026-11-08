@@ -154,3 +154,14 @@ export interface PanelEnv extends Env {
   /** Workers Static Assets binding for web/dist */
   ASSETS?: Fetcher;
 }
+
+/** POST /panel/api/steward-code: mints a one-time Steward start code (admin key required). */
+export interface StewardCodeBody {
+  repo: string;
+  admin_key: string;
+}
+export interface StewardCodeResult {
+  ok: true;
+  code: string;
+  expires_in: number;
+}
