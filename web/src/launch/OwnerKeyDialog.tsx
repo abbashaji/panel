@@ -134,7 +134,7 @@ export default function OwnerKeyDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
         <Dialog.Content className={box}>
-          <Dialog.Title className="text-base font-semibold">Admin key</Dialog.Title>
+          <Dialog.Title className="text-base font-semibold">Start the steward</Dialog.Title>
           <Dialog.Description className="mt-2 text-sm">
             Starting the steward needs the admin key. Type it once; it is sent to the Worker only, never put in a link. By default it
             is kept for this browser tab only. If you tick the box, it is saved in plain browser storage on this computer, where
