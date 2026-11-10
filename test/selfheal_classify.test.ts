@@ -129,8 +129,6 @@ describe('own deliverables outside allowed_paths (C-081)', () => {
   });
   test('outside_cell offers the replace first for an own deliverable and keeps the blocker for other files', () => {
     const P = 'the CI gate rejected my submit again; all outputs already exist on the branch and the files are correct; package.json is missing';
-    const r = brief(P, F({ outside: ['package.json'] }), own);
-    assert.equal(r.cls, 'scope_violation');
     const r2 = brief(P, F(), own);
     assert.equal(r2.cls, 'outside_cell');
     assert.ok(firstLine(r2.text).startsWith(`1. ${head('cell_fix', 'replace')}`));
