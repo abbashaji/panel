@@ -373,6 +373,22 @@ def superseders(cells):
     return {k: sorted(v) for k, v in out.items()}
 
 
+def unmerged_blockers(d, sup, merged, seen=None):
+    """The cells dependency d still waits for. Merged: none. Superseded and not merged: its superseders that are not
+    merged, each followed down its own chain (a superseder that was itself replaced and never merged counts through
+    its own superseders). Otherwise d itself."""
+    seen = set() if seen is None else seen
+    if d in merged or d in seen:
+        return []
+    if d not in sup:
+        return [d]
+    seen.add(d)
+    out = []
+    for x in sup[d]:
+        out.extend(unmerged_blockers(x, sup, merged, seen))
+    return out
+
+
 def direct_dependents(cells):
     """{cell id: number of cells that must wait for its MERGE (implementation / after edges)}."""
     out = {c: 0 for c in cells}
@@ -466,12 +482,7 @@ def compute_state(cells, merged, claims, lease_minutes=60, ci=None, max_ci_minut
     for cid in todo:
         blockers = []
         for d in graph[cid]:
-            if d in merged:
-                continue
-            if d in sup:
-                blockers.extend(x for x in sup[d] if x not in merged)
-            else:
-                blockers.append(d)
+            blockers.extend(unmerged_blockers(d, sup, merged))
         blockers = list(dict.fromkeys(blockers))
         if blockers:
             waiting.append({"id": cid, "blocked_by": blockers})

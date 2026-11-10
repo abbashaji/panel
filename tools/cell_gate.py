@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blueprintlib import (  # noqa: E402
     BRANCH_RE, acceptance_cmds, git, hard_deps, load_cells, load_config, matches, merged_from_git, superseders,
-    slist, validate,
+    slist, unmerged_blockers, validate,
 )
 
 MAX_SUMMARY_LINES = 30
@@ -32,16 +32,12 @@ MAX_SUMMARY_LINES = 30
 
 def unmerged_deps(cell, cells, merged):
     """Hard dependencies that are not satisfied. A dependency that was superseded and never merged itself is
-    satisfied once every cell that supersedes it is merged (the same rule the Worker and ready_cells use)."""
+    satisfied once every cell that supersedes it is merged, following a chain of replacements (the same rule the Worker and ready_cells use)."""
     sup = superseders(cells)
     out = []
     for d in hard_deps(cell):
-        if d in merged:
-            continue
-        by = sup.get(d)
-        if by and all(x in merged for x in by):
-            continue
-        out.append(d)
+        if unmerged_blockers(d, sup, set(merged)):
+            out.append(d)
     return out
 
 def tail(text: str, n: int = 20) -> str:
