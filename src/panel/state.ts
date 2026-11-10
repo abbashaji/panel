@@ -16,7 +16,7 @@ import {
   transitiveDependents,
   waves,
 } from "../plan.ts";
-import { STEWARD_BRANCH, readTip, stewardStatus, type LeaseTip, type StewardStatus } from "../steward.ts";
+import { STEWARD_BRANCH, isStalled, readTip, stewardStatus, type LeaseTip, type StewardStatus } from "../steward.ts";
 import { isFeedback, isRelease, parseTrailers, subjectOf } from "../trailers.ts";
 import type { CellType, PanelCell, PanelCounts, PanelDepend, PanelEnv, PanelState, PanelSteward, PanelStatus } from "./types.ts";
 
@@ -331,6 +331,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         inputs: inputsOf(c).map((i) => String(i.from)),
         ...(replaced(id) ? { supersededBy: [...sup[id]].sort() } : {}),
         ...(healsByCell[id]?.length ? { heals: healsByCell[id].length } : {}),
+        ...(status === "running" && b && isStalled(id, b.message, claims[id]) ? { stalled: true } : {}),
       };
     }),
   );

@@ -45,6 +45,7 @@ export interface PanelCell {
   resumable?: boolean;
   supersededBy?: string[];
   heals?: number;
+  stalled?: boolean;
 }
 
 export interface PanelCounts {
