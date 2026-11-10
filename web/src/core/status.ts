@@ -48,6 +48,8 @@ export const statusVar = (s: PanelStatus): string => `var(--st-${s})`;
 export interface DisplayCell {
   status: PanelStatus;
   resumable?: boolean | null;
+  /** C-086: true only on a running cell whose chat went quiet; shown as Needs steward, status stays running */
+  stalled?: boolean | null;
 }
 
 export const RESUME_LABEL = "Ready to resume";
@@ -57,12 +59,16 @@ export const RESUME_ICON = "\u21bb";
 /** Only a ready or expired cell can be resumable; a reset cell (resumable false) is plain Ready. */
 export const isResumable = (c: DisplayCell): boolean => c.resumable === true && (c.status === "ready" || c.status === "expired");
 
+/** Only a running cell can show as stalled; the flag is ignored on every other status. */
+export const isStalled = (c: DisplayCell): boolean => c.stalled === true && c.status === "running";
+
 /** The one label every view shows for a cell. Status ids (filters, sort, counts) stay on cell.status. */
-export const displayLabel = (c: DisplayCell): string => (isResumable(c) ? RESUME_LABEL : STATUS_META[c.status].label);
+export const displayLabel = (c: DisplayCell): string =>
+  isResumable(c) ? RESUME_LABEL : isStalled(c) ? STATUS_META.needs_human.label : STATUS_META[c.status].label;
 
 /** Label, color and glyph for a cell. A resumable cell uses the Ready color so it never reads as an alarm. */
 export function displayMeta(c: DisplayCell): StatusMeta & { resume: boolean } {
-  return isResumable(c)
-    ? { ...STATUS_META.ready, label: RESUME_LABEL, icon: RESUME_ICON, resume: true }
-    : { ...STATUS_META[c.status], resume: false };
+  if (isResumable(c)) return { ...STATUS_META.ready, label: RESUME_LABEL, icon: RESUME_ICON, resume: true };
+  if (isStalled(c)) return { ...STATUS_META.needs_human, resume: false };
+  return { ...STATUS_META[c.status], resume: false };
 }

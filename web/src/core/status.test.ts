@@ -85,6 +85,29 @@ describe("displayLabel", () => {
     expect(displayMeta({ status: "ready", resumable: false })).toEqual({ ...STATUS_META.ready, resume: false });
   });
 
+  it("a stalled running cell shows Needs steward with the needs_human meta", () => {
+    expect(displayLabel({ status: "running", stalled: true })).toBe("Needs steward");
+    const m = displayMeta({ status: "running", stalled: true });
+    expect(m.label).toBe(STATUS_META.needs_human.label);
+    expect(m.color).toBe(STATUS_META.needs_human.color);
+    expect(m.icon).toBe(STATUS_META.needs_human.icon);
+    expect(m.resume).toBe(false);
+  });
+
+  it("stalled false, null or missing keeps Running", () => {
+    expect(displayLabel({ status: "running", stalled: false })).toBe("Running");
+    expect(displayLabel({ status: "running", stalled: null })).toBe("Running");
+    expect(displayLabel({ status: "running" })).toBe("Running");
+    expect(displayMeta({ status: "running" })).toEqual({ ...STATUS_META.running, resume: false });
+  });
+
+  it("ignores stalled on a done or ready cell", () => {
+    for (const s of ["done", "ready", "waiting", "expired"] as PanelStatus[]) {
+      expect(displayLabel({ status: s, stalled: true })).toBe(STATUS_META[s].label);
+      expect(displayMeta({ status: s, stalled: true })).toEqual({ ...STATUS_META[s], resume: false });
+    }
+  });
+
   it("keeps the status ids and labels unchanged", () => {
     expect(STATUS_META.ready.label).toBe("Ready");
     expect(STATUS_META.expired.label).toBe("Lease expired");
