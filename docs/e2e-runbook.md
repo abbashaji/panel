@@ -53,13 +53,15 @@ This runbook was written by a cell chat that has no real GitHub, no real browser
 
 1. Open a new chat with the Blueprint connector.
 2. Ask it to call `init_blueprint` for `<you>/panel-e2e` (it installs Blueprint into a repo that has none).
-3. Give it nothing else to do.
+3. If the test repo already has Blueprint, first ask for `init_blueprint` with `upgrade:true` so it gets the current gate (a fresh repo gets the kit embedded in the Worker).
+4. Give it nothing else to do.
 
 **Expected**
 
 - [ ] The chat reports success.
 - [ ] On GitHub `main` now has `BLUEPRINT.md` and the Blueprint workflows.
 - [ ] No cell exists yet.
+- [ ] On an existing test repo, `init_blueprint` with `upgrade:true` was run first.
 
 ## 5. Publish the sample plan
 
@@ -247,6 +249,7 @@ On a Windows PC with Chrome and Edge (at least two profiles in one of them):
 
 ## 13. Clean up
 
+- [ ] After each run, read the panel text of every cell that is not merged and write it in the results sheet.
 - [ ] Close all test chats.
 - [ ] Delete the GitHub test repo (Settings, Danger Zone).
 - [ ] Delete the Worker: `npx wrangler delete` (or roll back, see `docs/deploy.md`). Remove the secrets you only created for this test: `npx wrangler secret delete PANEL_TOKEN` and the others.
@@ -274,3 +277,20 @@ Copy this, fill it in, and keep it with the release notes.
 | 11 Steward | | |
 | 12 Launcher | | |
 | 13 Clean up | | |
+
+## Run 2 results
+
+Run of 2026-11-10 on abbashaji/e2e. The plan is in `docs/e2e/run2-plan.md`.
+
+| Check | Result | Finding and fix |
+| --- | --- | --- |
+| Happy path | passed | |
+| Run ready with several cells, no false CONFLICT | passed | |
+| Replaced cell hidden | passed | |
+| Dependent cell on a replaced cell (gate fix) | passed | |
+| Steward: one start, one release, no admin key | passed | |
+| Path gap | needed the Steward | F2, fixed by C-081 |
+| Spec gap | not picked up, shown as Running | F1, fixed by C-082, C-086 and C-087 |
+| Fresh repos | got the old gate from the embedded kit | F3, fixed by PR 78; existing repos need `init_blueprint` with `upgrade:true` |
+
+Not covered by this run: release and cancel reservation, sync links, auto-send, Steward button states. They need the panel and `scripts/e2e-smoke.mjs`.
