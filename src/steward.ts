@@ -20,11 +20,20 @@ import {
 } from "./plan.ts";
 import { NOT_INIT, branchOf, errText, freshSnapshot, invalidText, loadPlan, mergedOf, oneLine, short, type EngineOptions } from "./common.ts";
 import { carry, isFeedback, isRelease, parseTrailers, stateSubject, subjectOf, withHeld } from "./trailers.ts";
+import { parseHeal } from "./selfheal.ts";
 
 export const STEWARD_BRANCH = "steward/lease";
 export const NOTE_MAX = 2000;
 export const STUCK_READY_MINUTES = 60;
 export const CI_FAIL_IDLE_MINUTES = 10; // a chat that just got a red CI is still fixing it
+export const STALLED_MINUTES = 10; // a chat that just wrote a heal note may still be working
+
+/** True when the branch tip is a heal note (not sync, not clear), idle for STALLED_MINUTES or more, and not a feedback or release. */
+export function isStalled(cell: string, tipMessage: string, idleMinutes: number): boolean {
+  if (!(idleMinutes >= STALLED_MINUTES)) return false;
+  if (isFeedback(tipMessage) || isRelease(tipMessage)) return false;
+  return parseHeal(tipMessage, cell)?.kind === "note";
+}
 
 export interface StewardOptions {
   mainBranch: string;
@@ -219,7 +228,7 @@ export async function noteCell(api: GitHubApi, repo: string, cell: string, text:
 }
 
 // ---------------------------------------------------------------- problems
-export type ProblemKind = "needs_human" | "needs_split" | "expired" | "ci_failed" | "stuck_ready";
+export type ProblemKind = "needs_human" | "stalled" | "needs_split" | "expired" | "ci_failed" | "stuck_ready";
 export interface Problem {
   id: string;
   title: string;
@@ -247,12 +256,16 @@ export interface ProblemInput {
   mainAgeMinutes?: number;
 }
 
-const KIND_RANK: Record<ProblemKind, number> = { needs_human: 0, needs_split: 1, expired: 2, ci_failed: 3, stuck_ready: 4 };
+export const KIND_RANK: Record<ProblemKind, number> = { needs_human: 0, stalled: 1, needs_split: 2, expired: 3, ci_failed: 4, stuck_ready: 5 };
 
 export const ACTIONS: Record<ProblemKind, string[]> = {
   needs_human: [
     "answer the feedback yourself (read the cell and the feedback), write the answer as a note on the cell (noteCell), then takeover(cell_id, clear_feedback=true, handoff=true) so a fresh chat resumes with your note",
     "if the cell itself is wrong or too big: publish_plan a superseding cell (supersedes: [the old id]) instead",
+  ],
+  stalled: [
+    "read the note; if it names a gap that a decision closes, write the decision as a note on the cell (noteCell) and takeover(cell_id, force=true, handoff=true) so a fresh chat resumes with it",
+    "if the cell itself is wrong (missing contract, missing path), publish_plan a superseding cell (supersedes: [the old id]) with the gap closed, then takeover handoff the old one",
   ],
   needs_split: [
     "publish_plan a superseding cell or cells (supersedes: [the old id]) that cut the work smaller, with the same provides",
@@ -328,6 +341,15 @@ export function findProblems(inp: ProblemInput): Problem[] {
     const b = snap.branches[branchOf(x.id)];
     const text = b ? stateSubject(b.message).replace(/^feedback\([^)]*\):\s*/, "") : "";
     add(x.id, "needs_human", `a chat asked for a decision: ${oneLine(text, 400) || "(no text)"}`);
+  }
+  for (const [name, b] of Object.entries(snap.branches)) {
+    const m = /^cell\/(C-\d+)$/.exec(name);
+    if (!m || merged.has(m[1])) continue;
+    const idle = claims[m[1]];
+    if (idle === undefined || idle >= cfg.lease_minutes) continue;
+    if (!isStalled(m[1], b.message, idle)) continue;
+    const note = parseHeal(b.message, m[1])?.note ?? "";
+    add(m[1], "stalled", `a chat wrote a note and stopped without finishing or filing feedback: ${oneLine(note, 300) || "(no text)"}`);
   }
   for (const x of state.needs_split ?? []) add(x.id, "needs_split", `the lease died ${x.attempts} times: the cell is too big or unclear`);
   for (const r of state.ready) {
