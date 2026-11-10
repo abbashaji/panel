@@ -1,0 +1,31 @@
+id: C-082
+title: Steward briefing lists a cell that stopped after a heal note
+type: normal
+priority: 12
+goal: |
+  Found in the e2e run of 2026-11-10: the chat of C-006 hit a spec gap, wrote one heal note, and stopped without feedback. The cell stayed 'running' for the whole lease and the Steward never saw it, because only cells in feedback count as needs_human.
+  In src/steward.ts:
+  - export const STALLED_MINUTES = 10 and export function isStalled(cell: string, tipMessage: string, idleMinutes: number): boolean. True when the newest commit of the cell branch is a heal commit (parseHeal from ./selfheal.ts returns kind 'note') and idleMinutes >= STALLED_MINUTES and the message is not feedback and not a release (isFeedback and isRelease from ./trailers.ts). A heal of kind sync or clear never counts. A WIP or claim commit never counts.
+  - ProblemKind gets 'stalled'. findProblems adds a problem of kind 'stalled' for every unmerged cell with a live lease branch whose tip passes isStalled (idle minutes are claims[id], minutes since the last commit). The why text: 'a chat wrote a note and stopped without finishing or filing feedback: <the note, 300 chars>'. KIND_RANK: needs_human 0, stalled 1, needs_split 2, expired 3, ci_failed 4, stuck_ready 5.
+  - ACTIONS.stalled: (1) read the note; if it names a gap that a decision closes, write the decision as a note on the cell (noteCell) and takeover(cell_id, force=true, handoff=true) so a fresh chat resumes with it; (2) if the cell itself is wrong (missing contract, missing path), publish_plan a superseding cell (supersedes: [the old id]) with the gap closed, then takeover handoff the old one.
+  - The briefing text shows stalled problems like every other kind (same list, same one-shot rule). A cell that is both stalled and in feedback is reported once, as needs_human.
+  - Tests in test/steward.test.ts: isStalled true for a note heal idle 10 min, false at 9 min, false for sync and clear heals, false for a feedback or release tip, false for a WIP tip; findProblems returns kind stalled for it and ranks it right after needs_human; a stalled cell that is merged or has no branch is not reported; the briefing contains it.
+inputs: []
+after: [C-033, C-076]
+provides:
+  - "isStalled(cell, tipMessage, idleMinutes) and STALLED_MINUTES = 10 exported from src/steward.ts"
+  - "Steward problem kind stalled"
+read:
+  - src/selfheal.ts
+  - src/trailers.ts
+allowed_paths:
+  - src/steward.ts
+  - test/steward.test.ts
+outputs:
+  - src/steward.ts
+  - test/steward.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  src/selfheal.ts and src/trailers.ts are read only here: import parseHeal, isFeedback and isRelease from them, do not change them.
+  Existing steward tests must stay green; check that no existing fixture has a heal note as its tip.

@@ -1,0 +1,34 @@
+id: C-081
+title: Self-heal offers cell_fix replace for a cell that needs more paths
+type: normal
+priority: 12
+goal: |
+  Found in the e2e run of 2026-11-10: a cell whose goal needs a file outside allowed_paths (C-007) filed feedback and stopped, because cell_help for the class scope_violation only offered feedback or a blocker. cell_fix kind=replace can already widen allowed_paths and outputs, it was simply never offered.
+  In src/selfheal.ts:
+  - Evidence (gather) gets ownOutside: string[], the paths of outside that are named in the cell goal or in an acceptance command (the cell's own deliverables). Paths that are only mentioned in the problem text are not own.
+  - actionsFor for scope_violation: when ownOutside is not empty, action 1 is cell_fix kind="replace" with the same fields as now, allowed_paths and outputs each extended by exactly the ownOutside paths and nothing else changed, followed by the release handoff (same wording as stale_dependency: do not continue the cell, release it with a handoff note, the replacement is claimed by a fresh chat). Then the existing actions follow (finish inside allowed_paths, note, blocker for files that belong to other cells, feedback as the last resort).
+  - actionsFor for outside_cell: when the message names a file outside allowed_paths that is an own deliverable, offer the same replace first; the blocker stays for files that belong elsewhere.
+  - actionsFor for spec_gap: action 1 says: choose one of two ways and never stop after only a note. Either write the smallest reading with cell_note AND keep working on the cell, or, when the repo gives no basis for any reading, file cell_signal feedback and stop. A note alone leaves the cell running and nobody sees it.
+  - The HEALED answer of cell_note ends with: 'A note does not hand the cell on: continue the cell, or file cell_signal feedback if you cannot.'
+  - Tests: ownOutside is computed from goal and acceptance only; a scope_violation briefing with an own path starts with the cell_fix replace call and contains allowed_paths extended by that path; a path that is not named in goal or acceptance does not get replace first; the spec_gap briefing contains the 'never stop after only a note' rule; the cell_note answer carries the reminder. Existing selfheal tests stay green: change only assertions that quote the lines you changed.
+inputs: []
+after: [C-050, C-070]
+provides:
+  - "cell_help scope_violation and outside_cell briefings offer cell_fix replace for own deliverables"
+  - "spec_gap briefing and cell_note answer forbid stopping after only a note"
+read:
+  - src/selfheal_fix.ts
+  - docs/e2e-runbook.md
+allowed_paths:
+  - src/selfheal.ts
+  - test/selfheal.test.ts
+  - test/selfheal_classify.test.ts
+outputs:
+  - src/selfheal.ts
+  - test/selfheal.test.ts
+  - test/selfheal_classify.test.ts
+acceptance:
+  - cmd: "npm test"
+notes: |
+  The tests use node:test and node:assert/strict (no vitest).
+  Do not change src/selfheal_fix.ts: cell_fix replace already accepts a wider allowed_paths and outputs as long as the goal of the old cell is kept.

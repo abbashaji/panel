@@ -1,0 +1,34 @@
+id: C-085
+title: Document the second e2e run and what it fixed
+type: normal
+priority: 12
+goal: |
+  Update the test documentation with the e2e run of 2026-11-10 on abbashaji/e2e (11 cells). Plain text, short.
+  - New docs/e2e/run2-plan.md: the plan that was run (C-001 skeleton hello.txt; C-002, C-008, C-009 parallel cells; C-003 replaced by C-004 with supersedes, never run; C-005 depends on the replaced C-003; C-006 spec gap with no contract; C-007 path gap, manifest.txt outside allowed_paths; C-010 integration with RESULT.txt) and for each cell the expected result AFTER the fixes of C-081 to C-084 and PR 78: C-007 is repaired by its own chat with cell_help then cell_fix replace (no Steward); C-006 ends as feedback, the panel shows Needs steward, and the Steward publishes a superseding cell with a stated line format; a stopped cell never stays Running for more than 10 minutes without that label.
+  - docs/e2e-runbook.md: add a section 'Run 2 results' with this table: happy path, run ready with several cells without false CONFLICT, replaced cell hidden, dependent cell on a replaced cell (gate fix) passed; Steward one start and one release without admin key passed; path gap needed the Steward (finding F2, fixed by C-081); spec gap not picked up and shown as Running (finding F1, fixed by C-082 to C-084); fresh repos got the old gate from the embedded kit (finding F3, fixed by PR 78, existing repos need init_blueprint upgrade:true). Add to the checklists: run init_blueprint upgrade:true on the test repo first; after each run read the panel text of every cell that is not merged.
+  - Say in the section what that run did not cover: release and cancel reservation, sync links, auto-send, Steward button states; they need the panel and scripts/e2e-smoke.mjs.
+inputs:
+  - from: C-081
+    kind: implementation
+    contract: |
+      cell_help offers cell_fix replace for own deliverables outside allowed_paths.
+  - from: C-084
+    kind: implementation
+    contract: |
+      A stalled running cell shows 'Needs steward' in the panel.
+after: [C-058, C-062, C-071, C-081, C-082, C-083, C-084]
+provides:
+  - "docs/e2e/run2-plan.md"
+read:
+  - docs/e2e-runbook.md
+allowed_paths:
+  - docs/e2e-runbook.md
+  - docs/e2e/run2-plan.md
+outputs:
+  - docs/e2e-runbook.md
+  - docs/e2e/run2-plan.md
+acceptance:
+  - cmd: "test -f docs/e2e/run2-plan.md"
+  - cmd: "grep -q 'Run 2 results' docs/e2e-runbook.md"
+notes: |
+  Documentation only. Do not copy any key into these files.
