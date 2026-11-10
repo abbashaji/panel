@@ -249,3 +249,36 @@ test("a plan without supersedes has no supersededBy and counts every cell", asyn
   assert.equal(s.cells.some((c) => "supersededBy" in c), false);
   assert.equal(Object.values(s.counts).reduce((a, b) => a + b, 0), s.cells.length);
 });
+
+// --- C-086: a running cell that stopped after a heal note is stalled ---
+const stalledOf = async (message: string, idle: number) => {
+  const snap = snapshot();
+  snap.branches["cell/C-002"] = { oid: oid("c"), treeOid: oid("d"), committedDate: iso(idle), message };
+  const s = await buildPanelState(env, "o/r", { api: fakeApi(snap), opts });
+  return s.cells.find((c) => c.id === "C-002")!;
+};
+const HEAL_NOTE = "heal(C-002): note\n\nstopped after this note\n\nheal: note";
+
+test("a running cell whose tip is a heal note idle 10 minutes is stalled", async () => {
+  const c = await stalledOf(HEAL_NOTE, 10);
+  assert.equal(c.status, "running");
+  assert.equal(c.stalled, true);
+});
+
+test("a heal note idle 5 minutes has no stalled field", async () => {
+  const c = await stalledOf(HEAL_NOTE, 5);
+  assert.equal(c.status, "running");
+  assert.equal("stalled" in c, false);
+});
+
+test("a running cell with a WIP tip has no stalled field", async () => {
+  const c = await stalledOf("cell: wip\n\nnext: write tests", 10);
+  assert.equal(c.status, "running");
+  assert.equal("stalled" in c, false);
+});
+
+test("a cell in feedback keeps needs_human and has no stalled field", async () => {
+  const c = await stalledOf("feedback(C-002): need a decision\n\nnext: wait", 10);
+  assert.equal(c.status, "needs_human");
+  assert.equal("stalled" in c, false);
+});

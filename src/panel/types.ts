@@ -65,6 +65,8 @@ export interface PanelCell {
   supersededBy?: string[];
   /** number of heal commits (subject 'heal(<id>): <kind>' plus trailer 'heal: <kind>') on the cell branch; set only when > 0 */
   heals?: number;
+  /** set (true) only for a running cell whose branch tip is a heal note idle STALLED_MINUTES or more: the chat stopped after a note. Omitted otherwise. */
+  stalled?: boolean;
 }
 
 export interface PanelCounts {
