@@ -551,6 +551,18 @@ export function validate(cells: Record<string, Cell>, cfg: Config): { errors: st
   return { errors: E, warnings: W };
 }
 
+/**
+ * The cells a dependency d still waits for. Merged: none. Superseded and not merged: the superseders that are not
+ * merged, each one followed down its own chain (a superseder that was itself replaced and never merged is left out
+ * and its superseders count instead). Otherwise d itself.
+ */
+export function unmergedBlockers(d: string, sup: Record<string, string[]>, merged: Set<string>, seen: Set<string> = new Set()): string[] {
+  if (merged.has(d) || seen.has(d)) return [];
+  if (!(d in sup)) return [d];
+  seen.add(d);
+  return sup[d].flatMap((x) => unmergedBlockers(x, sup, merged, seen));
+}
+
 /** {superseded id: sorted ids of the cells that list it in `supersedes`} (known ids only, no self-reference). */
 export function superseders(cells: Record<string, Cell>): Record<string, string[]> {
   const tmp: Record<string, Set<string>> = {};
@@ -671,9 +683,7 @@ export function computeState(
   for (const cid of todo) {
     const blockers: string[] = [];
     for (const d of graph[cid]) {
-      if (mergedSet.has(d)) continue;
-      if (d in sup) blockers.push(...sup[d].filter((x) => !mergedSet.has(x)));
-      else blockers.push(d);
+      blockers.push(...unmergedBlockers(d, sup, mergedSet));
     }
     const blockedBy = [...new Set(blockers)];
     if (blockedBy.length) {
