@@ -14,7 +14,7 @@ const cells: Record<string, any> = {
 };
 const F = (o: Partial<Facts> = {}): Facts => ({ behind: 0, outside: [], ownMention: false, mainRed: false, missingContract: false, ...o });
 const ctx = (): Ctx => ({ id: 'C-070', snap: {} as any, plan: { cells } as any, branch: { oid: 'c231e07aaaa', message: 'cell(C-070): claim' } as any });
-const EV = (o: Partial<Evidence> = {}): Evidence => ({ behind: 0, ahead: 0, mainRed: null, outside: [], ownMention: false, missingContract: [], unmerged: [], dependents: [], staleDeps: [], correctedAfter: [], ...o });
+const EV = (o: Partial<Evidence> = {}): Evidence => ({ behind: 0, ahead: 0, mainRed: null, outside: [], ownOutside: [], ownMention: false, missingContract: [], unmerged: [], dependents: [], staleDeps: [], correctedAfter: [], ...o });
 const STALE = { id: 'C-004', superseders: ['C-051'], pending: [] as string[] };
 const brief = (problem: string, f: Facts, e: Evidence): { cls: string; text: string } => {
   const cls = classifyProblem(problem, f);
@@ -102,5 +102,53 @@ describe('briefing', () => {
       assert.ok(text.length <= BRIEFING_MAX_CHARS);
       assert.doesNotMatch(text, /ghp_|github_pat_|admin_key/i);
     }
+  });
+});
+
+describe('own deliverables outside allowed_paths (C-081)', () => {
+  const own = EV({ outside: ['package.json'], ownOutside: ['package.json'], correctedAfter: ['C-051', 'C-059'] });
+  const firstLine = (text: string): string => text.split('\n').find((l) => l.startsWith('1. '))!;
+  test('scope_violation starts with replace, widened by the own path only, then the handoff', () => {
+    const r = brief('I need to edit package.json', F({ outside: ['package.json'] }), own);
+    assert.equal(r.cls, 'scope_violation');
+    const first = firstLine(r.text);
+    assert.ok(first.startsWith(`1. ${head('cell_fix', 'replace')}`), first);
+    assert.ok(first.includes('"allowed_paths": ["src/a.ts","package.json"]'), first);
+    assert.ok(first.includes('"outputs": ["src/a.ts","package.json"]'), first);
+    assert.ok(first.includes('"after": ["C-051","C-059"]'), first);
+    assert.ok(r.text.includes(`2. then hand off (use the base the cell_fix answer returns): ${head('cell_signal', 'release')}`));
+    assert.ok(r.text.includes('fresh chat'));
+    assert.ok(r.text.includes(head('cell_fix', 'blocker')));
+    assert.ok(r.text.includes(head('cell_signal', 'feedback')));
+  });
+  test('without an own path the replace is not offered', () => {
+    const r = brief('I need to edit package.json', F({ outside: ['package.json'] }), EV({ outside: ['package.json'] }));
+    assert.equal(r.cls, 'scope_violation');
+    assert.ok(firstLine(r.text).startsWith('1. never write outside allowed_paths'));
+    assert.ok(!r.text.includes(head('cell_fix', 'replace')));
+  });
+  test('outside_cell offers the replace first for an own deliverable and keeps the blocker for other files', () => {
+    const P = 'the CI gate rejected my submit again; all outputs already exist on the branch and the files are correct; package.json is missing';
+    const r = brief(P, F({ outside: ['package.json'] }), own);
+    assert.equal(r.cls, 'scope_violation');
+    const r2 = brief(P, F(), own);
+    assert.equal(r2.cls, 'outside_cell');
+    assert.ok(firstLine(r2.text).startsWith(`1. ${head('cell_fix', 'replace')}`));
+    assert.ok(r2.text.includes('do not retry the same submit_cell'));
+    assert.ok(r2.text.includes(head('cell_fix', 'blocker')));
+    assert.ok(r2.text.includes('not your own deliverable'));
+  });
+  test('spec_gap forbids stopping after only a note', () => {
+    const r = brief('the contract is ambiguous', F(), EV());
+    assert.equal(r.cls, 'spec_gap');
+    assert.ok(r.text.includes('never stop after only a note'));
+    assert.ok(r.text.includes('AND keep working on the cell'));
+    assert.ok(r.text.includes('A note alone leaves the cell running and nobody sees it'));
+  });
+  test('the briefing stays inside the size bound with own paths', () => {
+    const many = Array.from({ length: 6 }, (_, i) => `scripts/tool_with_a_long_name_${i}.mjs`);
+    const e = EV({ outside: many, ownOutside: many, correctedAfter: ['C-051', 'C-059'] });
+    const text = brief('apply_changes refused: outside allowed paths ' + 'x '.repeat(400), F({ outside: many }), e).text;
+    assert.ok(text.length <= BRIEFING_MAX_CHARS, `${text.length}`);
   });
 });
