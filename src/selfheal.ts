@@ -18,6 +18,9 @@ const SCAN_PAGES = 5;
 /** Tool names the briefing quotes (C-052 registers the tools under these names). */
 export const HEAL_TOOLS = { note: "cell_note", sync: "cell_sync", clear: "cell_clear" } as const;
 
+/** Closing line of the cell_note answer: a note records a decision, it never hands the cell on. */
+export const NOTE_REMINDER = "A note does not hand the cell on: continue the cell, or file cell_signal feedback if you cannot.";
+
 export type HealKind = "note" | "sync" | "clear";
 export type ProblemClass = "stale_branch" | "spec_gap" | "scope_violation" | "broken_main" | "own_bug" | "stale_dependency" | "outside_cell" | "unknown";
 
@@ -274,6 +277,8 @@ export interface Evidence {
   ahead: number;
   mainRed: string | null;
   outside: string[];
+  /** the paths of outside that the cell's goal or an acceptance command names (its own deliverables) */
+  ownOutside: string[];
   ownMention: boolean;
   missingContract: string[];
   unmerged: string[];
@@ -283,6 +288,23 @@ export interface Evidence {
 }
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/**
+ * Pure: the paths of outside that the cell names itself, in its goal or in an acceptance command (its own deliverables).
+ * A path that only the problem text mentions is not own.
+ */
+export function ownOutsideOf(outside: string[], goal: string, acceptance: string[]): string[] {
+  const text = [goal, ...acceptance].join("\n");
+  const word = /[\w@/.-]/;
+  const startOk = (i: number): boolean => !word.test(text[i - 1] ?? "") || (text.slice(i - 2, i) === "./" && !word.test(text[i - 3] ?? ""));
+  return outside.filter((p) => {
+    if (!p) return false;
+    for (let i = text.indexOf(p); i >= 0; i = text.indexOf(p, i + 1)) {
+      if (startOk(i) && !/[\w@-]/.test(text[i + p.length] ?? "")) return true;
+    }
+    return false;
+  });
+}
 
 /**
  * Pure: the cell's unmerged hard dependencies (after, implementation inputs) that another cell supersedes, and the cell's after list
@@ -336,6 +358,8 @@ async function gather(api: GitHubApi, repo: string, opts: HealOptions, ctx: Ctx,
   const allowed = strs(c.allowed_paths);
   const paths = mentionedPaths(problem);
   const outside = paths.filter((p) => !pathAllowed(p, allowed));
+  const acceptance = (Array.isArray(c.acceptance) ? c.acceptance : []).map((x: any) => (typeof x === "string" ? x : String(x?.cmd ?? ""))).filter(Boolean);
+  const ownOutside = ownOutsideOf(outside, String(c.goal ?? ""), acceptance);
   const title = (x: string): string => `${x} "${oneLine(String(plan.cells[x]?.title ?? ""), 60)}"`;
 
   let behind = 0;
@@ -359,7 +383,7 @@ async function gather(api: GitHubApi, repo: string, opts: HealOptions, ctx: Ctx,
     .sort()
     .map(title);
 
-  return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents, ...staleDepsOf(plan.cells, id, merged) };
+  return { behind, ahead, mainRed: await redMain(api, repo, opts), outside, ownOutside, ownMention: paths.length > outside.length, missingContract, unmerged, dependents, ...staleDepsOf(plan.cells, id, merged) };
 }
 
 // ---------------------------------------------------------------- help
@@ -369,7 +393,7 @@ function escalateText(repo: string, ctx: Ctx, heals: Heal[]): string {
 }
 
 /** The allowed actions for a class, each with its exact tool call. */
-function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, pending: boolean, ev?: Evidence): string[] {
+function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, pending: boolean, ev?: Evidence, cell?: Record<string, any>): string[] {
   const sync = call(HEAL_TOOLS.sync, repo, id, base);
   const note = call(HEAL_TOOLS.note, repo, id, base, 'text="<decision or assumption, max 2000 chars>"');
   const fb = call("cell_signal", repo, id, base, 'kind="feedback", text="<what, why, proposed fix>"');
@@ -381,6 +405,17 @@ function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, p
   const replace = call("cell_fix", repo, id, base, `kind="replace", cells=[{same title, goal, inputs, provides, read, allowed_paths, outputs, acceptance and notes as now; "after": ${JSON.stringify(ev?.correctedAfter ?? [])}}]`);
   const blocker = call("cell_fix", repo, id, base, 'kind="blocker", cells=[{a small cell that owns the file outside allowed_paths or the missing change}]');
   const release = call("cell_signal", repo, id, base, 'kind="release", next="replacement published; claim it with next_cell"');
+  const handoff = `then hand off (use the base the cell_fix answer returns): ${release} and stop. Do not continue this cell: the replacement is claimed by a fresh chat.`;
+  // own deliverables outside allowed_paths: the same replace, with allowed_paths and outputs each extended by exactly those paths
+  const own = ev?.ownOutside ?? [];
+  const widen = (cur: string[]): string[] => [...cur, ...own.filter((p) => !cur.includes(p))];
+  const replaceOwn = call("cell_fix", repo, id, base, `kind="replace", cells=[{same title, goal, inputs, provides, read, acceptance and notes as now; "allowed_paths": ${JSON.stringify(widen(strs(cell?.allowed_paths)))}, "outputs": ${JSON.stringify(widen(strs(cell?.outputs)))}, "after": ${JSON.stringify(ev?.correctedAfter ?? [])}}]`);
+  const ownFirst = own.length
+    ? [
+        `${replaceOwn}: your goal or acceptance names ${own.join(", ")}, so ${own.length > 1 ? "these paths are your own deliverables" : "this path is your own deliverable"}; the replacement widens allowed_paths and outputs by exactly ${own.length > 1 ? "them" : "it"} and changes nothing else.`,
+        handoff,
+      ]
+    : [];
   const by: Record<ProblemClass, string[]> = {
     stale_branch: [
       `${sync}: merges main into your branch (never changes main; one heal; free when already up to date). Continue with the base it returns.`,
@@ -388,14 +423,16 @@ function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, p
       `if the sync answers CONFLICT: resolve the listed files with ${fix}; files outside allowed_paths need ${fb}.`,
     ],
     spec_gap: [
-      `${note}: write the smallest reasonable reading of the gap. It becomes AMENDMENTS (binding) for every chat on this cell; one heal.`,
-      "then continue with that reading and name the assumption in your final reply.",
+      `choose one of two ways and never stop after only a note. Either ${note}: write the smallest reasonable reading of the gap (it becomes AMENDMENTS (binding) for every chat on this cell; one heal) AND keep working on the cell, or, when the repo gives no basis for any reading, ${fb} and stop. A note alone leaves the cell running and nobody sees it.`,
+      "if you chose the note: continue the cell with that reading and name the assumption in your final reply.",
       `if the contract is impossible or contradicts itself, no workaround: ${fb}, then stop.`,
     ],
     scope_violation: [
+      ...ownFirst,
       "never write outside allowed_paths (apply_changes refuses it); look for a way to finish inside them first.",
       `if the plan of the work changes, record it: ${note}.`,
-      `if files outside allowed_paths are truly needed: ${fb} naming the files and why, then stop.`,
+      `if the files outside allowed_paths belong to other cells or are shared files: ${blocker}`,
+      `if files outside allowed_paths are truly needed and nothing above fits (last resort): ${fb} naming the files and why, then stop.`,
     ],
     broken_main: [
       "main itself is red: it is not your bug and main is not yours to fix.",
@@ -411,11 +448,12 @@ function actionsFor(cls: ProblemClass, repo: string, id: string, base: string, p
       pendingSup.length
         ? `the superseder(s) ${pendingSup.join(", ")} are not merged yet: do not rework your files. Wait for them to merge; the replacement only becomes ready after them.`
         : "the superseders are merged, so the corrected after list above is final: do not rework your files.",
-      `then hand off (use the base the cell_fix answer returns): ${release} and stop. Never retry the same submit_cell.`,
+      `${handoff} Never retry the same submit_cell.`,
     ],
     outside_cell: [
+      ...ownFirst,
       "do not retry the same submit_cell: your outputs already exist, so editing your own files cannot change this message.",
-      `if the message names a file outside allowed_paths: ${blocker}`,
+      `if the message names a file outside allowed_paths${own.length ? " that belongs to another cell or is a shared file (not your own deliverable)" : ""}: ${blocker}`,
       `if it names another cell or main (red, behind, unmerged): ${replace.replace(/cells=\[\{.*$/, "cells=[{this cell with the corrected after/inputs}])")} or ${blocker.replace(/cells=\[\{.*$/, "cells=[{the missing work}])")} as fits; main only behind: ${sync}.`,
       `anything else, or unsure: ${fb} AT ONCE (do not wait for a second failure), saying what you already tried (outputs on the branch, submit/preflight result, the exact message).`,
     ],
@@ -441,14 +479,16 @@ export function briefing(repo: string, ctx: Ctx, problem: string, cls: ProblemCl
   L.push(`PROBLEM (as you told me): ${cap(problem || "(none given)", 250)}`);
   L.push(`BUDGET: ${left} of ${MAX_HEALS} heals left. ${HEAL_TOOLS.note}, ${HEAL_TOOLS.sync} (when it merges) and ${HEAL_TOOLS.clear} cost one each; up_to_date, CONFLICT and this briefing are free. At 0 the answer is ESCALATE: file cell_signal feedback.`);
   L.push("ALLOWED ACTIONS (nothing else; every call needs your current base):");
-  const lim = cls === "stale_dependency" || cls === "outside_cell" ? 900 : 400;
-  actionsFor(cls, repo, id, base, pending, ev).forEach((a, k) => L.push(`${k + 1}. ${cap(a, lim)}`));
+  const ownOut = (ev.ownOutside ?? []).length > 0;
+  const lim = (cls === "scope_violation" || cls === "outside_cell") && ownOut ? 1400 : cls === "stale_dependency" || cls === "outside_cell" ? 900 : cls === "spec_gap" ? 900 : 400;
+  actionsFor(cls, repo, id, base, pending, ev, c).forEach((a, k) => L.push(`${k + 1}. ${cap(a, lim)}`));
 
   L.push("WHY IT MAY BE BLOCKED:");
   const ev1: string[] = [];
   if (ev.behind > 0) ev1.push(`your branch is behind main by ${ev.behind} commit(s) (ahead by ${ev.ahead})`);
   if (ev.mainRed) ev1.push(`main CI is red: newest main run "${ev.mainRed}" failed`);
   if (ev.outside.length) ev1.push(`the problem mentions files outside allowed_paths: ${list(ev.outside, 6, 160)}`);
+  if ((ev.ownOutside ?? []).length) ev1.push(`your goal or acceptance names ${list(ev.ownOutside, 6, 120)}: your own deliverables, so a replacement may widen allowed_paths and outputs`);
   if (ev.missingContract.length) ev1.push(`no contract text for the input(s) from: ${list(ev.missingContract, 6, 120)}`);
   if (ev.staleDeps.length) ev1.push(`a dependency is superseded: ${list(ev.staleDeps.map((s) => `${s.id} -> ${s.superseders.join("+")}${s.pending.length ? ` (${s.pending.join(", ")} not merged yet)` : " (merged)"}`), 4, 200)}`);
   if (ev.unmerged.length) ev1.push(`a dependency is not merged: ${list(ev.unmerged, 5, 200)}`);
@@ -534,7 +574,7 @@ export async function cellNote(api: GitHubApi, repo: string, opts: HealOptions, 
     const note = redact(cleanNote(a.text ?? ""), opts.secrets).slice(0, NOTE_MAX);
     if (!note) return `EMPTY_NOTE ${p.ctx.id}: nothing to write (text:). No heal spent.`;
     const oid = await commitHeal(api, repo, p.ctx, healMessage(p.ctx.branch.message, p.ctx.id, "note", "note", note));
-    return oid ? healed(p.ctx.id, "note recorded; every chat that continues this cell sees it under AMENDMENTS (binding)", oid, p.heals.length) : moved(p.ctx.id);
+    return oid ? `${healed(p.ctx.id, "note recorded; every chat that continues this cell sees it under AMENDMENTS (binding)", oid, p.heals.length)} ${NOTE_REMINDER}` : moved(p.ctx.id);
   });
 }
 

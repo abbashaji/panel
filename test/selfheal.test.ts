@@ -17,6 +17,7 @@ import {
   classifyProblem,
   healsOf,
   mentionedPaths,
+  ownOutsideOf,
   pathAllowed,
   type HealOptions,
 } from "../src/selfheal.ts";
@@ -251,4 +252,55 @@ test("no secret appears in any answer or in a note commit", async () => {
     assert.ok(!/GITHUB_TOKEN\s*=\s*abc12345/.test(a), a);
   }
   assert.match(msg, /\[redacted\]/);
+});
+
+// ---------------------------------------------------------------- own deliverables outside allowed_paths, spec_gap and the note reminder (C-081)
+test("ownOutsideOf: only paths named in the goal or an acceptance command are own", () => {
+  assert.deepEqual(ownOutsideOf(["package.json", "src/x.ts"], "add a script to package.json", ["npm test"]), ["package.json"]);
+  assert.deepEqual(ownOutsideOf(["package.json"], "do it", ["node scripts/check.mjs package.json"]), ["package.json"]);
+  assert.deepEqual(ownOutsideOf(["package.json"], "edit ./package.json.", []), ["package.json"]);
+  assert.deepEqual(ownOutsideOf(["x.json"], "edit src/x.json", []), []);
+  assert.deepEqual(ownOutsideOf(["package.json"], "do it", ["npm test"]), []);
+});
+
+test("help: scope_violation with an own deliverable starts with cell_fix replace, widened by that path only", async () => {
+  const gh = setup({ "C-001": { goal: "add the dependency to package.json" } });
+  await claim(gh, "C-001");
+  const base = baseOf(gh, "C-001");
+  const r = await help(gh, "C-001", "I need to change package.json and tsconfig.json");
+  assert.match(r, /CLASS: scope_violation/);
+  const lines = r.split("\n");
+  const first = lines.find((l) => l.startsWith("1. "))!;
+  assert.ok(first.startsWith(`1. cell_fix(repo="o/r", cell_id="C-001", base="${base}", kind="replace"`), first);
+  assert.ok(first.includes('"allowed_paths": ["src/C-001.ts","package.json"]'), first);
+  assert.ok(first.includes('"outputs": ["src/C-001.ts","package.json"]'), first);
+  assert.ok(!first.includes("tsconfig.json"), "a path that only the problem names is not own");
+  const second = lines.find((l) => l.startsWith("2. "))!;
+  assert.ok(second.includes(`cell_signal(repo="o/r", cell_id="C-001", base="${base}", kind="release"`), second);
+  assert.match(second, /do not continue this cell/i);
+  assert.match(second, /fresh chat/);
+  assert.match(r, /cell_fix\(.*kind="blocker"/);
+  assert.match(r, /kind="feedback"/);
+  assert.equal(tipOf(gh, "C-001").slice(0, 7), base, "help is read-only");
+});
+
+test("help: a path that is not named in the goal or acceptance does not get replace first", async () => {
+  const gh = setup({ "C-001": {} });
+  await claim(gh, "C-001");
+  const r = await help(gh, "C-001", "I need to change package.json to add a dependency");
+  const first = r.split("\n").find((l) => l.startsWith("1. "))!;
+  assert.match(first, /^1\. never write outside allowed_paths/);
+  assert.ok(!r.includes('kind="replace"'), "no replace for a path that is not own");
+});
+
+test("help: spec_gap says never stop after only a note; the cell_note answer carries the reminder", async () => {
+  const gh = setup({ "C-001": {} });
+  const base = await claim(gh, "C-001");
+  const spec = await help(gh, "C-001", "the goal is ambiguous about the return shape");
+  assert.match(spec, /CLASS: spec_gap/);
+  assert.match(spec, /never stop after only a note/);
+  assert.match(spec, /A note alone leaves the cell running and nobody sees it/);
+  const r = await cellNote(gh, REPO, engine(gh), { cell_id: "C-001", base, text: "assume X" });
+  assert.match(r, /^HEALED C-001: /);
+  assert.ok(r.endsWith("A note does not hand the cell on: continue the cell, or file cell_signal feedback if you cannot."), r);
 });
