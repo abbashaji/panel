@@ -7,11 +7,14 @@ import { mergedOf, type EngineOptions } from "../src/common.ts";
 import { BRANCH_RE, SUBJECT_RE, claimsFromBranches, loadCells, loadConfig } from "../src/plan.ts";
 import { isFeedback, isRelease, parseTrailers, stewardNote, subjectOf } from "../src/trailers.ts";
 import {
+  KIND_RANK,
+  STALLED_MINUTES,
   STEWARD_BRANCH,
   buildBriefing,
   claimSteward,
   findProblems,
   gatherBriefing,
+  isStalled,
   noteCell,
   readTip,
   releaseSteward,
@@ -290,4 +293,58 @@ test("gatherBriefing reads docs and finds a failed CI gate", async () => {
   assert.match(text, /1\. C-001 .*\(ci_failed\)/);
   const none = await gatherBriefing(new FakeGitHub(true), REPO, engine(new FakeGitHub(true)));
   assert.match(none, /EMPTY_REPO|NOT_INIT/);
+});
+
+// ---------------------------------------------------------------- stalled
+const healNote = (id: string, note = "spec gap: which db?") => `heal(${id}): note\n\nheal: note\nnote: ${note}\nnext: go`;
+
+test("isStalled: note heal idle 10 min only", () => {
+  assert.equal(STALLED_MINUTES, 10);
+  const note = healNote("C-001");
+  assert.equal(isStalled("C-001", note, 10), true);
+  assert.equal(isStalled("C-001", note, 9), false);
+  assert.equal(isStalled("C-001", "heal(C-001): sync\n\nheal: sync", 30), false);
+  assert.equal(isStalled("C-001", "heal(C-001): clear\n\nheal: clear", 30), false);
+  assert.equal(isStalled("C-001", "feedback(C-001): which db?", 30), false);
+  assert.equal(isStalled("C-001", "release(C-001): handoff", 30), false);
+  assert.equal(isStalled("C-001", "cell(C-001): wip\n\nnext: go", 30), false);
+  assert.equal(isStalled("C-001", "claim(C-001): lock", 30), false);
+  assert.equal(isStalled("C-002", note, 30), false); // heal of another cell
+});
+
+test("findProblems: stalled cell is reported, ranked after needs_human, merged or branchless are not", async () => {
+  assert.ok(KIND_RANK.needs_human < KIND_RANK.stalled && KIND_RANK.stalled < KIND_RANK.needs_split);
+  const gh = setup({ "C-001": [], "C-002": [], "C-003": [] });
+  gh.commit("cell/C-001", {}, healNote("C-001"));
+  gh.tick(9 * MIN);
+  assert.deepEqual(await problemsOf(gh), []);
+  gh.tick(1 * MIN);
+  gh.commit("cell/C-002", {}, "feedback(C-002): which queue?");
+  const p = await problemsOf(gh);
+  assert.deepEqual(p.map((x) => [x.id, x.kind]), [["C-001", "stalled"], ["C-002", "needs_human"]]);
+  assert.match(p[0].why, /^a chat wrote a note and stopped without finishing or filing feedback: spec gap: which db\?/);
+  assert.ok(p[0].actions.some((a) => /takeover\(cell_id, force=true, handoff=true\)/.test(a)));
+  assert.ok(p[0].actions.some((a) => /supersedes/.test(a)));
+  // C-003 has no branch: not reported as stalled
+  assert.ok(!p.some((x) => x.id === "C-003"));
+});
+
+test("findProblems: a merged stalled cell is not reported", async () => {
+  const gh = setup({ "C-001": [] });
+  gh.commit("cell/C-001", {}, healNote("C-001"));
+  gh.tick(15 * MIN);
+  const snap = await gh.snapshot(REPO, "main", 1);
+  const p = findProblems({ cells: loadCells(snap.cellFiles).cells, cfg: loadConfig(snap.blueprint).cfg, snap, merged: new Set(["C-001"]), now: gh.clock });
+  assert.deepEqual(p, []);
+});
+
+test("briefing lists a stalled cell", async () => {
+  const gh = setup({ "C-001": [] });
+  gh.commit("cell/C-001", {}, healNote("C-001"));
+  gh.tick(12 * MIN);
+  const snap = await gh.snapshot(REPO, "main", 1);
+  const text = buildBriefing(briefingInput(gh, snap, []));
+  assert.match(text, /1\. C-001 .*\(stalled\)/);
+  assert.match(text, /why: a chat wrote a note and stopped/);
+  assert.match(text, /COUNTS: 1 cells, 0 merged, 1 with a branch, 1 open, 1 problems/);
 });
