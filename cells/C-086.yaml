@@ -1,0 +1,36 @@
+id: C-086
+title: Panel marks a cell that stopped after a note as stalled
+type: normal
+priority: 12
+goal: |
+  Same finding as C-082, seen from the panel: C-006 showed blue and Running for an hour although its chat had stopped.
+  - src/panel/types.ts PanelCell gets stalled?: boolean and web/src/core/types.ts mirrors it exactly (the parity test compares both files).
+  - src/panel/state.ts: for a cell whose status is 'running' (a live lease), set stalled: true when isStalled(id, b.message, claims[id]) from ../steward.ts is true. Do not set it for any other status and omit the field when false. Counts, statuses and sorting stay as they are.
+  - Tests in test/panel_state.test.ts: a running cell whose tip is a heal note idle 10 minutes gives stalled true; 5 minutes idle gives no field; a running cell with a WIP tip gives no field; a cell in feedback keeps status needs_human and has no stalled field.
+inputs:
+  - from: C-082
+    kind: implementation
+    contract: |
+      export const STALLED_MINUTES = 10; export function isStalled(cell: string, tipMessage: string, idleMinutes: number): boolean in src/steward.ts.
+after: [C-000, C-002, C-004, C-012, C-030, C-035, C-041, C-045, C-047, C-053, C-077, C-080, C-082]
+supersedes: [C-083, C-040, C-042]
+provides:
+  - "PanelCell.stalled"
+read:
+  - src/panel/state.ts
+  - src/steward.ts
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - web/src/core/types.ts
+  - test/panel_state.test.ts
+acceptance:
+  - cmd: "npm test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Add the field as optional in both type files in the same cell: a one-sided change broke main before (see C-041).

@@ -1,0 +1,31 @@
+id: C-087
+title: Web shows Needs steward for a stalled cell
+type: normal
+priority: 12
+goal: |
+  A running cell with stalled: true is shown with the label, color and icon of needs_human ('Needs steward'), in every place that uses displayLabel and displayMeta. Status ids, filters, sort order and counts stay on cell.status (the cell is still running for the engine).
+  - web/src/core/status.ts: DisplayCell gets stalled?: boolean | null. displayLabel and displayMeta use the needs_human meta when stalled === true and status === 'running'; any other status ignores the flag. resume stays false.
+  - web/src/core/status.test.ts: stalled running gives 'Needs steward'; stalled false or missing keeps 'Running'; stalled on a done or ready cell is ignored; the meta color equals STATUS_META.needs_human.color.
+  - If a view builds its DisplayCell by hand and copies fields one by one, pass stalled through (grep displayLabel and displayMeta callers). Only add that field; if such a view is outside allowed_paths, say so in cell_note and do not guess.
+inputs:
+  - from: C-086
+    kind: implementation
+    contract: |
+      PanelCell.stalled?: boolean in web/src/core/types.ts, true only on a running cell.
+after: [C-004, C-012, C-032, C-045, C-080, C-086]
+supersedes: [C-084, C-040, C-042]
+provides:
+  - "Needs steward label for a stalled running cell"
+read:
+  - web/src/core/types.ts
+allowed_paths:
+  - web/src/core/status.ts
+  - web/src/core/status.test.ts
+outputs:
+  - web/src/core/status.ts
+  - web/src/core/status.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Small cell: the work is the two files.
