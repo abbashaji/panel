@@ -23,6 +23,31 @@ public static class PromptBuilder
     public static string BuildUrl(string repo, string cell)
         => BaseUrl + Uri.EscapeDataString(BuildPrompt(repo, cell));
 
+    private static readonly Regex WhitespaceRx = new(@"\s+", RegexOptions.CultureInvariant);
+
+    private static readonly Regex FlatCellPromptRx = new(
+        @"^Repo: ([^ ]+) Follow BLUEPRINT\.md\. Call next_cell with repo and cell_id=([^ ]+) \(reserved for me\)\. Do only that cell\. Begin your next message with the CLAIMED line\.\z",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// True only when the text is the cell prompt of BuildPrompt for a valid repo and cell.
+    /// Every whitespace run counts as one space and the ends are ignored. On false both out values are empty.
+    /// </summary>
+    public static bool TryMatchCellPrompt(string? text, out string repo, out string cell)
+    {
+        repo = string.Empty;
+        cell = string.Empty;
+        if (string.IsNullOrEmpty(text)) return false;
+        var m = FlatCellPromptRx.Match(WhitespaceRx.Replace(text, " ").Trim());
+        if (!m.Success) return false;
+        var r = m.Groups[1].Value;
+        var c = m.Groups[2].Value;
+        if (!ProtocolParser.IsValidRepo(r) || !ProtocolParser.IsValidCell(c)) return false;
+        repo = r;
+        cell = c;
+        return true;
+    }
+
     /// <summary>Marker the browser userscript looks for to click send.</summary>
     public const string AutoSendSuffix = "&autosend=1";
 
