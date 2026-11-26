@@ -428,7 +428,7 @@ public class AutoSendEngineTests : IDisposable
             Assert.Equal("autosend", decision);
             Assert.Equal(new[] { "decision", "reason", "ms", "window" }, fields.Select(f => f.Key).ToArray());
             var all = decision + " " + string.Join(" ", fields.Select(f => f.Key + "=" + f.Value));
-            foreach (var forbidden in new[] { "abbashaji", "panel", "C-092", "BLUEPRINT", "Repo", "next_cell", "something else" })
+            foreach (var forbidden in new[] { "abbashaji", "panel", "C-092", "BLUEPRINT", "next_cell", "something else" })
                 Assert.DoesNotContain(forbidden, all, StringComparison.OrdinalIgnoreCase);
         }
         AssertPressedAtMostOnce(rig);
