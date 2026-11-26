@@ -23,6 +23,12 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
 
+  <!-- UseWPF removes these two implicit usings; put them back so existing code keeps compiling. -->
+  <ItemGroup>
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../Core/Core.csproj" />
   </ItemGroup>
