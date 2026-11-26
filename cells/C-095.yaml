@@ -1,0 +1,44 @@
+id: C-095
+title: Start windows use the built-in auto-send and ask once per repo
+type: normal
+priority: 12
+lease_minutes: 30
+goal: |
+  Use SendCoordinator and the settings from C-090 and C-094. The blueprint:// links and the Worker do not change.
+  - launcher/App/Controls.cs, AutoSendOption: SaveQuietly must load the settings file first and change only AutoSend, so AllowedRepos and Engine are never erased. Add SaveAllowedRepoQuietly(path, repo). FooterText depends on the engine, the checkbox and whether the repo is allowed. Native engine, on and allowed: 'The launcher presses Send after 3 seconds unless you cancel. A small window shows progress. Nothing is installed in the browser.' Native, on but repo not allowed: 'Auto-send stays off for this repo until you tick the box above.' Off: 'You press Send in the chat.' Userscript engine keeps the existing text. Add CreateAllowCheckBox for 'Allow auto-send for <owner/name> on this PC'.
+  - launcher/App/StartForm.cs (cell mode only): when settings.Engine is 'native' and the repo is not allowed, show the allow checkbox under the Auto-send checkbox. It is never ticked by default; only the person ticking it allows the repo. In Confirm: if Auto-send is on and the repo is allowed (or just ticked), save the allowance with SaveAllowedRepoQuietly and run one SendJob through SendCoordinator, with the start window hidden while it runs and closed afterwards; otherwise launch exactly as today. When the engine is 'userscript' the old behaviour (marker through WithAutoSend) is unchanged. The Steward never shows the checkboxes and never auto-sends. A failed job is reported by the status window, not by a message box. The record (Upsert, SaveLastChoice) is written as today before launching.
+  - launcher/App/StartManyForm.cs: the same checkboxes and rules. In native mode all cells become SendJobs run one at a time (label 'C-123 (2 of 5)'); the 1500 ms gap is only used by the userscript or no-auto-send path.
+  - launcher/App/Program.cs: only what the hand-off needs (for example Run returning the started process id); Main and the protocol handling stay as they are.
+inputs:
+  - from: C-090
+    kind: implementation
+    contract: |
+      LauncherSettings.Load/Save with AutoSend, Engine ('native' or 'userscript'), AllowedRepos, IsRepoAllowed(repo), AllowRepo(repo). Save writes all keys, so callers Load first.
+  - from: C-094
+    kind: implementation
+    contract: |
+      SendJob(Repo, Cell, Browser, ProfileFolder, Exe); SendCoordinator.RunAsync(jobs, settings, dataDirectory, stopAll) runs the jobs one at a time on the UI thread context and returns one AutoSendResult per job; it shows its own SendStatusForm and handles every exception itself.
+after: [C-009, C-016, C-027, C-028, C-038, C-064, C-075, C-078]
+provides:
+  - "Start and start-many windows run the built-in auto-send for allowed repos"
+read:
+  - docs/autosend-native.md
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Program.cs
+outputs:
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/Controls.cs
+  - launcher/App/Program.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text. The allowance must come only from the person ticking the box in this window, never from the link.

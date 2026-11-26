@@ -1,0 +1,49 @@
+id: C-093
+title: Windows adapter reads the chat through UI Automation and presses Send
+type: normal
+priority: 12
+lease_minutes: 30
+goal: |
+  Windows only code in the App project. No Core change.
+  - launcher/App/App.csproj: add <UseWPF>true</UseWPF> next to UseWindowsForms. It is only needed for System.Windows.Automation (UIAutomationClient). The same two flags together were built and run on Windows 10 with .NET 8 in the spike. If a name becomes ambiguous, fully qualify it; do not add other packages. Keep the BlueprintPublish settings as they are.
+  - New launcher/App/Native/UiaChatPage.cs: class UiaChatPage : IChatPage for one browser window (IntPtr hwnd, int processId), rules in the notes.
+  - New launcher/App/Native/BrowserWindows.cs: static Snapshot(IEnumerable<string> processNames) returns the handles of visible top-level windows with a non-empty title whose process name is in the list; static Task<IntPtr> WaitForNewAsync(IReadOnlyCollection<IntPtr> before, IEnumerable<string> processNames, int timeoutMs, CancellationToken ct) polls every 100 ms and returns the first window not in 'before', or IntPtr.Zero; static string StateOf(IntPtr hwnd) returns minimized, hidden (DWM cloaked, for another virtual desktop), foreground, background; static IReadOnlyList<string> BrowserProcessNames derived from BrowserCatalog.All ExeName without '.exe' (chrome, msedge, brave, browser, opera, firefox).
+  - New launcher/App/Native/WindowPlacer.cs: Park(IntPtr hwnd) saves the placement and moves the window into a 480x360 box at the bottom right of the primary work area, always on top, WITHOUT activating it (SetWindowPlacement with showCmd SW_SHOWNOACTIVATE, then SetWindowPos with HWND_TOPMOST and SWP_NOACTIVATE). It works for a window that starts minimized or maximized. Restore(token) removes always-on-top and puts the saved normal rectangle back in the normal state without activating; it never maximizes and never takes focus.
+  - New launcher/App/Native/NativeMethods.cs: the P/Invoke declarations (EnumWindows, GetWindowText, GetWindowThreadProcessId, IsWindowVisible, IsIconic, GetForegroundWindow, DwmGetWindowAttribute with DWMWA_CLOAKED 14, GetWindowPlacement, SetWindowPlacement, SetWindowPos, GetWorkArea via Screen).
+inputs:
+  - from: C-091
+    kind: implementation
+    contract: |
+      launcher/Core/ChatPage.cs: record PageSnapshot(WindowFound, DocumentFound, ComposerFound, ComposerText, SendFound, SendEnabled, WindowState, Nodes, ScanMs, Error); interface IChatPage { PageSnapshot Read(); bool PressSend(string expectedComposerText); }. Read never throws. PressSend re-reads in the same scan and invokes the Send button only when the composer text equals the expected text ignoring whitespace and the button is enabled; true means clicked.
+after: [C-009, C-016, C-027, C-028, C-038, C-057, C-064, C-075, C-078]
+provides:
+  - "UiaChatPage(IntPtr hwnd, int processId) : IChatPage"
+  - "BrowserWindows.Snapshot(names), WaitForNewAsync(before, names, timeoutMs, ct), StateOf(hwnd), BrowserProcessNames"
+  - "WindowPlacer.Park(hwnd) returning a token and WindowPlacer.Restore(token)"
+read:
+  - docs/autosend-native.md
+  - launcher/App/App.csproj
+  - launcher/Core/ChatPage.cs
+  - launcher/Core/BrowserCatalog.cs
+allowed_paths:
+  - launcher/App/App.csproj
+  - launcher/App/Native/**
+outputs:
+  - launcher/App/App.csproj
+  - launcher/App/Native/UiaChatPage.cs
+  - launcher/App/Native/BrowserWindows.cs
+  - launcher/App/Native/WindowPlacer.cs
+  - launcher/App/Native/NativeMethods.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Rules for UiaChatPage, all measured on Chrome 158 in docs/autosend-native.md:
+  - Root: AutomationElement.FromHandle(hwnd). Walk depth first with TreeWalker.ControlViewWalker and a CacheRequest (ControlType, Name, ClassName, IsEnabled, IsOffscreen). Budget 6000 nodes and 4 seconds, depth at most 200. Catch ElementNotAvailableException while walking.
+  - DocumentFound: an element of ControlType.Document exists. The composer is a ControlType.Edit INSIDE a Document; ignore the address bar Edit outside it. Read its text with ValuePattern.Current.Value, fall back to TextPattern.DocumentRange.GetText(4000). If several Edits are in the Document, prefer the one whose text equals the expected text. Never match the composer by its name (language dependent).
+  - Send button: ControlType.Button whose Name equals (ordinal ignore case) one entry of a single constant list SendButtonNames = { "Send message" }; enabled = IsEnabled; it must support InvokePattern. PressSend invokes it with InvokePattern.Invoke() and nothing else.
+  - Every UI Automation call runs on a thread-pool (MTA) thread. The adapter must not be called from the WinForms UI thread; if it is, Read returns Error 'sta thread' and PressSend returns false.
+  - Do not use AutomationElement.FocusedElement for any decision (it is only readable while the window is in front).
+  - Forbidden anywhere in launcher/App/Native: SendInput, keybd_event, mouse_event, SetForegroundWindow, Clipboard, PostMessage, SendMessage, any network type.
+  - Typical timings to expect: a read takes 0.2 to 0.9 s; the first read after a cold browser start about 4 s. Place the window as soon as WaitForNewAsync returns, never after a first read.
+  There is no unit test for this cell (it needs a real Windows desktop); say so in the PR text.

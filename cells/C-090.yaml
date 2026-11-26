@@ -1,0 +1,43 @@
+id: C-090
+title: Launcher settings gain engine and allowed repos, plus a send rate cap and a diagnostics log
+type: normal
+priority: 13
+lease_minutes: 15
+goal: |
+  Core, pure C#, no Windows API, no network.
+  - launcher/Core/LauncherSettings.cs: keep AutoSend. Add Engine (string 'native' or 'userscript'; default and fallback for any other value is 'native') and AllowedRepos (IReadOnlyList<string>, lowercase owner/name valid per ProtocolParser.IsValidRepo, no duplicates, at most 50). Add bool IsRepoAllowed(string repo) (case-insensitive, false for invalid input) and bool AllowRepo(string repo) (false when invalid or the list is full, true when added or already present). JSON keys: autoSend (bool), autoSendEngine (string), allowedRepos (string array). Load tolerates a wrong type per key by ignoring only that key; unknown keys, a corrupt or oversized file still give the defaults. Save writes all three keys atomically as now. The existing AutoSendTests settings tests must keep passing unchanged.
+  - New launcher/Core/AutoSendGuard.cs: AutoSendGuard(string directory, Func<DateTimeOffset>? now = null). bool CanSend(out string reason) is false (reason 'rate limit') when 12 or more sends were recorded in the last 10 minutes. void RecordSend() appends the current time. Stored in <directory>/autosend-sends.json as an array of unix milliseconds; tolerant of a missing, corrupt, oversized file and of timestamps in the future; atomic write; at most 50 entries kept; never throws.
+  - New launcher/Core/AutoSendLog.cs: interface IAutoSendLog { void Write(string decision, params (string Key, string Value)[] fields); }, class FileAutoSendLog(string directory) appending 'yyyy-MM-dd HH:mm:ss decision key=value ...' to <directory>/autosend.log, and NullAutoSendLog.Instance. Keys and values are sanitized (no CR or LF, spaces become '_', value at most 40 characters); the writer never throws; the file stays under 64 KB by dropping the oldest half at a line boundary (same approach as Program.LogRejectedSync).
+  - Tests in new files launcher/Core.Tests/AutoSendSettingsTests.cs, AutoSendGuardTests.cs, AutoSendLogTests.cs: defaults; round trip of all three keys; unknown engine value gives native; invalid repos dropped; the 51st repo refused; case-insensitive lookup; wrong JSON types; guard at 11 versus 12 sends, ten minute window expiry, corrupt and future-dated file, persistence across instances; log line format, sanitizing, the size cap, an unwritable directory does not throw.
+inputs:
+  - from: C-089
+    kind: implementation
+    contract: |
+      docs/autosend-native.md describes the feature. Read its sections 3 and 7 for the safety rules and file names.
+after: [C-063, C-064]
+provides:
+  - "LauncherSettings.Engine, AllowedRepos, IsRepoAllowed(repo), AllowRepo(repo); Save/Load keep the autoSend key"
+  - "AutoSendGuard(directory, now?).CanSend(out reason) and RecordSend()"
+  - "IAutoSendLog.Write(decision, params (Key, Value)[]), FileAutoSendLog(directory), NullAutoSendLog.Instance"
+read:
+  - docs/autosend-native.md
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core/ProtocolParser.cs
+allowed_paths:
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core/AutoSendGuard.cs
+  - launcher/Core/AutoSendLog.cs
+  - launcher/Core.Tests/AutoSendSettingsTests.cs
+  - launcher/Core.Tests/AutoSendGuardTests.cs
+  - launcher/Core.Tests/AutoSendLogTests.cs
+outputs:
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core/AutoSendGuard.cs
+  - launcher/Core/AutoSendLog.cs
+  - launcher/Core.Tests/AutoSendSettingsTests.cs
+  - launcher/Core.Tests/AutoSendGuardTests.cs
+  - launcher/Core.Tests/AutoSendLogTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Core stays free of System.Net, System.Drawing and package references (NoNetworkTests). Callers that Save must Load first and change only their own key, because Save now writes all three keys. The log never receives prompt text, URLs, repo names or page text.

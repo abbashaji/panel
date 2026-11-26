@@ -1,0 +1,52 @@
+id: C-098
+title: Docs and changelog describe the built-in auto-send and the Windows test checklist
+type: normal
+priority: 9
+goal: |
+  Documentation only. Plain text, short.
+  - docs/autosend.md: rewrite for the built-in auto-send: what it does, the opt-in, the one-time 'Allow auto-send for this repo on this PC' tick, the 3 second countdown and Cancel, the failure behaviour ('Not sent, press Send yourself'), where settings.json, autosend-sends.json and autosend.log live, how to turn it off (untick the box, or settings autoSend false), and the legacy userscript engine (autoSendEngine = userscript) in one short section at the end. Link to docs/autosend-native.md for the design and the measurements.
+  - docs/panel-contracts.md: the two lines that say 'auto-send is an opt-in helper' now name the built-in launcher feature and point at docs/autosend.md.
+  - docs/panel-integration.md: add to the NOT VERIFIED list one checkbox per item of section 5 of docs/autosend-native.md, and say what was measured on Chrome (point at docs/autosend-native.md).
+  - docs/e2e-runbook.md: new section 'Windows auto-send checklist': for each browser run blueprint-launcher.exe --check-autosend, then a real cell with auto-send, in these states: window in front, another window in front, window started maximized, two cells in start-many, repo not yet allowed, Cancel during the countdown, a prompt edited by hand during the wait. Expected result per row.
+  - README.md: replace the sentence that the launcher 'never clicks' by one that says it presses Send only through the opt-in auto-send. CHANGELOG.md: one entry.
+  Do not edit docs/decisions.md (protected); the owner updates it.
+inputs:
+  - from: C-095
+    kind: implementation
+    contract: |
+      Start and start-many windows run the built-in auto-send for allowed repos; Auto-send checkbox, 'Allow auto-send for <repo> on this PC' checkbox, status window with Cancel.
+  - from: C-096
+    kind: implementation
+    contract: |
+      blueprint-launcher.exe --check-autosend [browser] [profile-folder] prints a read-only report to a message box and autosend.log.
+  - from: C-097
+    kind: implementation
+    contract: |
+      The panel help describes the built-in auto-send and keeps the userscript link under 'Legacy browser helper'.
+after: [C-067, C-085, C-088]
+provides:
+  - "Docs for the built-in auto-send and the Windows test checklist"
+read:
+  - docs/autosend-native.md
+  - docs/autosend.md
+  - docs/panel-integration.md
+allowed_paths:
+  - docs/autosend.md
+  - docs/panel-contracts.md
+  - docs/panel-integration.md
+  - docs/e2e-runbook.md
+  - README.md
+  - CHANGELOG.md
+outputs:
+  - docs/autosend.md
+  - docs/panel-contracts.md
+  - docs/panel-integration.md
+  - docs/e2e-runbook.md
+  - README.md
+  - CHANGELOG.md
+acceptance:
+  - cmd: "grep -q 'check-autosend' docs/e2e-runbook.md"
+  - cmd: "grep -q 'autosend-native' docs/autosend.md"
+  - cmd: "! grep -q 'never clicks' README.md"
+notes: |
+  Documentation only. Do not copy any key into these files.

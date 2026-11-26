@@ -1,0 +1,44 @@
+id: C-091
+title: Core seam for the engine, exact prompt matching and new-window launch arguments
+type: normal
+priority: 13
+lease_minutes: 15
+goal: |
+  Core, pure C#, no Windows API, no network.
+  - launcher/Core/PromptBuilder.cs: add public static bool TryMatchCellPrompt(string? text, out string repo, out string cell). It collapses every whitespace run to one space first (page text may flatten newlines), then matches the fixed cell template with the same wording as BuildPrompt, with repo and cell validated by ProtocolParser.IsValidRepo and IsValidCell. False for the Steward prompt, the admin-key prompt, any extra or missing word, null or empty. BuildPrompt, BuildUrl and WithAutoSend stay unchanged.
+  - launcher/Core/LaunchCommand.cs: new overload Build(string exe, string browser, string profile, string url, bool newWindow). newWindow=false returns exactly what the existing overload returns. true: Chromium gives --profile-directory=<folder>, --new-window, url; Opera gives --new-window, url; Firefox gives -P, name, -new-window, url. Every validation of the existing overload applies and arguments stay a list, never a shell string.
+  - New launcher/Core/ChatPage.cs, the seam between the engine and the Windows adapter:
+      public sealed record PageSnapshot(bool WindowFound, bool DocumentFound, bool ComposerFound, string? ComposerText, bool SendFound, bool SendEnabled, string WindowState, int Nodes, int ScanMs, string? Error);
+      public interface IChatPage { PageSnapshot Read(); bool PressSend(string expectedComposerText); }
+    Read() is read-only and never throws (a failure becomes Error text and false flags). PressSend re-reads inside the same scan and invokes the Send button only when the composer text equals expectedComposerText (whitespace-insensitive) and the button is enabled; it returns true when the click was made and false when it was refused. WindowState is one of foreground, background, minimized, hidden, unknown.
+  - Tests in new files launcher/Core.Tests/PromptMatchTests.cs and NativeLaunchTests.cs: exact template accepted with newlines and with single spaces; extra word, missing line, Steward prompt, admin prompt, bad repo, bad cell, null; every browser family with newWindow true and false; invalid profile and url still rejected.
+inputs:
+  - from: C-089
+    kind: implementation
+    contract: |
+      docs/autosend-native.md describes the feature. Read its sections 2 and 3.
+after: [C-063, C-078, C-025]
+provides:
+  - "PromptBuilder.TryMatchCellPrompt(text, out repo, out cell)"
+  - "LaunchCommand.Build(exe, browser, profile, url, bool newWindow)"
+  - "launcher/Core/ChatPage.cs: record PageSnapshot(WindowFound, DocumentFound, ComposerFound, ComposerText, SendFound, SendEnabled, WindowState, Nodes, ScanMs, Error); interface IChatPage { PageSnapshot Read(); bool PressSend(string expectedComposerText); }"
+read:
+  - docs/autosend-native.md
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LaunchCommand.cs
+allowed_paths:
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LaunchCommand.cs
+  - launcher/Core/ChatPage.cs
+  - launcher/Core.Tests/PromptMatchTests.cs
+  - launcher/Core.Tests/NativeLaunchTests.cs
+outputs:
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LaunchCommand.cs
+  - launcher/Core/ChatPage.cs
+  - launcher/Core.Tests/PromptMatchTests.cs
+  - launcher/Core.Tests/NativeLaunchTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Existing tests assert that BuildUrl has no '&' and that the steward template has no unvalidated text; keep them passing.

@@ -1,0 +1,54 @@
+id: C-094
+title: Status window and coordinator run one cell after another through the engine
+type: normal
+priority: 12
+lease_minutes: 30
+goal: |
+  Windows Forms code in the App project. No Core change.
+  - New launcher/App/SendStatusForm.cs: small borderless window in the launcher Theme, always on top, not in the taskbar, shown WITHOUT taking focus (ShowWithoutActivation plus WS_EX_NOACTIVATE and WS_EX_TOOLWINDOW), docked just above the parked browser box at the bottom right. Shows a title 'Blueprint auto-send' with a label string given by the caller (for example 'C-123' or 'C-123 (2 of 5)'), one status sentence, 'Sending in 3 s' during the countdown, and a Cancel button that works without activating the window. API: void Update(AutoSendProgress p), void ShowResult(AutoSendResult r) and event Action CancelRequested. Sent closes the window by itself after 4 seconds; any other result shows r.PlainText() and a Close button and stays until closed or 60 seconds pass.
+  - New launcher/App/SendCoordinator.cs: record SendJob(string Repo, string Cell, string Browser, string ProfileFolder, string Exe). Task<IReadOnlyList<AutoSendResult>> RunAsync(IReadOnlyList<SendJob> jobs, LauncherSettings settings, string dataDirectory, CancellationToken stopAll), called on the UI thread, never blocks it. For each job, one at a time:
+    1 before = BrowserWindows.Snapshot(BrowserWindows.BrowserProcessNames).
+    2 LaunchCommand.Build(exe, browser, profile, PromptBuilder.BuildUrl(repo, cell), true), then Program.Run.
+    3 hwnd = BrowserWindows.WaitForNewAsync(before, ..., 8000, ct). No window gives NotSent/NoWindow for this job.
+    4 token = WindowPlacer.Park(hwnd) immediately, before any page read.
+    5 Run the engine on a thread-pool thread (Task.Run) with new UiaChatPage(hwnd, pid), new AutoSendEngine(page, new SystemClock(), settings, new AutoSendGuard(dataDirectory), new FileAutoSendLog(dataDirectory)), request AutoSendRequest(repo, cell, PromptBuilder.BuildPrompt(repo, cell)). Progress goes to SendStatusForm.Update on the UI thread. CancelRequested cancels this job only; closing the status window with the title bar of the batch, or stopAll, cancels the rest.
+    6 WindowPlacer.Restore(token) in a finally block, then SendStatusForm.ShowResult. After a failure the next job starts after 3 seconds.
+  Every exception inside a job becomes NotSent/Refused for that job plus one log line with the exception type only; nothing escapes RunAsync.
+  - The Steward is never a job.
+inputs:
+  - from: C-092
+    kind: implementation
+    contract: |
+      AutoSendEngine(page, clock, settings, guard, log, options?).RunAsync(request, progress, cancel) returns AutoSendResult(Outcome, Reason, ElapsedMs, WindowStateAtSend) with PlainText(). Types: IAutoSendClock, SystemClock, AutoSendRequest(Repo, Cell, ExpectedPrompt), AutoSendProgress(Phase, SecondsLeft), enums AutoSendOutcome and AutoSendReason.
+  - from: C-093
+    kind: implementation
+    contract: |
+      UiaChatPage(IntPtr hwnd, int processId) : IChatPage; BrowserWindows.Snapshot(names), WaitForNewAsync(before, names, timeoutMs, ct), StateOf(hwnd), BrowserProcessNames; WindowPlacer.Park(hwnd) returns a token and Restore(token) puts the window back. All UI Automation calls must run off the UI thread.
+  - from: C-090
+    kind: implementation
+    contract: |
+      LauncherSettings.IsRepoAllowed(repo); AutoSendGuard(directory); FileAutoSendLog(directory).
+  - from: C-091
+    kind: implementation
+    contract: |
+      LaunchCommand.Build(exe, browser, profile, url, bool newWindow); PromptBuilder.BuildPrompt and BuildUrl.
+after: [C-009, C-016, C-027, C-028, C-038, C-064, C-078]
+provides:
+  - "SendJob(Repo, Cell, Browser, ProfileFolder, Exe)"
+  - "SendCoordinator.RunAsync(jobs, settings, dataDirectory, stopAll) returning one AutoSendResult per job, serial, UI-thread safe"
+  - "SendStatusForm(label), Update(progress), ShowResult(result), event CancelRequested"
+read:
+  - docs/autosend-native.md
+  - launcher/App/Theme.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/App/SendStatusForm.cs
+  - launcher/App/SendCoordinator.cs
+outputs:
+  - launcher/App/SendStatusForm.cs
+  - launcher/App/SendCoordinator.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Several cells run one at a time on purpose: a background tab is not shown to UI Automation and loads slowly, and every cell needs its own new window. Not verified on a real Windows desktop, say so in the PR text.

@@ -1,0 +1,67 @@
+id: C-089
+title: Design note for the built-in auto-send with the measured evidence
+type: normal
+priority: 14
+lease_minutes: 15
+goal: |
+  New docs/autosend-native.md: the single reference every later cell of this feature reads. Plain text, complete, no code.
+  Decision: the launcher presses Send itself through Windows UI Automation. Nothing is installed in any browser: no extension, no userscript manager, no per-profile setup. The Tampermonkey userscript (C-065) stays only as an opt-in legacy engine (settings key autoSendEngine = userscript).
+  Sections in this order: 1 Decision and why. 2 Flow. 3 Safety rules. 4 Measured evidence. 5 NOT verified. 6 Component map. 7 Settings and files. 8 Failure behaviour. 9 Rollback.
+  The text for sections 2 to 6 is in the notes below: copy it faithfully, tidy the wording, do not add claims that are not in the notes.
+inputs: []
+after: []
+provides:
+  - "docs/autosend-native.md: design, safety rules, evidence and component map of the built-in auto-send"
+read:
+  - docs/autosend.md
+  - docs/panel-contracts.md
+allowed_paths:
+  - docs/autosend-native.md
+outputs:
+  - docs/autosend-native.md
+acceptance:
+  - cmd: "test -f docs/autosend-native.md"
+  - cmd: "grep -q 'NOT verified' docs/autosend-native.md"
+  - cmd: "grep -q 'Component map' docs/autosend-native.md"
+  - cmd: "grep -q 'Measured evidence' docs/autosend-native.md"
+notes: |
+  Section 1, why: Tampermonkey was flaky, needed setup, and teammates struggled to install it on different browsers. claude.ai never sends a prompt from a link (a link only pre-fills it), so something outside the page has to press Send. A native program can do that for any browser without touching the browser.
+
+  Section 2, flow (one cell):
+  1. Start window: the teammate picks a profile, ticks Auto-send and, the first time for a repo, ticks 'Allow auto-send for <repo> on this PC', then clicks Open.
+  2. The launcher records the visible top-level browser windows, starts the browser with --new-window and the pre-filled URL, and finds the new window within 8 seconds.
+  3. It parks that window in a small always-on-top box in the bottom-right corner without taking focus (a minimized or fully covered window does not finish loading; a small visible one does). A small status window above it shows progress.
+  4. A background thread reads the page through UI Automation every 250 ms until the composer text equals this launch's prompt and Send is enabled for 800 ms in a row. Timeout 60 seconds.
+  5. 3 second countdown with a Cancel button.
+  6. Re-verify, press Send with UI Automation Invoke, then confirm that the pre-filled composer text is gone (up to 12 seconds).
+  7. Put the window back to its normal size and not-on-top, without taking focus. The status window closes after 4 seconds. Start-many runs one cell at a time.
+
+  Section 3, safety rules:
+  1. Only a cell prompt: the page text must equal this launch's prompt and match the fixed cell template exactly (whitespace-insensitive). The Steward and admin-key prompts are never sent.
+  2. Only for a repo the teammate allowed on this PC (settings allowedRepos). The allowance comes from an explicit tick in the launcher window, never from a link.
+  3. Only in the NEW window this launch created (windows before and after, --new-window), never another window that happens to show claude.ai.
+  4. Visible 3 second countdown with Cancel. The page is read again right before the press, and the adapter checks the text again inside the same read as the press.
+  5. The only action is UI Automation Invoke on the Send button. No keystrokes, no mouse, no SendInput, no SetForegroundWindow, no clipboard.
+  6. Never presses twice. At most 12 sends per 10 minutes, kept in a local file. One attempt per launched cell.
+  7. No network. The log (autosend.log) holds time, decision, browser id, window state and timings; never prompt text, URL, repo name or page text.
+  8. Every failure ends as 'Not sent, press Send yourself' with the prompt still pre-filled.
+
+  Section 4, measured evidence. One machine, one profile, Windows 10 build 19045, Chrome 158.0.8127.38, 2026-11-26, read-only spike plus an opt-in send test:
+  - claude.ai/new?q= pre-filled the composer with the exact launcher template (165 characters).
+  - UI Automation saw the browser toolbar about 0.7 to 1 s after launch (the first scan after a cold browser start took about 4 s) and the web page document about 1.4 s after launch. The pre-filled text appeared 7.8 to 14.1 s after launch. Send became enabled 8.8 to 31.1 s after launch (31 s once, while the user worked in another window).
+  - A page that had already loaded stayed readable when covered by another window and when minimized (scans 230 to 540 ms).
+  - A page that was loading while the window was minimized did not finish within 40 s (the tree stayed at 64 nodes, no composer, no Send button). After the window was restored it was ready 1.4 s later.
+  - A small always-on-top window in the corner loaded normally (Send ready at 8.8 s).
+  - Pressing Send with UI Automation Invoke on the 'Send message' button worked with the window in the background while the user was typing elsewhere (Invoke 49 ms) and in the foreground (34 ms). The pre-filled composer text disappeared 1.7 to 1.8 s later. No focus, mouse or keystrokes were used.
+  - After a window restore, Send was disabled and the tree 4 nodes smaller for one sample while the composer text still matched; cause unknown. Hence the 800 ms stability rule.
+  - Controls: a Document control contains an Edit named 'Write your prompt to Claude' and a Button named 'Send message' (English UI). The address bar is also an Edit but is outside the Document. Match the composer by its text, not its name. Keep button names in one list.
+  - Starting a browser with --profile-directory set to a display name instead of a folder made Chrome create a new signed-out profile. The launcher already uses folders read from Local State; keep it that way.
+  - UI Automation calls must run on a thread-pool (MTA) thread, never on the WinForms STA UI thread.
+
+  Section 5, NOT verified (copy as a checklist): Edge, Firefox, Opera, Yandex and Brave; Windows 11; a second virtual desktop; claude.ai project pages; non-English claude.ai; high-DPI scaling; an elevated (administrator) browser; several cells started one after another; a browser that is already running with another profile; Chrome starting the new window maximized.
+
+  Section 6, component map (one line each): C-090 settings, allowlist, rate cap, log (launcher/Core/LauncherSettings.cs, AutoSendGuard.cs, AutoSendLog.cs). C-091 seam types, template match, new-window arguments (ChatPage.cs, PromptBuilder.cs, LaunchCommand.cs). C-092 the send engine, pure logic (AutoSendEngine.cs, AutoSendResult.cs). C-093 the Windows adapter: UI Automation, window finding and parking (launcher/App/Native/). C-094 status window and the coordinator (SendStatusForm.cs, SendCoordinator.cs). C-095 start windows use it. C-096 read-only check mode. C-097 panel texts. C-098 docs.
+
+  Section 7: settings.json keys autoSend (bool), autoSendEngine ('native' default or 'userscript'), allowedRepos (list of owner/name, at most 50); autosend-sends.json (send times); autosend.log (diagnostics, 64 KB cap). All in %LOCALAPPDATA%\BlueprintLauncher. The panel link format blueprint:// and the Worker do not change.
+
+  Do not edit docs/decisions.md (protected). Add a short line at the end of the note saying that the owner must update the decision 'the launcher never clicks' by hand: it now presses Send only through this feature and only after the opt-in.

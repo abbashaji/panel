@@ -1,0 +1,57 @@
+id: C-092
+title: Core send engine decides when it is safe to press Send
+type: normal
+priority: 13
+lease_minutes: 15
+goal: |
+  Core, pure logic with no Windows types and no threads of its own. Everything time related goes through an injected clock so tests run without real delays.
+  New launcher/Core/AutoSendResult.cs and launcher/Core/AutoSendEngine.cs:
+    public interface IAutoSendClock { long NowMs { get; } Task DelayAsync(int ms, CancellationToken ct); }  plus SystemClock (Stopwatch and Task.Delay)
+    public sealed record AutoSendOptions(int PollMs = 250, int StableMs = 800, int CountdownMs = 3000, int TimeoutMs = 60000, int ConfirmMs = 12000)
+    public enum AutoSendOutcome { Sent, NotConfirmed, NotSent, Cancelled }
+    public enum AutoSendReason { None, RepoNotAllowed, RateLimited, NoWindow, NoDocument, NoComposer, TextMismatch, SendNotFound, SendDisabled, PageChanged, Refused }
+    public sealed record AutoSendRequest(string Repo, string Cell, string ExpectedPrompt)
+    public sealed record AutoSendProgress(string Phase, int SecondsLeft)   // Phase: waiting, countdown, sending, confirming
+    public sealed record AutoSendResult(AutoSendOutcome Outcome, AutoSendReason Reason, long ElapsedMs, string WindowStateAtSend) with string PlainText()
+    public sealed class AutoSendEngine(IChatPage page, IAutoSendClock clock, LauncherSettings settings, AutoSendGuard guard, IAutoSendLog log, AutoSendOptions? options = null) with Task<AutoSendResult> RunAsync(AutoSendRequest request, IProgress<AutoSendProgress>? progress, CancellationToken cancel)
+  Algorithm of RunAsync, in this order, never deviating:
+  1. Self check without touching the page: PromptBuilder.TryMatchCellPrompt(request.ExpectedPrompt) must succeed with the same repo and cell as the request, else NotSent/TextMismatch. settings.IsRepoAllowed(repo) else NotSent/RepoNotAllowed. guard.CanSend else NotSent/RateLimited.
+  2. Wait: poll page.Read() every PollMs. Conditions in this order, the first one that fails is the current reason: WindowFound (NoWindow), DocumentFound (NoDocument), ComposerFound (NoComposer), ComposerText equals the expected prompt ignoring all whitespace (TextMismatch), SendFound (SendNotFound), SendEnabled (SendDisabled). Ready means all hold. Ready must hold without a break for StableMs; any failing poll resets the timer. After TimeoutMs return NotSent with the reason that failed last. Cancel returns Cancelled.
+  3. Countdown of CountdownMs, report SecondsLeft once per second through progress; Cancel during it returns Cancelled and PressSend is never called.
+  4. Read again; if not ready return NotSent/PageChanged. Never retry and never click blindly.
+  5. guard.RecordSend(), then page.PressSend(expected) exactly once per RunAsync. False gives NotSent/Refused. From here cancel is ignored.
+  6. Confirm: poll until the composer text no longer equals the expected prompt or the Send button is gone, then Sent. If ConfirmMs passes, or the window disappears, return NotConfirmed.
+  7. Log every decision with log.Write('autosend', decision, reason, ms, window state). Never prompt text, repo name or cell id.
+  PlainText(): Sent 'Sent.'; NotConfirmed 'Send was pressed but the chat did not confirm it. Look at the chat window.'; Cancelled 'Cancelled. Press Send yourself if you still want it.'; NotSent texts: RepoNotAllowed 'Auto-send is not allowed for this repo on this PC. Press Send yourself.'; RateLimited 'Too many auto-sends in 10 minutes. Press Send yourself.'; NoWindow 'The browser window was not found. Press Send yourself.'; NoDocument 'This browser does not show the page to Windows UI Automation. Press Send yourself.'; NoComposer 'The prompt box was not found. Press Send yourself.'; TextMismatch 'The prompt was changed. Press Send yourself.'; SendNotFound and SendDisabled 'The Send button was not available. Press Send yourself.'; PageChanged 'The page changed during the countdown. Press Send yourself.'; Refused 'Windows refused the click. Press Send yourself.'
+  Tests in new files launcher/Core.Tests/AutoSendEngineTests.cs (with a scripted FakeChatPage and a FakeClock that advances on DelayAsync) and AutoSendResultTests.cs: happy path presses once at ready plus StableMs plus CountdownMs; a one sample dip of SendDisabled restarts the stability timer; a timeout reports each of the six reasons; repo not allowed and rate limited never touch the page; cancel during the countdown never presses; page changed after the countdown; Refused; NotConfirmed; self check mismatch; the log holds no prompt text; PressSend is called at most once in every scenario; PlainText for every reason.
+inputs:
+  - from: C-090
+    kind: implementation
+    contract: |
+      LauncherSettings.IsRepoAllowed(repo); AutoSendGuard(directory, now?).CanSend(out reason) and RecordSend(); IAutoSendLog.Write(decision, params (Key, Value)[]) and NullAutoSendLog.Instance.
+  - from: C-091
+    kind: implementation
+    contract: |
+      PromptBuilder.TryMatchCellPrompt(text, out repo, out cell); record PageSnapshot(WindowFound, DocumentFound, ComposerFound, ComposerText, SendFound, SendEnabled, WindowState, Nodes, ScanMs, Error); interface IChatPage { PageSnapshot Read(); bool PressSend(string expectedComposerText); }
+after: []
+provides:
+  - "AutoSendEngine(page, clock, settings, guard, log, options?).RunAsync(request, progress, cancel) returning AutoSendResult(Outcome, Reason, ElapsedMs, WindowStateAtSend) with PlainText()"
+  - "IAutoSendClock, SystemClock, AutoSendOptions, AutoSendRequest(Repo, Cell, ExpectedPrompt), AutoSendProgress(Phase, SecondsLeft), enums AutoSendOutcome and AutoSendReason"
+read:
+  - docs/autosend-native.md
+  - launcher/Core/ChatPage.cs
+  - launcher/Core/AutoSendGuard.cs
+allowed_paths:
+  - launcher/Core/AutoSendEngine.cs
+  - launcher/Core/AutoSendResult.cs
+  - launcher/Core.Tests/AutoSendEngineTests.cs
+  - launcher/Core.Tests/AutoSendResultTests.cs
+outputs:
+  - launcher/Core/AutoSendEngine.cs
+  - launcher/Core/AutoSendResult.cs
+  - launcher/Core.Tests/AutoSendEngineTests.cs
+  - launcher/Core.Tests/AutoSendResultTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  The numbers (250 ms poll, 800 ms stable, 3 s countdown, 60 s timeout, 12 s confirm) come from the measurements in docs/autosend-native.md: the page was ready 8.8 to 31 s after launch and Send flickered disabled for one sample after a window restore. Core stays free of System.Net and package references.

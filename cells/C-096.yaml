@@ -1,0 +1,46 @@
+id: C-096
+title: Read-only check mode tells a teammate whether auto-send works in their browser
+type: normal
+priority: 11
+lease_minutes: 30
+goal: |
+  A command line switch, not a blueprint:// link, so a link can never start it: blueprint-launcher.exe --check-autosend [browser] [profile-folder]. Without arguments it uses the last choice. It never presses Send; the file launcher/App/CheckMode.cs must not contain the text PressSend.
+  - New launcher/Core/AutoSendCheck.cs: CheckTimeline collects named marks with a millisecond value and the window state at that moment (windowFound, documentFound, composerFound, composerTextMatches, sendButtonFound, sendButtonEnabled, ready). CheckReport.Format(...) returns plain text lines: header, browser id, Windows version, the timeline as 'name=ms(state)', and a verdict 'READY at N ms' or 'NOT READY: <AutoSendReason> ...' using the same reasons as the engine. Never prompt text, profile names, titles or page text.
+  - New launcher/App/CheckMode.cs: opens a new window with the fixed harmless text 'Blueprint auto-send check. Do not send.' using the same launch, new-window find and Park code as SendCoordinator, polls UiaChatPage.Read() every 250 ms for up to 60 seconds and fills the timeline, restores the window, appends the report to autosend.log and shows it in a message box with the log path.
+  - launcher/App/Program.cs: dispatch the switch first in Main, before ProtocolParser. Nothing else changes.
+  - Tests in new launcher/Core.Tests/AutoSendCheckTests.cs: report format for READY and for each NOT READY reason, no forbidden content, plus a test that scans launcher/App/CheckMode.cs and fails if it contains 'PressSend'.
+inputs:
+  - from: C-095
+    kind: implementation
+    contract: |
+      Program.cs and the start windows are final; this cell only adds a dispatch at the top of Main.
+  - from: C-094
+    kind: implementation
+    contract: |
+      The launch, new-window finding, WindowPlacer.Park and Restore sequence is implemented in SendCoordinator; mirror it. SendStatusForm is not used in check mode.
+  - from: C-093
+    kind: implementation
+    contract: |
+      UiaChatPage(hwnd, pid).Read() returns PageSnapshot; BrowserWindows.Snapshot, WaitForNewAsync, StateOf; WindowPlacer.Park and Restore.
+after: [C-092]
+provides:
+  - "blueprint-launcher.exe --check-autosend [browser] [profile-folder]: a read-only report in autosend.log"
+read:
+  - docs/autosend-native.md
+  - launcher/App/SendCoordinator.cs
+  - launcher/App/Program.cs
+allowed_paths:
+  - launcher/Core/AutoSendCheck.cs
+  - launcher/Core.Tests/AutoSendCheckTests.cs
+  - launcher/App/CheckMode.cs
+  - launcher/App/Program.cs
+outputs:
+  - launcher/Core/AutoSendCheck.cs
+  - launcher/Core.Tests/AutoSendCheckTests.cs
+  - launcher/App/CheckMode.cs
+  - launcher/App/Program.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  This is the productised version of the spike that produced the evidence in docs/autosend-native.md. It lets the owner verify each teammate browser (Edge, Firefox, Opera, Yandex, Brave) with one command before turning auto-send on there. Not verified on a real Windows desktop, say so in the PR text.

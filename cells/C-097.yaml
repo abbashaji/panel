@@ -1,0 +1,33 @@
+id: C-097
+title: Panel help describes the built-in auto-send and keeps the userscript as a legacy option
+type: normal
+priority: 10
+goal: |
+  Text only in the existing auto-send help block. Component name, export names and the AUTOSEND_SCRIPT_HREF export stay.
+  - web/src/launch/AutoSendHelp.tsx: the collapsed toggle is now 'Auto-send (optional)'. Expanded body, in this order: (1) 'The launcher can press Send for you in the chat it opens, so a cell starts without a manual click. Nothing is installed in the browser.' (2) a short list: tick 'Auto-send in the browser' in the launcher window; the first time for each repo, also tick 'Allow auto-send for this repo on this PC'; a small window shows a 3 second countdown with Cancel; if anything is unexpected the launcher does not send and you press Send yourself. (3) 'Steward chats never auto-send.' (4) a second collapsed toggle 'Legacy browser helper' that holds the old text and the install link to blueprint-autosend.user.js, introduced by 'Only needed if you switched the launcher to the userscript engine (autoSendEngine in settings.json).'
+  - web/src/launch/autosendHelp.test.tsx: update the assertions: collapsed by default, the new first text, the three steps, the Steward note, the legacy block collapsed and, once opened, the link ending in blueprint-autosend.user.js with target _blank.
+  - web/src/launch/RunReadyDialog.tsx: change only if it repeats the old wording; otherwise leave it untouched.
+inputs:
+  - from: C-089
+    kind: implementation
+    contract: |
+      docs/autosend-native.md is the source of the wording and the safety rules (sections 2 and 3).
+after: [C-066, C-029, C-040, C-042]
+provides:
+  - "AutoSendHelp describes the built-in auto-send; the userscript link moves to a legacy block"
+read:
+  - docs/autosend-native.md
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+allowed_paths:
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+  - web/src/launch/RunReadyDialog.tsx
+outputs:
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Plain text, no new dependency. launch.test.tsx may assert on RunReadyDialog text; keep it passing.
