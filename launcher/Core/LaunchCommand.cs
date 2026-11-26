@@ -34,6 +34,20 @@ public sealed record LaunchCommand(string Exe, IReadOnlyList<string> Arguments)
         }
     }
 
+    /// <summary>
+    /// Same validation as Build(exe, browser, profile, url). newWindow adds the new-window switch right before
+    /// the url: --new-window for Chromium and Opera, -new-window for Firefox.
+    /// </summary>
+    public static LaunchCommand Build(string exe, string browser, string profile, string url, bool newWindow)
+    {
+        var plain = Build(exe, browser, profile, url);
+        if (!newWindow) return plain;
+        var info = BrowserCatalog.TryGet(browser) ?? throw new ArgumentException("unknown browser", nameof(browser));
+        var arguments = plain.Arguments.ToList();
+        arguments.Insert(arguments.Count - 1, info.Family == BrowserFamily.Firefox ? "-new-window" : "--new-window");
+        return new LaunchCommand(plain.Exe, arguments.ToArray());
+    }
+
     private static void CheckExe(string exe)
     {
         if (string.IsNullOrWhiteSpace(exe) || exe.Any(c => c < ' ')) throw new ArgumentException("invalid executable", nameof(exe));
