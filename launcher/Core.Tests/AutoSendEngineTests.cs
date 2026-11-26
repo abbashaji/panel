@@ -213,4 +213,250 @@ public class AutoSendEngineTests : IDisposable
         Assert.Equal(AutoSendReason.NoWindow, result.Reason);
         Assert.Equal(0, rig.Page.PressCount);
     }
+
+    [Fact]
+    public async Task Repo_not_allowed_never_touches_the_page()
+    {
+        var rig = Build((t, p) => Ready(), allowed: false);
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.RepoNotAllowed, result.Reason);
+        Assert.Equal(0, rig.Page.ReadCount);
+        Assert.Equal(0, rig.Page.PressCount);
+    }
+
+    [Fact]
+    public async Task Rate_limited_never_touches_the_page()
+    {
+        var rig = Build((t, p) => Ready());
+        for (var i = 0; i < AutoSendGuard.MaxSends; i++) rig.Guard.RecordSend();
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.RateLimited, result.Reason);
+        Assert.Equal(0, rig.Page.ReadCount);
+        Assert.Equal(0, rig.Page.PressCount);
+    }
+
+    [Theory]
+    [InlineData("junk")]
+    [InlineData("other-cell")]
+    [InlineData("other-repo")]
+    [InlineData("steward")]
+    public async Task Self_check_mismatch_never_touches_the_page(string kind)
+    {
+        var request = kind switch
+        {
+            "junk" => new AutoSendRequest(Repo, Cell, "hello"),
+            "other-cell" => new AutoSendRequest(Repo, "C-093", Prompt),
+            "other-repo" => new AutoSendRequest("someone/else", Cell, Prompt),
+            _ => new AutoSendRequest(Repo, Cell, PromptBuilder.BuildStewardPrompt(Repo)),
+        };
+        var rig = Build((t, p) => Ready());
+
+        var result = await rig.Engine.RunAsync(request, null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.TextMismatch, result.Reason);
+        Assert.Equal(0, rig.Page.ReadCount);
+        Assert.Equal(0, rig.Page.PressCount);
+    }
+
+    [Fact]
+    public async Task Cancel_during_the_countdown_never_presses()
+    {
+        var rig = Build((t, p) => Ready());
+        using var cts = new CancellationTokenSource();
+        var progress = new SyncProgress
+        {
+            OnReport = i => { if (i.Phase == "countdown" && i.SecondsLeft == 2) cts.Cancel(); },
+        };
+
+        var result = await rig.Engine.RunAsync(Req(), progress, cts.Token);
+
+        Assert.Equal(AutoSendOutcome.Cancelled, result.Outcome);
+        Assert.Equal(0, rig.Page.PressCount);
+        Assert.True(rig.Guard.CanSend(out _));
+    }
+
+    [Fact]
+    public async Task Cancel_while_waiting_never_presses()
+    {
+        var rig = Build((t, p) => Failing(AutoSendReason.SendDisabled));
+        using var cts = new CancellationTokenSource();
+        var progress = new SyncProgress { OnReport = i => { if (i.Phase == "waiting") cts.Cancel(); } };
+
+        var result = await rig.Engine.RunAsync(Req(), progress, cts.Token);
+
+        Assert.Equal(AutoSendOutcome.Cancelled, result.Outcome);
+        Assert.Equal(0, rig.Page.PressCount);
+    }
+
+    [Fact]
+    public async Task Cancel_after_the_press_is_ignored()
+    {
+        var rig = Build((t, p) => p > 0 ? Ready("") : Ready());
+        using var cts = new CancellationTokenSource();
+        var progress = new SyncProgress { OnReport = i => { if (i.Phase == "confirming") cts.Cancel(); } };
+
+        var result = await rig.Engine.RunAsync(Req(), progress, cts.Token);
+
+        Assert.Equal(AutoSendOutcome.Sent, result.Outcome);
+        Assert.Equal(1, rig.Page.PressCount);
+    }
+
+    [Theory]
+    [InlineData("disabled")]
+    [InlineData("edited")]
+    [InlineData("send-gone")]
+    [InlineData("window")]
+    public async Task Page_changed_after_the_countdown_does_not_press(string change)
+    {
+        PageSnapshot Changed() => change switch
+        {
+            "disabled" => Ready() with { SendEnabled = false },
+            "edited" => Ready("Repo: x\nsomething else"),
+            "send-gone" => Ready() with { SendFound = false, SendEnabled = false },
+            _ => Failing(AutoSendReason.NoWindow),
+        };
+        // ready up to the end of the stability wait (1000 ms), changed for the read after the countdown
+        var rig = Build((t, p) => t >= 1500 ? Changed() : Ready());
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.PageChanged, result.Reason);
+        Assert.Equal(0, rig.Page.PressCount);
+        Assert.True(rig.Guard.CanSend(out _));
+    }
+
+    [Fact]
+    public async Task Refused_press_is_not_retried()
+    {
+        var rig = Build((t, p) => Ready());
+        rig.Page.PressResult = false;
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.Refused, result.Reason);
+        Assert.Equal(1, rig.Page.PressCount);
+    }
+
+    [Fact]
+    public async Task A_press_that_throws_is_refused_and_not_retried()
+    {
+        var rig = Build((t, p) => Ready());
+        rig.Page.ThrowOnPress = true;
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.Refused, result.Reason);
+        Assert.Equal(1, rig.Page.PressCount);
+    }
+
+    [Fact]
+    public async Task The_send_is_recorded_for_the_rate_cap()
+    {
+        var rig = Build((t, p) => p > 0 ? Ready("") : Ready());
+        for (var i = 0; i < AutoSendGuard.MaxSends - 1; i++) rig.Guard.RecordSend();
+        Assert.True(rig.Guard.CanSend(out _));
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.Sent, result.Outcome);
+        Assert.False(rig.Guard.CanSend(out _));
+    }
+
+    [Fact]
+    public async Task Not_confirmed_when_the_composer_text_stays()
+    {
+        var rig = Build((t, p) => Ready());
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotConfirmed, result.Outcome);
+        Assert.Equal(1, rig.Page.PressCount);
+        Assert.InRange(result.ElapsedMs - rig.Page.PressTimes[0], 12000, 12250);
+    }
+
+    [Fact]
+    public async Task Not_confirmed_when_the_window_disappears()
+    {
+        var rig = Build((t, p) => p > 0 ? Failing(AutoSendReason.NoWindow) : Ready());
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotConfirmed, result.Outcome);
+        Assert.Equal(1, rig.Page.PressCount);
+        Assert.True(result.ElapsedMs - rig.Page.PressTimes[0] < 1000);
+    }
+
+    [Fact]
+    public async Task Sent_when_the_send_button_is_gone_after_the_press()
+    {
+        var rig = Build((t, p) => p > 0 ? Ready() with { SendFound = false, SendEnabled = false } : Ready());
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.Sent, result.Outcome);
+        Assert.Equal(1, rig.Page.PressCount);
+    }
+
+    [Theory]
+    [InlineData("sent")]
+    [InlineData("timeout")]
+    [InlineData("not-allowed")]
+    public async Task The_log_holds_no_prompt_text_repo_or_cell(string scenario)
+    {
+        var rig = scenario switch
+        {
+            "sent" => Build((t, p) => p > 0 ? Ready("") : Ready()),
+            "timeout" => Build((t, p) => Failing(AutoSendReason.TextMismatch)),
+            _ => Build((t, p) => Ready(), allowed: false),
+        };
+
+        await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.NotEmpty(rig.Log.Entries);
+        foreach (var (decision, fields) in rig.Log.Entries)
+        {
+            Assert.Equal("autosend", decision);
+            Assert.Equal(new[] { "decision", "reason", "ms", "window" }, fields.Select(f => f.Key).ToArray());
+            var all = decision + " " + string.Join(" ", fields.Select(f => f.Key + "=" + f.Value));
+            foreach (var forbidden in new[] { "abbashaji", "panel", "C-092", "BLUEPRINT", "Repo", "next_cell", "something else" })
+                Assert.DoesNotContain(forbidden, all, StringComparison.OrdinalIgnoreCase);
+        }
+        AssertPressedAtMostOnce(rig);
+    }
+
+    [Fact]
+    public async Task The_log_names_the_final_decision_and_reason()
+    {
+        var rig = Build((t, p) => p > 0 ? Ready("") : Ready());
+
+        await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        var last = rig.Log.Entries[^1].Fields.ToDictionary(f => f.Key, f => f.Value);
+        Assert.Equal("sent", last["decision"]);
+        Assert.Equal("None", last["reason"]);
+        Assert.Equal("background", last["window"]);
+    }
+
+    [Fact]
+    public async Task A_page_that_flaps_is_pressed_at_most_once()
+    {
+        var rig = Build((t, p) => (t / 250) % 2 == 0 ? Ready() : Ready() with { SendEnabled = false });
+
+        var result = await rig.Engine.RunAsync(Req(), null, CancellationToken.None);
+
+        Assert.Equal(AutoSendOutcome.NotSent, result.Outcome);
+        Assert.Equal(AutoSendReason.SendDisabled, result.Reason);
+        AssertPressedAtMostOnce(rig);
+        Assert.Equal(0, rig.Page.PressCount);
+    }
 }
