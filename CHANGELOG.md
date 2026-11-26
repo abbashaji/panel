@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Docs: the built-in auto-send (launcher presses Send through Windows UI Automation, opt-in, per-repo allow tick, 3 second Cancel countdown) is described in `docs/autosend.md`; the userscript is the legacy engine. New Windows auto-send checklist in `docs/e2e-runbook.md` (section 12a); untested items added to `docs/panel-integration.md`. See `docs/autosend-native.md`.
 - Usage-limit release (contracts in `blueprint-kit/docs/contracts.md`): new endpoints `GET /ext/ping`, `POST /ext/release` and `POST /ext/warn` in `src/ext.ts`, served only when the secret `EXT_TOKEN` is set (otherwise 404). Deploy step: `npx wrangler secret put EXT_TOKEN` (long random value), then `npx wrangler deploy`. Rotate by running the same `secret put` again. The paid Workers plan is recommended.
 - `/ext/release` commits `release(C-NNN): usage limit` (empty commit, fast-forward only, no reset time in git), refuses when the chat no longer owns the lock commit, when a PR is open (`submitted`) or when the cell is already released. `GitHubApi.branchCommits` was added for the lock search (never run against real GitHub).
 - `/ext/warn` (C5) sets an advisory KV flag, never a commit; while flagged, write-tool replies end with `LIMIT_WARNING`. New agent rules (`RULES`, `BLUEPRINT.md`): echo the bind line after `next_cell` (C1) and obey `LIMIT_WARNING`. `BLUEPRINT.md` changed, so run `init_blueprint` with `upgrade: true` on every repo.

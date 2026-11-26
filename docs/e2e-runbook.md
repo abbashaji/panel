@@ -247,6 +247,32 @@ On a Windows PC with Chrome and Edge (at least two profiles in one of them):
 - [ ] `%LOCALAPPDATA%\BlueprintLauncher\cells.json` has a record per started cell and the record of a merged cell is removed on `sync`.
 - [ ] With the launcher blocked in the firewall everything still works (it opens no network connection).
 
+## 12a. Windows auto-send checklist
+
+On the Windows PC from step 12, for each browser you test (Chrome and Edge at least; others only if the launcher lists them). What is untested is listed in `docs/panel-integration.md`.
+
+1. Run `blueprint-launcher.exe --check-autosend` (add the browser and the profile folder if you want a specific one). It is read-only and sends nothing.
+2. Start a real cell with Auto-send ticked in each state below, one row at a time. Use a ready cell of the test repo each time.
+
+| State | What to do | Expected |
+| --- | --- | --- |
+| Check report | `blueprint-launcher.exe --check-autosend` | A message box with a report, and a new entry in `autosend.log`. Nothing is sent. |
+| Window in front | Tick Auto-send and the allow box, click Open, leave the new window in front. | A small status window, a 3 second countdown, the prompt is sent once, the window returns to its normal size. |
+| Another window in front | Click Open, then keep working in another window. | The same result. Focus stays in your other window and your typing is not interrupted. It can take longer. |
+| Window started maximized | Make the browser open its windows maximized, then click Open. | The new window is parked small, the prompt is sent, the window comes back. If it fails, the status says **Not sent, press Send yourself** and the prompt is pre-filled. Write down which. |
+| Two cells in start-many | Start two ready cells together with start-many. | One cell at a time, each in its own new window, each sent once. The second starts after the first has finished. |
+| Repo not yet allowed | Tick Auto-send but not the allow box (repo not in `allowedRepos`), click Open. | Nothing is sent. The chat opens with the prompt pre-filled and you press Send yourself. |
+| Cancel during the countdown | Click Open, press Cancel while the 3 seconds run. | Nothing is sent. **Not sent, press Send yourself**, the prompt stays pre-filled, no second attempt. |
+| Prompt edited by hand | Click Open, then add a word to the prompt in the chat before the countdown ends. | Nothing is sent. **Not sent, press Send yourself**. Your edited text is left as you typed it. |
+
+**Expected**
+
+- [ ] Every row above gives the result in its Expected column, for each browser tested.
+- [ ] No cell was sent twice and no prompt other than a cell prompt was sent.
+- [ ] `%LOCALAPPDATA%\BlueprintLauncher\autosend.log` has one entry per attempt and no prompt text, URL or repo name.
+- [ ] `autosend-sends.json` has one time per real send.
+- [ ] Unticking Auto-send (or `autoSend` false in `settings.json`) gives a chat that is only pre-filled.
+
 ## 13. Clean up
 
 - [ ] After each run, read the panel text of every cell that is not merged and write it in the results sheet.
@@ -276,6 +302,7 @@ Copy this, fill it in, and keep it with the release notes.
 | 10 Resume | | |
 | 11 Steward | | |
 | 12 Launcher | | |
+| 12a Auto-send checklist | | |
 | 13 Clean up | | |
 
 ## Run 2 results

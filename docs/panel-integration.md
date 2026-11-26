@@ -18,3 +18,16 @@ This file lists what the automated tests cover and, separately, what has **not**
 - [ ] **Long-poll limits.** `wait_seconds` behavior under real Worker time limits is untested.
 - [ ] **The reservation race.** KV is eventually consistent, so two callers can both see a cell as unreserved. The git branch lock (the `claim(<id>):` commit) is the arbiter; the reservation is only a courtesy. This race has not been exercised for real.
 - [ ] **Pinned call without `who`.** The launcher prompt carries no `who`, so a pinned call can claim a cell reserved for someone else (contracts, open point (a)).
+
+Built-in auto-send (launcher): measured only on Chrome 158.0.8127.38, Windows 10 build 19045, one machine and one profile, on 2026-11-26. The results are in `docs/autosend-native.md`. Not tested:
+
+- [ ] **Browsers.** Edge, Firefox, Opera, Yandex and Brave.
+- [ ] **Windows 11.**
+- [ ] **A second virtual desktop.**
+- [ ] **claude.ai project pages.**
+- [ ] **Non-English claude.ai.** The Send button is found by name.
+- [ ] **High-DPI scaling.**
+- [ ] **An elevated (administrator) browser.**
+- [ ] **Several cells started one after another.**
+- [ ] **A browser that is already running with another profile.**
+- [ ] **Chrome starting the new window maximized.**
