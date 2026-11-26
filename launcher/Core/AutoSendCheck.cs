@@ -119,8 +119,8 @@ public static class CheckReport
     {
         var sb = new StringBuilder();
         sb.Append("Blueprint auto-send check (read-only, nothing was sent)\n");
-        sb.Append("browser: ").Append(Safe(browserId, 24)).Append('\n');
-        sb.Append("windows: ").Append(Safe(windowsVersion, 32)).Append('\n');
+        sb.Append("browser: ").Append(OnlyIf(browserId, 24, c => c is >= 'a' and <= 'z' or >= '0' and <= '9')).Append('\n');
+        sb.Append("windows: ").Append(OnlyIf(windowsVersion, 32, c => c is >= '0' and <= '9' or '.')).Append('\n');
         sb.Append("timeline:\n");
         if (timeline.Marks.Count == 0) sb.Append("(no marks)\n");
         foreach (var m in timeline.Marks)
@@ -152,6 +152,17 @@ public static class CheckReport
         AutoSendReason.SendDisabled => "the Send button stayed disabled",
         _ => "no ready state",
     };
+
+    /// <summary>The value when every character passes the test and it is short enough, else unknown: a path or a name is never echoed.</summary>
+    private static string OnlyIf(string? value, int max, Func<char, bool> allowed)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > max) return "unknown";
+        foreach (var c in value)
+        {
+            if (!allowed(c)) return "unknown";
+        }
+        return value;
+    }
 
     /// <summary>Keeps letters, digits, dot, dash and underscore only, so nothing personal can slip in.</summary>
     private static string Safe(string? value, int max)
