@@ -17,6 +17,7 @@ internal sealed class StartForm : Form
     private readonly LauncherSettings _settings;
     private readonly Label _footer;
     private readonly CheckBox? _autoSend;
+    private readonly CheckBox? _allow;
     private readonly CellRecords _records;
     private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly ToolTip _tip = new();
@@ -64,24 +65,37 @@ internal sealed class StartForm : Form
         };
         Controls.Add(promptBox);
 
-        _footer = Labels.Create(
-            _steward
-                ? StewardFooter(req)
-                : CellFooter(_settings.AutoSend),
-            Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, _steward ? 36 : 56);
-        Controls.Add(_footer);
-
-        var btnY = _steward ? 566 : 606;
-        if (!_steward)
+        var btnY = 566;
+        if (_steward)
         {
-            var box = AutoSendOption.CreateCheckBox(_settings.AutoSend, new Rectangle(Pad, 572, ContentWidth, 26));
-            box.CheckedChanged += (_, _) =>
-            {
-                _footer.Text = CellFooter(box.Checked);
-                AutoSendOption.SaveQuietly(_settingsPath, box.Checked);
-            };
+            // The Steward never shows the checkboxes and never auto-sends.
+            _footer = Labels.Create(StewardFooter(req), Theme.Ui(12.5f), Theme.Done, Pad, 512, ContentWidth, 36);
+            Controls.Add(_footer);
+        }
+        else
+        {
+            // Cell mode: the checkboxes sit above the footer so its text can point at them.
+            var y = 510;
+            var box = AutoSendOption.CreateCheckBox(_settings.AutoSend, new Rectangle(Pad, y, ContentWidth, 26));
             _autoSend = box;
             Controls.Add(box);
+            y += 30;
+            if (AutoSendOption.NeedsAllowBox(_settings, req.Repo))
+            {
+                _allow = AutoSendOption.CreateAllowCheckBox(req.Repo, new Rectangle(Pad, y, ContentWidth, 26));
+                Controls.Add(_allow);
+                y += 30;
+            }
+            _footer = Labels.Create(CellFooter(), Theme.Ui(12.5f), Theme.Done, Pad, y + 2, ContentWidth, 56);
+            Controls.Add(_footer);
+            box.CheckedChanged += (_, _) =>
+            {
+                _footer.Text = CellFooter();
+                AutoSendOption.SaveQuietly(_settingsPath, box.Checked);
+            };
+            if (_allow is not null) _allow.CheckedChanged += (_, _) => _footer.Text = CellFooter();
+            btnY = y + 2 + 56 + 10;
+            ClientSize = new Size(780, btnY + 44 + 16);
         }
         _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, btnY, 260, 44);
         _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, btnY, 120, 44);
@@ -109,8 +123,9 @@ internal sealed class StartForm : Form
             : common + "You type the admin key yourself in the chat; it never passes through the launcher.";
     }
 
-    private static string CellFooter(bool autoSend)
-        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. " + AutoSendOption.FooterText(autoSend);
+    private string CellFooter()
+        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. "
+           + AutoSendOption.FooterText(_autoSend?.Checked ?? _settings.AutoSend, _settings, _req.Repo, _allow?.Checked == true);
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -179,7 +194,7 @@ internal sealed class StartForm : Form
         }
     }
 
-    private void Confirm()
+    private async void Confirm()
     {
         var card = _cards.Controls.OfType<ProfileTile>().FirstOrDefault(c => c.Selected);
         if (card?.Tag is not Profile p) return;
@@ -189,12 +204,19 @@ internal sealed class StartForm : Form
             MessageBox.Show("The browser was not found.", Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
+        if (!_steward && AutoSendOption.UseNative(_settings, _req.Repo, _autoSend?.Checked == true, _allow?.Checked == true))
+        {
+            await RunNativeAsync(p, exe);
+            return;
+        }
         try
         {
             var url = _steward
                 ? (_req.Code.Length > 0 ? PromptBuilder.BuildStewardUrl(_req.Repo, _req.Code) : PromptBuilder.BuildStewardUrl(_req.Repo))
                 : PromptBuilder.BuildUrl(_req.Repo, _req.Cell);
-            url = AutoSendOption.Apply(url, !_steward && _autoSend?.Checked == true, out var markError);
+            // The marker is only for the legacy userscript engine.
+            var marker = !_steward && _autoSend?.Checked == true && !AutoSendOption.IsNative(_settings);
+            url = AutoSendOption.Apply(url, marker, out var markError);
             var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
             if (!_steward) _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
             Program.SaveLastChoice(p.Browser, p.Folder);
@@ -206,6 +228,34 @@ internal sealed class StartForm : Form
         catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or Win32Exception)
         {
             MessageBox.Show("Could not start the browser: " + e.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Built-in auto-send for one cell: the record first, then the allowance, then one SendJob with this window hidden. The status window reports the outcome.</summary>
+    private async Task RunNativeAsync(Profile p, string exe)
+    {
+        try
+        {
+            _records.Upsert(_req.Repo, _req.Cell, p.Browser, p.Folder, p.Name);
+            Program.SaveLastChoice(p.Browser, p.Folder);
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show("Could not start the browser: " + e.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        var settings = AutoSendOption.AllowForRun(_settingsPath, _req.Repo);
+        _confirm.Enabled = false;
+        _cancel.Enabled = false;
+        Hide();
+        try
+        {
+            var jobs = new[] { new SendJob(_req.Repo, _req.Cell, p.Browser, p.Folder, exe) };
+            await SendCoordinator.RunAsync(jobs, settings, Program.DataDirectory, default);
+        }
+        finally
+        {
+            Close();
         }
     }
 }

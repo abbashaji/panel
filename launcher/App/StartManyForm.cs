@@ -18,6 +18,8 @@ internal sealed class StartManyForm : Form
     private readonly string _settingsPath;
     private readonly Label _footer;
     private readonly CheckBox _autoSend;
+    private readonly CheckBox? _allow;
+    private readonly LauncherSettings _settings;
     private readonly FlowLayoutPanel _cards = new() { BackColor = Theme.Window, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly ToolTip _tip = new();
     private readonly Label _counter;
@@ -31,7 +33,7 @@ internal sealed class StartManyForm : Form
         _records = records;
         _cells = req.Cells.ToList();
         _settingsPath = LauncherSettings.DefaultPath(Program.LocalAppData);
-        var settings = LauncherSettings.Load(_settingsPath);
+        _settings = LauncherSettings.Load(_settingsPath);
 
         Text = "Blueprint Launcher \u00B7 local window on your PC";
         BackColor = Theme.Window;
@@ -60,20 +62,30 @@ internal sealed class StartManyForm : Form
         _skipped = Labels.Create("", Theme.Ui(12.5f), Theme.Muted, Pad, 412, ContentWidth, 40);
         Controls.Add(_counter);
         Controls.Add(_skipped);
-        _footer = Labels.Create(
-            FooterText(settings.AutoSend),
-            Theme.Ui(12.5f), Theme.Done, Pad, 480, ContentWidth, 56);
+        // The checkboxes sit above the footer so its text can point at them.
+        var y = 462;
+        _autoSend = AutoSendOption.CreateCheckBox(_settings.AutoSend, new Rectangle(Pad, y, ContentWidth, 26));
+        Controls.Add(_autoSend);
+        y += 30;
+        if (AutoSendOption.NeedsAllowBox(_settings, req.Repo))
+        {
+            _allow = AutoSendOption.CreateAllowCheckBox(req.Repo, new Rectangle(Pad, y, ContentWidth, 26));
+            Controls.Add(_allow);
+            y += 30;
+        }
+        _footer = Labels.Create(FooterText(), Theme.Ui(12.5f), Theme.Done, Pad, y + 2, ContentWidth, 56);
         Controls.Add(_footer);
-        _autoSend = AutoSendOption.CreateCheckBox(settings.AutoSend, new Rectangle(Pad, 544, ContentWidth, 26));
         _autoSend.CheckedChanged += (_, _) =>
         {
-            _footer.Text = FooterText(_autoSend.Checked);
+            _footer.Text = FooterText();
             AutoSendOption.SaveQuietly(_settingsPath, _autoSend.Checked);
         };
-        Controls.Add(_autoSend);
+        if (_allow is not null) _allow.CheckedChanged += (_, _) => _footer.Text = FooterText();
 
-        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, 606, 260, 44);
-        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, 606, 120, 44);
+        var btnY = y + 2 + 56 + 10;
+        ClientSize = new Size(780, btnY + 44 + 16);
+        _confirm.Bounds = new Rectangle(Pad + ContentWidth - 260, btnY, 260, 44);
+        _cancel.Bounds = new Rectangle(_confirm.Left - 12 - 120, btnY, 120, 44);
         Controls.Add(_cancel);
         Controls.Add(_confirm);
 
@@ -82,8 +94,9 @@ internal sealed class StartManyForm : Form
         _confirm.Click += (_, _) => Confirm();
     }
 
-    private static string FooterText(bool autoSend)
-        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. " + AutoSendOption.FooterText(autoSend);
+    private string FooterText()
+        => "Works offline. Reads only profile names and colors from your browsers. Sends nothing anywhere. "
+           + AutoSendOption.FooterText(_autoSend.Checked, _settings, _req.Repo, _allow?.Checked == true);
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -179,6 +192,13 @@ internal sealed class StartManyForm : Form
         var pairs = Pair(_cells, profiles);
         _confirm.Enabled = false;
         _cancel.Enabled = false;
+        if (AutoSendOption.UseNative(_settings, _req.Repo, _autoSend.Checked, _allow?.Checked == true))
+        {
+            await RunNativeAsync(pairs, profiles[0]);
+            return;
+        }
+        // Userscript or no auto-send: launch as before, 1500 ms apart; the marker is only for the userscript engine.
+        var marker = _autoSend.Checked && !AutoSendOption.IsNative(_settings);
         var errors = new List<string>();
         for (var i = 0; i < pairs.Count; i++)
         {
@@ -192,7 +212,7 @@ internal sealed class StartManyForm : Form
                     errors.Add(cell + ": the browser was not found.");
                     continue;
                 }
-                var url = AutoSendOption.Apply(PromptBuilder.BuildUrl(_req.Repo, cell), _autoSend.Checked, out var markError);
+                var url = AutoSendOption.Apply(PromptBuilder.BuildUrl(_req.Repo, cell), marker, out var markError);
                 if (markError is not null) errors.Add(cell + ": opened without auto-send (" + markError + ")");
                 var cmd = LaunchCommand.Build(exe, p.Browser, p.Folder, url);
                 _records.Upsert(_req.Repo, cell, p.Browser, p.Folder, p.Name);
@@ -207,5 +227,43 @@ internal sealed class StartManyForm : Form
         if (errors.Count > 0)
             MessageBox.Show("Some chats could not be started:\r\n\r\n" + string.Join("\r\n", errors), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         Close();
+    }
+
+    /// <summary>Built-in auto-send: records first, then one SendJob per cell in order, run one at a time by the coordinator with this window hidden. Job failures are reported by the status window.</summary>
+    private async Task RunNativeAsync(IReadOnlyList<(string Cell, Profile Item)> pairs, Profile first)
+    {
+        var errors = new List<string>();
+        var jobs = new List<SendJob>();
+        foreach (var (cell, p) in pairs)
+        {
+            try
+            {
+                var exe = Program.FindBrowser(p.Browser);
+                if (exe is null)
+                {
+                    errors.Add(cell + ": the browser was not found.");
+                    continue;
+                }
+                _records.Upsert(_req.Repo, cell, p.Browser, p.Folder, p.Name);
+                jobs.Add(new SendJob(_req.Repo, cell, p.Browser, p.Folder, exe));
+            }
+            catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException)
+            {
+                errors.Add(cell + ": " + e.Message);
+            }
+        }
+        Program.SaveLastChoice(first.Browser, first.Folder);
+        var settings = AutoSendOption.AllowForRun(_settingsPath, _req.Repo);
+        Hide();
+        try
+        {
+            if (jobs.Count > 0) await SendCoordinator.RunAsync(jobs.ToArray(), settings, Program.DataDirectory, default);
+            if (errors.Count > 0)
+                MessageBox.Show("Some chats could not be started:\r\n\r\n" + string.Join("\r\n", errors), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            Close();
+        }
     }
 }
