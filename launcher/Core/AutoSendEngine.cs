@@ -95,3 +95,114 @@ public sealed class AutoSendEngine(IChatPage page, IAutoSendClock clock, Launche
             catch (OperationCanceledException) { return Finish(AutoSendOutcome.Cancelled, AutoSendReason.None); }
         }
         WriteLog("ready", AutoSendReason.None, Math.Max(0, clock.NowMs - start), state);
+
+        // 3. Countdown with Cancel. PressSend is never called once cancelled here.
+        var remaining = Math.Max(0, _options.CountdownMs);
+        while (remaining > 0)
+        {
+            if (cancel.IsCancellationRequested) return Finish(AutoSendOutcome.Cancelled, AutoSendReason.None);
+            Report("countdown", Seconds(remaining));
+            var step = Math.Min(1000, remaining);
+            try { await clock.DelayAsync(step, cancel).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return Finish(AutoSendOutcome.Cancelled, AutoSendReason.None); }
+            remaining -= step;
+        }
+        if (cancel.IsCancellationRequested) return Finish(AutoSendOutcome.Cancelled, AutoSendReason.None);
+
+        // 4. Read again. Never retry and never click blindly.
+        var again = SafeRead();
+        state = StateOf(again);
+        if (Check(again, expected) != AutoSendReason.None)
+            return Finish(AutoSendOutcome.NotSent, AutoSendReason.PageChanged);
+
+        // 5. Record, then press exactly once. From here cancel is ignored.
+        Report("sending", 0);
+        guard.RecordSend();
+        var pressed = false;
+        try { pressed = page.PressSend(expected); }
+        catch (Exception) { pressed = false; }
+        if (!pressed) return Finish(AutoSendOutcome.NotSent, AutoSendReason.Refused);
+        WriteLog("pressed", AutoSendReason.None, Math.Max(0, clock.NowMs - start), state);
+
+        // 6. Confirm that the composer text is gone or the Send button is gone.
+        var confirm = Math.Max(0, _options.ConfirmMs);
+        var confirmStart = clock.NowMs;
+        Report("confirming", Seconds(confirm));
+        while (true)
+        {
+            try { await clock.DelayAsync(poll, CancellationToken.None).ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* cancel is ignored after the press */ }
+            var s = SafeRead();
+            if (s.Error is null)
+            {
+                if (!s.WindowFound) return Finish(AutoSendOutcome.NotConfirmed, AutoSendReason.None);
+                if (s.DocumentFound && (!s.SendFound || !SameText(s.ComposerText, expected)))
+                    return Finish(AutoSendOutcome.Sent, AutoSendReason.None);
+            }
+            if (clock.NowMs - confirmStart >= confirm) return Finish(AutoSendOutcome.NotConfirmed, AutoSendReason.None);
+        }
+    }
+
+    private static readonly PageSnapshot Failed = new(false, false, false, null, false, false, "unknown", 0, 0, "read failed");
+
+    private PageSnapshot SafeRead()
+    {
+        try { return page.Read() ?? Failed; }
+        catch (Exception) { return Failed; }
+    }
+
+    private static string StateOf(PageSnapshot s) => string.IsNullOrWhiteSpace(s.WindowState) ? "unknown" : s.WindowState;
+
+    /// <summary>The first condition that fails, in the fixed order. None means ready.</summary>
+    private static AutoSendReason Check(PageSnapshot s, string expected)
+    {
+        if (!s.WindowFound) return AutoSendReason.NoWindow;
+        if (!s.DocumentFound) return AutoSendReason.NoDocument;
+        if (!s.ComposerFound) return AutoSendReason.NoComposer;
+        if (!SameText(s.ComposerText, expected)) return AutoSendReason.TextMismatch;
+        if (!s.SendFound) return AutoSendReason.SendNotFound;
+        if (!s.SendEnabled) return AutoSendReason.SendDisabled;
+        return AutoSendReason.None;
+    }
+
+    /// <summary>Equal ignoring all whitespace.</summary>
+    private static bool SameText(string? actual, string expected)
+        => actual is not null && string.Equals(StripWhitespace(actual), StripWhitespace(expected), StringComparison.Ordinal);
+
+    private static string StripWhitespace(string s)
+    {
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s)
+        {
+            if (!char.IsWhiteSpace(ch)) sb.Append(ch);
+        }
+        return sb.ToString();
+    }
+
+    private static int Seconds(long ms) => (int)Math.Max(0, (ms + 999) / 1000);
+
+    private static string Decision(AutoSendOutcome outcome) => outcome switch
+    {
+        AutoSendOutcome.Sent => "sent",
+        AutoSendOutcome.NotConfirmed => "not_confirmed",
+        AutoSendOutcome.Cancelled => "cancelled",
+        _ => "not_sent",
+    };
+
+    /// <summary>Only the decision, reason, milliseconds and window state. Never prompt text, repo name or cell id.</summary>
+    private void WriteLog(string decision, AutoSendReason reason, long ms, string windowState)
+    {
+        try
+        {
+            log.Write("autosend",
+                ("decision", decision),
+                ("reason", reason.ToString()),
+                ("ms", ms.ToString(CultureInfo.InvariantCulture)),
+                ("window", windowState));
+        }
+        catch (Exception)
+        {
+            // logging never stops a send decision
+        }
+    }
+}
