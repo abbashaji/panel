@@ -17,6 +17,9 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
+        // A command line switch, never a link: dispatched before any link is parsed.
+        if (CheckMode.IsSwitch(args)) return CheckMode.Run(args);
+
         var url = args.Length == 1 ? args[0] : null;
         var parsed = ProtocolParser.Parse(url);
         if (!parsed.Ok)
