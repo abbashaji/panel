@@ -483,14 +483,52 @@ internal static class AutoSendOption
 {
     public const string Caption = "Auto-send in the browser";
 
-    public static string FooterText(bool on) => on
-        ? "The helper script sends it after 3 seconds unless you cancel. Needs the Blueprint auto-send helper in this browser profile."
-        : "You press Send in the chat.";
+    private const string OffText = "You press Send in the chat.";
+    private const string UserscriptOnText = "The helper script sends it after 3 seconds unless you cancel. Needs the Blueprint auto-send helper in this browser profile.";
+    private const string NativeOnText = "The launcher presses Send after 3 seconds unless you cancel. A small window shows progress. Nothing is installed in the browser.";
+    private const string NativeNotAllowedText = "Auto-send stays off for this repo until you tick the box above.";
+
+    /// <summary>Footer for the legacy userscript engine.</summary>
+    public static string FooterText(bool on) => on ? UserscriptOnText : OffText;
+
+    /// <summary>Footer for the engine in the settings, the Auto-send checkbox and whether the repo is allowed (or the allow box is ticked).</summary>
+    public static string FooterText(bool on, BlueprintLauncher.Core.LauncherSettings settings, string repo, bool ticked)
+    {
+        if (!on) return OffText;
+        if (!IsNative(settings)) return UserscriptOnText;
+        return ticked || settings.IsRepoAllowed(repo) ? NativeOnText : NativeNotAllowedText;
+    }
+
+    /// <summary>The built-in engine is the default; only 'userscript' selects the legacy Tampermonkey path.</summary>
+    public static bool IsNative(BlueprintLauncher.Core.LauncherSettings settings)
+        => !string.Equals(settings.Engine, "userscript", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The allow checkbox is shown only for the built-in engine and a repo not yet allowed on this PC.</summary>
+    public static bool NeedsAllowBox(BlueprintLauncher.Core.LauncherSettings settings, string repo)
+        => IsNative(settings) && !settings.IsRepoAllowed(repo);
+
+    /// <summary>True when Confirm hands the launch to the built-in auto-send.</summary>
+    public static bool UseNative(BlueprintLauncher.Core.LauncherSettings settings, string repo, bool on, bool ticked)
+        => on && IsNative(settings) && (ticked || settings.IsRepoAllowed(repo));
 
     public static CheckBox CreateCheckBox(bool on, Rectangle bounds) => new()
     {
         Text = Caption,
         Checked = on,
+        Bounds = bounds,
+        AutoSize = false,
+        FlatStyle = FlatStyle.Flat,
+        BackColor = Theme.Window,
+        ForeColor = Theme.Text,
+        Font = Theme.Ui(13),
+        Cursor = Cursors.Hand,
+    };
+
+    /// <summary>'Allow auto-send for owner/name on this PC'. Never ticked by default: only the person ticking it allows the repo.</summary>
+    public static CheckBox CreateAllowCheckBox(string repo, Rectangle bounds) => new()
+    {
+        Text = "Allow auto-send for " + repo + " on this PC",
+        Checked = false,
         Bounds = bounds,
         AutoSize = false,
         FlatStyle = FlatStyle.Flat,
@@ -517,14 +555,51 @@ internal static class AutoSendOption
     }
 
     /// <summary>A settings file that cannot be written must not stop the window.</summary>
+    /// <summary>Loads the file first and changes only AutoSend, so Engine and AllowedRepos are kept.</summary>
     public static void SaveQuietly(string path, bool on)
     {
         try
         {
-            new BlueprintLauncher.Core.LauncherSettings { AutoSend = on }.Save(path);
+            var settings = BlueprintLauncher.Core.LauncherSettings.Load(path);
+            settings.AutoSend = on;
+            settings.Save(path);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
         }
+    }
+
+    /// <summary>Adds the repo to AllowedRepos and keeps every other key. Called only after the person ticked the allow box (or the repo was already allowed).</summary>
+    public static void SaveAllowedRepoQuietly(string path, string repo)
+    {
+        try
+        {
+            var settings = BlueprintLauncher.Core.LauncherSettings.Load(path);
+            settings.AllowRepo(repo);
+            settings.Save(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+        }
+    }
+
+    /// <summary>Saves the allowance, then returns the settings for this run with Auto-send on and the repo allowed, even when the file could not be written.</summary>
+    public static BlueprintLauncher.Core.LauncherSettings AllowForRun(string path, string repo)
+    {
+        SaveAllowedRepoQuietly(path, repo);
+        var settings = BlueprintLauncher.Core.LauncherSettings.Load(path);
+        settings.AutoSend = true;
+        if (!settings.IsRepoAllowed(repo))
+        {
+            try
+            {
+                settings.AllowRepo(repo);
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+            {
+                // The coordinator then refuses the send and shows 'Not sent, press Send yourself'.
+            }
+        }
+        return settings;
     }
 }
