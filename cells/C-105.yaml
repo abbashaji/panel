@@ -1,0 +1,34 @@
+id: C-105
+title: Start-many window - one editable prompt for all cells
+type: normal
+priority: 15
+lease_minutes: 30
+goal: |
+  Windows Forms only. The start-many window shows no prompt today. Add an editable one that applies to every cell.
+  - launcher/App/StartManyForm.cs: below the profile cards add the PromptEditor from C-104 holding a TEMPLATE with the placeholders {repo} and {cell} (default: the saved settings.PromptTemplateCell, else the standard prompt with {repo} and {cell} in place). A muted line under it: 'Applies to every cell. {cell} is replaced by each cell id.' A preview label shows the expanded prompt of the first cell. Open is disabled while LauncherSettings.ValidTemplate(Cell, template) fails or PromptPolicy.IsSendable fails for ANY cell of the batch (the reason names the cell). 'Use this text as my default' saves the template.
+  - Each cell's prompt is PromptBuilder.ExpandTemplate(Cell, template, repo, cell, null). Native auto-send: one SendJob per cell with Kind=Cell and PromptText set; the 1500 ms gap path (userscript or no auto-send) opens each chat with BuildUrlFromText(prompt); with the userscript engine and an edited template no marker is added and one message says so.
+  - Texts: 'reserved for you for 3 minutes' and UnstartedText 'C-004 stays reserved for 3 minutes'.
+  - Window height grows to fit the editor; keep the existing layout order (chips, profiles, counter, editor, checkboxes, footer, buttons).
+inputs:
+  - from: C-104
+    kind: implementation
+    contract: |
+      launcher/App/Controls.cs exports PromptEditor (text, counter, warning label, Reset to default, 'Use this text as my default' checkbox) and the Steward-aware AutoSendOption footers.
+  - from: C-103
+    kind: implementation
+    contract: |
+      SendJob(..., PromptKind Kind, string? PromptText) accepted by SendCoordinator.RunAsync.
+after: []
+provides:
+  - "Start-many window: editable prompt template applied to every cell"
+read:
+  - launcher/App/StartManyForm.cs
+allowed_paths:
+  - launcher/App/StartManyForm.cs
+outputs:
+  - launcher/App/StartManyForm.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text. Do not touch Controls.cs here; if the editor needs a small change, report it with cell_signal feedback.

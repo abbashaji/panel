@@ -1,0 +1,37 @@
+id: C-106
+title: Launcher core - more browsers and a saved list of chosen browsers and profiles
+type: normal
+priority: 14
+lease_minutes: 30
+goal: |
+  Core library only (launcher/Core, no Windows forms, no network). The launcher lists every profile of the seven known browsers it finds. Let the person choose which ones the start windows offer, and widen what can be found.
+  - launcher/Core/BrowserCatalog.cs: append Chromium-family editions after the existing seven (the existing order and ids do not change): vivaldi (Vivaldi\Application\vivaldi.exe, user data Vivaldi\User Data), chrome-beta (Google\Chrome Beta\Application\chrome.exe, Google\Chrome Beta\User Data), chrome-canary (Google\Chrome SxS\Application\chrome.exe, Google\Chrome SxS\User Data), edge-beta (Microsoft\Edge Beta\Application\msedge.exe, Microsoft\Edge Beta\User Data), edge-dev (Microsoft\Edge Dev\Application\msedge.exe, Microsoft\Edge Dev\User Data), chromium (Chromium\Application\chrome.exe, Chromium\User Data). Display names 'Vivaldi', 'Chrome Beta', 'Chrome Canary', 'Edge Beta', 'Edge Dev', 'Chromium'. All BrowserFamily.Chromium, so profiles, launch arguments and window detection already work for them.
+  - launcher/Core/BrowserExeLocator.cs: several editions share chrome.exe and msedge.exe in App Paths. For the NEW editions only, a registry path is accepted only when it contains that edition's folder (for example 'Chrome Beta'); the original seven keep today's rule. Standard dirs are searched as before.
+  - New launcher/Core/ProfileSelection.cs: the person's chosen list, stored in %LOCALAPPDATA%\BlueprintLauncher\profiles.json as {"version":1,"selected":[{"browser":"chrome","folder":"Profile 1"}],"seen":[...]} (at most 200 entries each, validated with BrowserCatalog.IsKnown and BrowserProfiles.IsValidProfileId, a corrupt or oversized file means 'no saved list'). API: static ProfileSelection Load(path); bool HasSavedList; IReadOnlyList<Profile> Filter(IReadOnlyList<Profile> detected) = the detected profiles that are selected, in detected order; when there is no saved list it returns all detected (today's behaviour). IReadOnlyList<Profile> NewSinceSaved(detected) = detected profiles not in seen (empty when there is no saved list). IReadOnlyList<(string Browser,string Folder)> Missing(detected) = selected entries that are no longer detected. void Save(string path, IReadOnlyList<Profile> detected, IReadOnlyCollection<(string,string)> ticked) writes selected = ticked entries that are detected, seen = every detected profile; atomic temp file then move; never throws on a read-only disk (returns false instead).
+  - Tests: launcher/Core.Tests/ProfileSelectionTests.cs (no file = all; saved list filters; a new profile is New until saved; a removed profile is Missing and dropped on save; corrupt file; limits), BrowserCatalogTests.cs (new ids, order of the first seven unchanged), BrowserProfilesTests.cs (a Chromium edition lists its profiles from its own Local State).
+inputs: []
+after: [C-008, C-025]
+provides:
+  - "launcher/Core/ProfileSelection.cs: Load, HasSavedList, Filter, NewSinceSaved, Missing, Save"
+  - "BrowserCatalog ids vivaldi, chrome-beta, chrome-canary, edge-beta, edge-dev, chromium"
+read:
+  - launcher/Core/BrowserCatalog.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/BrowserProfiles.cs
+allowed_paths:
+  - launcher/Core/BrowserCatalog.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/ProfileSelection.cs
+  - launcher/Core.Tests/BrowserCatalogTests.cs
+  - launcher/Core.Tests/BrowserProfilesTests.cs
+  - launcher/Core.Tests/ProfileSelectionTests.cs
+outputs:
+  - launcher/Core/BrowserCatalog.cs
+  - launcher/Core/BrowserExeLocator.cs
+  - launcher/Core/ProfileSelection.cs
+  - launcher/Core.Tests/BrowserCatalogTests.cs
+  - launcher/Core.Tests/ProfileSelectionTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Reads only folder and display name, never email, cookies or history (unchanged rule). The new editions are not verified on a real PC, and auto-send on them is part of the existing 'not verified' list in docs/autosend-native.md. Firefox and Opera stay as they are.

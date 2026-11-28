@@ -1,0 +1,52 @@
+id: C-109
+title: Worker bumps the hub on every write and serves the version and a GitHub webhook
+type: normal
+priority: 17
+lease_minutes: 30
+goal: |
+  Connect the hub from C-108 so the panel can learn about changes within a second.
+  - src/tools.ts: after a write-capable tool returns, call bumpRepo(env, repo) (repo resolved from args with engine.resolveRepo). Write tools: next_cell, apply_changes, submit_cell, cell_signal, takeover, publish_plan, cell_note, cell_sync, cell_clear, cell_fix, steward_next, steward_note, steward_release. Do not bump when the reply starts with NONE_READY, NOT_READY, CONFLICT, ERROR, BAD_, MISSING_, UNKNOWN_, REJECTED, NOT_ (a refusal changed nothing); a false positive only costs one refresh. The bump never delays or changes the reply (it is awaited with the helper's own 800 ms limit).
+  - src/panel/actions.ts: bumpRepo after a successful reserve, unreserve, release, clear-feedback, steward-code and steward-release (the panel itself must see its own actions at once).
+  - src/panel/router.ts: GET /panel/api/version?repo=owner/name -> 200 {v:number|null, at:string|null} (cookie auth like every /panel/api route; repo resolved against the allow-list; no GitHub call; Cache-Control no-store). v null means 'no hub, keep polling'. Also route POST /panel/webhook to the new handler BEFORE the static assets (it is outside /panel/api, so it has no cookie).
+  - New src/panel/webhook.ts: POST /panel/webhook for a GitHub repository webhook. Requires secret GITHUB_WEBHOOK_SECRET (unset: 404). Verifies X-Hub-Signature-256 = sha256 HMAC of the raw body, compared in constant time, body at most 1 MB; bad signature 401. ping answers 200. For push, pull_request, create, delete, workflow_run and check_suite it bumps the repo named in payload.repository.full_name when that repo passes resolveRepo (else 200 and nothing). Any other event 202. This is how merges done by CI show up instantly; it is optional.
+  - Tests: test/panel_version.test.ts (version route auth, repo policy, null without hub, bump after a write tool but not after NONE_READY or a CONFLICT, bump after reserve), test/panel_webhook.test.ts (valid signature bumps, wrong signature 401, no secret 404, unknown repo no bump, oversized body).
+  - docs/deploy.md: how to add the webhook (Settings > Webhooks, URL <worker>/panel/webhook, content type application/json, secret = GITHUB_WEBHOOK_SECRET, events push, pull requests, branch or tag creation and deletion, workflow runs) and wrangler secret put GITHUB_WEBHOOK_SECRET.
+inputs:
+  - from: C-108
+    kind: implementation
+    contract: |
+      src/panel/hub.ts exports bumpRepo(env, repo, timeoutMs?) (never throws) and readVersion(env, repo) -> {v:number; at:string} | null. PanelEnv has PANEL_HUB and GITHUB_WEBHOOK_SECRET.
+  - from: C-099
+    kind: implementation
+    contract: |
+      src/panel/actions.ts has the routes reserve, unreserve, release, clear-feedback, steward-code and steward-release.
+after: [C-034, C-052, C-061, C-076]
+provides:
+  - "GET /panel/api/version?repo= -> {v, at} | {v:null, at:null}"
+  - "POST /panel/webhook (GitHub signature, optional)"
+read:
+  - src/tools.ts
+  - src/panel/router.ts
+  - src/panel/actions.ts
+allowed_paths:
+  - src/tools.ts
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/panel/webhook.ts
+  - test/panel_version.test.ts
+  - test/panel_webhook.test.ts
+  - test/tools.test.ts
+  - docs/deploy.md
+outputs:
+  - src/tools.ts
+  - src/panel/actions.ts
+  - src/panel/router.ts
+  - src/panel/webhook.ts
+  - test/panel_version.test.ts
+  - test/panel_webhook.test.ts
+  - docs/deploy.md
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/panel_version.test.ts test/panel_webhook.test.ts test/tools.test.ts"
+notes: |
+  The tool list asserted by test/tools.test.ts must not change. The webhook secret is a separate secret: never reuse PANEL_TOKEN, ADMIN_TOKEN, GITHUB_TOKEN or MCP_AUTH_TOKEN. NOT verified live (C-116 lists it).

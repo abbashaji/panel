@@ -1,0 +1,53 @@
+id: C-111
+title: Panel refreshes within seconds of a change and shows when it is not updating
+type: normal
+priority: 17
+lease_minutes: 30
+goal: |
+  Today the panel polls every 5 s, TanStack pauses that poll while the window is hidden or covered, and a failed poll leaves the green 'Live' dot on with the seconds just counting up. Fix all three.
+  - web/src/core/api.ts: getVersion(repo): Promise<{v:number; at:string} | null> calling GET /version?repo=; null when the Worker answers v null, 404 or any error (mock mode returns a counter that changes when mock actions run). ApiError keeps status and also carries retryAfter (seconds) when the body has it.
+  - web/src/core/store.tsx: (1) useQuery gets refetchIntervalInBackground: true. (2) A version watcher while a repo is loaded: ask getVersion every 2 s when the page is visible, every 10 s when hidden; when v differs from the last seen value, refetch the state at once and again after 1500 ms and 4000 ms (GitHub can serve the old branch for a few seconds after a write). When getVersion returns null the watcher stops asking and the 5 s poll stays the only mechanism. With the watcher active the full poll relaxes to every 10 s as a safety net. (3) visibilitychange to visible, window focus and online each trigger an immediate refetch and version check. (4) The context exposes freshness: {status:'live'|'slow'|'stale', ageSec:number, error:string|null, stale:boolean} and refreshNow(): Promise<void>. live = last successful poll younger than 12 s; slow = 12 to 30 s; stale = older than 30 s or the last poll failed. error text: 401 handled as today (login screen); RATE_LIMITED 'GitHub is rate limiting; retrying in <n>s'; any other 'Cannot reach the panel service'. state.stale from the Worker also sets status 'slow' with its reason as error.
+  - web/src/shell/Header.tsx: the right-hand chip reads freshness. live: green pulsing dot, 'Live · 3s' (as today). slow: amber dot, 'Slow · 18s'. stale: red dot, 'Not updating · 47s'. The chip is a button: click runs refreshNow() and shows 'Refreshing…' while it runs; its title attribute holds the error text; aria-live polite; the pulse animation is off for prefers-reduced-motion.
+  - web/src/core/mock.ts: getVersion for mock mode.
+  - Tests: web/src/core/store.test.tsx (version change triggers refetch at 0, 1.5 s and 4 s; null version leaves 5 s polling; hidden page asks every 10 s; focus refetches; freshness goes live, slow, stale and back), web/src/shell/header.test.tsx (chip texts, click refreshes), web/src/core/api.test.ts (getVersion shapes, retryAfter).
+inputs:
+  - from: C-109
+    kind: implementation
+    contract: |
+      GET /panel/api/version?repo=owner/name -> {v:number|null, at:string|null}, cookie auth, no-store; v null means no hub.
+  - from: C-110
+    kind: implementation
+    contract: |
+      GET /panel/api/state may return PanelState.stale {reason, since}; a GitHub rate limit answers 503 {error:'RATE_LIMITED', retry_after}.
+  - from: C-101
+    kind: implementation
+    contract: |
+      web/src/shell/Header.tsx already holds the 'Reserved by you' chip; keep it.
+after: [C-046, C-048]
+provides:
+  - "usePanel().freshness and usePanel().refreshNow(); header chip Live / Slow / Not updating"
+read:
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/core/api.ts
+allowed_paths:
+  - web/src/core/api.ts
+  - web/src/core/mock.ts
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/core/store.test.tsx
+  - web/src/shell/header.test.tsx
+  - web/src/core/api.test.ts
+outputs:
+  - web/src/core/api.ts
+  - web/src/core/mock.ts
+  - web/src/core/store.tsx
+  - web/src/shell/Header.tsx
+  - web/src/core/store.test.tsx
+  - web/src/shell/header.test.tsx
+  - web/src/core/api.test.ts
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Use fake timers in the tests. The panel works without the hub (v null): that is the state before the owner deploys C-108. A browser may still slow timers of a fully hidden tab; the chip then turns amber or red instead of lying, and coming back to the tab refreshes at once.

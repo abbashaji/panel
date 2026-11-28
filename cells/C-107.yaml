@@ -1,0 +1,43 @@
+id: C-107
+title: Launcher windows - edit the list of browsers and profiles any time
+type: normal
+priority: 14
+lease_minutes: 30
+goal: |
+  Windows Forms and install script. The start windows offer only the list the person chose, and the person can edit that list from every window and from the Start menu.
+  - New launcher/App/ManageProfilesForm.cs, dark window in the launcher Theme, modal: every browser found on this PC (exe located) as a group with its icon, the number of profiles and 'All' / 'None' links; under it one checkable row per profile (colour avatar, name, folder). Ticked rows are in the list. Profiles new since the list was saved show a small 'New' tag and start unticked. Entries of the saved list that no longer exist are shown greyed as 'Not found' with a Remove link. Buttons 'Save' (writes profiles.json through ProfileSelection.Save and closes; refuses with 'Pick at least one profile.' when none is ticked), 'Cancel', and a link 'Use everything found' that ticks all. When there is no saved list yet every found profile starts ticked.
+  - launcher/App/Program.cs: helper static IReadOnlyList<Profile> LoadProfileChoices() = ProfileSelection.Load(path).Filter(detected profiles whose browser exe is found). Main handles the switch --profiles by opening ManageProfilesForm on its own (no link needed, the link parser is untouched).
+  - launcher/App/StartForm.cs and StartManyForm.cs: LoadProfiles uses LoadProfileChoices; the last choice (last-choice.txt) is still preselected when it is in the list, else the first tile. A small link button 'Edit list...' next to the step caption opens ManageProfilesForm modally and reloads the tiles afterwards, keeping the selection where possible. When the list is empty the text says 'No profile in your list. Click Edit list...' instead of the old message.
+  - launcher/App/CheckMode.cs: --check-autosend uses the same filtered list so it checks what you will actually use.
+  - launcher/install.ps1: also creates the Start menu shortcut 'Blueprint launcher - browsers and profiles' (current user Programs folder, target the exe, argument --profiles); -Uninstall removes it. Still no admin rights and no registry write beyond HKCU\Software\Classes\blueprint.
+inputs:
+  - from: C-106
+    kind: implementation
+    contract: |
+      launcher/Core/ProfileSelection.cs: Load(path), HasSavedList, Filter(detected), NewSinceSaved(detected), Missing(detected), Save(path, detected, ticked) -> bool. New BrowserCatalog ids vivaldi, chrome-beta, chrome-canary, edge-beta, edge-dev, chromium.
+after: [C-009, C-016, C-027, C-028, C-038, C-064, C-075, C-078, C-095, C-096, C-104, C-105]
+provides:
+  - "Browser and profile list editor (ManageProfilesForm, --profiles, Start menu shortcut); start windows use the saved list"
+read:
+  - launcher/App/Program.cs
+  - launcher/App/CheckMode.cs
+  - launcher/install.ps1
+allowed_paths:
+  - launcher/App/ManageProfilesForm.cs
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/CheckMode.cs
+  - launcher/install.ps1
+outputs:
+  - launcher/App/ManageProfilesForm.cs
+  - launcher/App/Program.cs
+  - launcher/App/StartForm.cs
+  - launcher/App/StartManyForm.cs
+  - launcher/App/CheckMode.cs
+  - launcher/install.ps1
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text. Keep the edits to StartForm.cs and StartManyForm.cs small (the list source and the Edit link): their prompt editors belong to C-104 and C-105.

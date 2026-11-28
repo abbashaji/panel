@@ -1,0 +1,38 @@
+id: C-110
+title: Worker builds the panel state with far fewer GitHub calls and never goes silent
+type: normal
+priority: 17
+lease_minutes: 30
+goal: |
+  A state build asks GitHub for pull requests and up to 5 pages of commits for EVERY cell that has a branch, and it runs again on every poll while commits keep moving the branch tips. With several running cells that is hundreds of calls per minute: slow answers, then GitHub rate limits, and the panel looks frozen. Fix the cost and make failures visible.
+  - src/panel/state.ts: memoise lockAndHeals per cell by branch tip oid (module Map, at most 500 entries, oldest dropped); when the tip moved, look at page 1 (the newest 100 commits) first and read older pages only when the lock commit is not on it; findPr is memoised for 20 s per branch. The per-cell fan-out runs at most 6 cells at a time. A failing sub-call still degrades to null for that cell (as today).
+  - src/panel/state.ts: when the main GitHub snapshot call fails (rate limit, 5xx, network) and an earlier state for the repo exists (any age up to 10 minutes), return that state with stale:{reason, since} instead of throwing. reason is one short sentence, for a GitHub rate limit 'GitHub is rate limiting the Worker; retrying'. Without an earlier state the error is thrown as today.
+  - src/panel/types.ts: PanelState gets optional stale?: {reason:string; since:string} (ISO since).
+  - src/panel/router.ts: a thrown GitHub rate limit (HTTP 403 or 429 from GitHub) answers 503 {error:'RATE_LIMITED', retry_after:<seconds, default 30>} with the retry-after header; other upstream failures stay 502.
+  - test/fakegh.ts: count calls per method so tests can assert call counts.
+  - Tests in test/panel_state.test.ts: 6 running cells and 20 polls with unchanged tips make no extra branchCommits or findPr calls after the first build; a moved tip makes exactly one page-1 call per moved cell; stale state is returned with the stale field when the snapshot throws; rate limit maps to 503.
+inputs: []
+after: [C-000, C-002, C-030, C-033, C-035, C-041, C-047, C-049, C-053, C-077, C-083, C-086, C-099, C-108, C-109]
+provides:
+  - "PanelState.stale?: {reason, since}; 503 {error:'RATE_LIMITED', retry_after} on a GitHub rate limit"
+read:
+  - src/panel/state.ts
+  - src/panel/router.ts
+allowed_paths:
+  - src/panel/state.ts
+  - src/panel/router.ts
+  - src/panel/types.ts
+  - test/panel_state.test.ts
+  - test/fakegh.ts
+outputs:
+  - src/panel/state.ts
+  - src/panel/router.ts
+  - src/panel/types.ts
+  - test/panel_state.test.ts
+  - test/fakegh.ts
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/panel_state.test.ts test/panel_parity.test.ts test/panel_integration.test.ts"
+notes: |
+  The shape of every other field in GET /panel/api/state must not change (test/panel_parity.test.ts). Cached entries never hold reservedBy or reservedAt: they are still read from KV on every response.
+  Honest limit: I could not reproduce the freeze live. The causes this cell and C-111 remove are: a covered browser window pausing the poll, silent failed polls, and heavy state builds near GitHub's rate limit.

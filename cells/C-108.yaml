@@ -1,0 +1,41 @@
+id: C-108
+title: Worker change hub - one strongly consistent version number per repo
+type: normal
+priority: 17
+lease_minutes: 30
+goal: |
+  Foundation for instant panel updates. Every write the Worker makes (claims, commits, releases, merges seen by a webhook) must be able to say 'something changed' to the panel in about a second. KV cannot do this reliably (a value written from another location can take up to a minute to show up), so use one Durable Object per repo that holds a counter.
+  - New src/panel/hub.ts: export class PanelHub (a Durable Object; state kept with this.ctx.storage so it survives eviction). fetch handles POST /bump (v += 1, at = now, answers {v, at}) and GET /version (answers {v, at}; v 0 when never bumped). Helpers: bumpRepo(env, repo, timeoutMs = 800): Promise<void> never throws and never waits longer than the timeout; readVersion(env, repo): Promise<{v:number; at:string} | null>, null when env.PANEL_HUB is missing or the call fails. The object id is idFromName(repo.toLowerCase()). Without the binding both helpers do nothing and return null, so the panel falls back to plain polling.
+  - src/index.ts: add export { PanelHub } from './panel/hub.ts'. The default export and the OAuth wiring do not change.
+  - wrangler.toml: [[durable_objects.bindings]] name PANEL_HUB, class_name PanelHub, and [[migrations]] tag v1 new_sqlite_classes ['PanelHub'] (SQLite-backed objects). A comment explains the secret-free deploy and that without the binding the panel still works by polling.
+  - src/panel/types.ts: PanelEnv gets PANEL_HUB?: DurableObjectNamespace and GITHUB_WEBHOOK_SECRET?: string.
+  - Test test/panel_hub.test.ts with a fake namespace and storage: bump twice gives 1 then 2; readVersion returns the counter; a throwing or slow stub never makes bumpRepo throw or wait longer than the timeout; no binding gives null and no error; repo names differing only in case share one counter.
+  - docs/deploy.md: one section 'Panel change hub' with the deploy order (wrangler deploy applies the migration) and what happens when the binding is missing.
+inputs: []
+after: [C-000, C-002, C-030, C-035, C-041, C-047, C-053, C-057, C-077, C-083, C-086, C-099]
+provides:
+  - "src/panel/hub.ts: bumpRepo(env, repo), readVersion(env, repo) -> {v, at} | null; class PanelHub"
+  - "PanelEnv.PANEL_HUB and PanelEnv.GITHUB_WEBHOOK_SECRET"
+read:
+  - src/index.ts
+  - wrangler.toml
+  - src/panel/types.ts
+allowed_paths:
+  - src/panel/hub.ts
+  - src/index.ts
+  - wrangler.toml
+  - src/panel/types.ts
+  - test/panel_hub.test.ts
+  - docs/deploy.md
+outputs:
+  - src/panel/hub.ts
+  - src/index.ts
+  - wrangler.toml
+  - src/panel/types.ts
+  - test/panel_hub.test.ts
+  - docs/deploy.md
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/panel_hub.test.ts"
+notes: |
+  NOT verified live (add it to docs/panel-integration.md in C-116): the migration, the binding name and the object round trip have never run on Cloudflare. Say so in the PR text. Durable Object requests are billed per request; at one counter read every 2 s per open panel the volume is small, but the owner should know.
