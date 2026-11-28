@@ -1,6 +1,7 @@
 // Builds the PanelState JSON (docs/panel-contracts.md 3.2). Cell logic is NOT duplicated: status, ready, locked and
 // waiting come from computeState(); dependents, waves and graph helpers come from plan.ts.
 import type { GitHubApi } from "../api.ts";
+import { getReservation, type ReserveKv } from "../claim.ts";
 import { branchOf, loadPlan, mergedOf, short, type EngineOptions } from "../common.ts";
 import { createGitHubApi } from "../github.ts";
 import {
@@ -119,13 +120,19 @@ async function lockAndHeals(api: GitHubApi, repo: string, id: string, tipAt: str
   return { lock: null, heals };
 }
 
-async function reservedBy(env: PanelEnv, repo: string, id: string): Promise<string | null> {
+type PanelReservation = Pick<PanelCell, "reservedBy" | "reservedAt">;
+const UNRESERVED: PanelReservation = { reservedBy: null, reservedAt: null };
+
+/** Both fields come from one KV read, so they are set together or are both null. */
+async function reservationOf(env: PanelEnv, repo: string, id: string): Promise<PanelReservation> {
   try {
-    const raw = await env.OAUTH_KV?.get(`reserve:${repo}:${id}`);
-    const who = raw ? JSON.parse(raw)?.who : null;
-    return typeof who === "string" ? who : null;
+    const kv = env.OAUTH_KV as unknown as ReserveKv | undefined;
+    const res = kv ? await getReservation(kv, repo, id) : null;
+    if (!res) return UNRESERVED;
+    const at = Date.parse(res.at);
+    return Number.isNaN(at) ? UNRESERVED : { reservedBy: res.who, reservedAt: new Date(at).toISOString() };
   } catch {
-    return null;
+    return UNRESERVED;
   }
 }
 
@@ -153,10 +160,10 @@ async function stewardOf(api: GitHubApi, repo: string, snap: { branches: Record<
   return toPanelSteward(stewardStatus(tip, now, lm), problems);
 }
 
-/** reservedBy and the Steward lease age change without any git change, so they are never served from the cache. */
+/** The reservation fields and the Steward lease age change without any git change, so they are never served from the cache. */
 async function withReservations(env: PanelEnv, repo: string, state: PanelState, steward?: PanelSteward): Promise<PanelState> {
   const cells = await Promise.all(
-    state.cells.map(async (c) => ({ ...c, reservedBy: c.status === "done" ? null : await reservedBy(env, repo, c.id) })),
+    state.cells.map(async (c) => ({ ...c, ...(c.status === "done" ? UNRESERVED : await reservationOf(env, repo, c.id)) })),
   );
   return { ...state, ...(steward ? { steward } : {}), cells };
 }
@@ -323,7 +330,7 @@ export async function buildPanelState(env: PanelEnv, repo: string, deps: PanelDe
         attempts: attempts[id] ?? 0,
         maxAttempts: cfg.max_attempts,
         lastCommit: b ? { subject: subjectOf(b.message), next: parseTrailers(b.message).next ?? null, at: b.committedDate } : null,
-        reservedBy: status === "done" ? null : await reservedBy(env, repo, id),
+        ...(status === "done" ? UNRESERVED : await reservationOf(env, repo, id)),
         pr,
         resumable,
         allowedPaths: slist(c, "allowed_paths"),

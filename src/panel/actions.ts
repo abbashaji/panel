@@ -1,7 +1,7 @@
-// Panel actions: POST /panel/api/reserve, /release, /clear-feedback (docs/panel-contracts.md sections 3.3 and 3.4).
+// Panel actions: POST /panel/api/reserve, /unreserve, /release, /clear-feedback (docs/panel-contracts.md sections 3.3 and 3.4).
 // Returns null for every path this module does not own, so the router answers 404.
 // admin_key is compared to ADMIN_TOKEN timing-safe; it is never stored, logged or echoed.
-import { clearReservation, getReservation, setReservation, type ReserveKv } from "../claim.ts";
+import { RESERVE_TTL_SECONDS, clearReservation, getReservation, setReservation, type ReserveKv } from "../claim.ts";
 import type { GitHubApi } from "../api.ts";
 import { claimsFromBranches, computeState, parseRuns } from "../plan.ts";
 import { loadPlan, mergedOf, type EngineOptions } from "../common.ts";
@@ -17,7 +17,7 @@ import type { PanelEnv, PanelStatus, PanelSteward, ReserveResult, StewardCodeRes
 
 const CELL_RE = /^C-\d{3,5}$/;
 const WHO_RE = /^[\w .-]{1,40}$/;
-const OWNED = new Set(["/panel/api/reserve", "/panel/api/release", "/panel/api/clear-feedback", "/panel/api/steward-release", "/panel/api/steward-code"]);
+const OWNED = new Set(["/panel/api/reserve", "/panel/api/unreserve", "/panel/api/release", "/panel/api/clear-feedback", "/panel/api/steward-release", "/panel/api/steward-code"]);
 const CODE_RATE_MAX = 5; // codes per minute per repo
 
 /** The cell after the write, computed by the same logic as GET /panel/api/state. */
@@ -162,7 +162,9 @@ export async function handlePanelAction(
   if (!body || typeof body !== "object") return json(400, { error: "bad_body" });
 
   const isReserve = path === "/panel/api/reserve";
-  if (!isReserve) {
+  // A reservation is an advisory KV key and writes nothing to git: anyone with the panel cookie may set or cancel it.
+  const isUnreserve = path === "/panel/api/unreserve";
+  if (!isReserve && !isUnreserve) {
     // Admin gate first: a missing or wrong key is 403 whatever else the body holds.
     const key = typeof body.admin_key === "string" ? body.admin_key : "";
     if (!env.ADMIN_TOKEN || !key || !(await timingSafeEqual(key, env.ADMIN_TOKEN))) return json(403, { error: "forbidden" });
@@ -199,6 +201,19 @@ export async function handlePanelAction(
   if (typeof cell !== "string" || !CELL_RE.test(cell)) return json(400, { error: "bad_cell_id" });
 
   try {
+    if (isUnreserve) {
+      const kv = env.OAUTH_KV as unknown as ReserveKv | undefined;
+      try {
+        // Whoever holds it.
+        if (!kv || (await getReservation(kv, r.repo, cell)) === null) return json(200, { ok: true, result: `NOT_RESERVED ${cell}` });
+        await clearReservation(kv, r.repo, cell);
+      } catch {
+        return json(503, { error: "kv_unavailable" });
+      }
+      clearPanelCache();
+      const info = await cellInfoOf(env, r.repo, cell, deps);
+      return json(200, { ok: true, result: `UNRESERVED ${cell}`, ...(info ? { cell: info } : {}) });
+    }
     if (isReserve) {
       const who = body.who;
       if (typeof who !== "string" || !WHO_RE.test(who)) return json(400, { error: "bad_who" });
@@ -222,7 +237,7 @@ export async function handlePanelAction(
       }
       clearPanelCache();
       const info = await cellInfoOf(env, r.repo, cell, deps);
-      return json(200, { status: "reserved", detail: `${cell} reserved for ${who} for 10 minutes`, ...(info ? { cell: info } : {}) });
+      return json(200, { status: "reserved", detail: `${cell} reserved for ${who} for ${RESERVE_TTL_SECONDS / 60} minutes`, ...(info ? { cell: info } : {}) });
     }
     const text = await (deps.takeover ?? defaultTakeover)(env, r.repo, cell, body.admin_key, path === "/panel/api/release" ? "release" : "clear");
     const result = String(text).replace(/\s+/g, " ").slice(0, 200);

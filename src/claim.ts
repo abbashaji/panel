@@ -39,7 +39,7 @@ export function claimedText(plan: Loaded, repo: string, id: string, tip: string,
 
 // ---------------------------------------------------------------- reservation (pinned claim, used by the panel)
 // A reservation is advisory: KV is eventually consistent, the git branch lock stays the arbiter.
-export const RESERVE_TTL_SECONDS = 600;
+export const RESERVE_TTL_SECONDS = 180;
 
 export interface ReserveKv {
   get(key: string): Promise<string | null>;

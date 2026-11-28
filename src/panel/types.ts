@@ -55,6 +55,8 @@ export interface PanelCell {
   lastCommit: { subject: string; next: string | null; at: string } | null;
   /** display name that reserved the cell (KV reserve:<repo>:<cell>), or null */
   reservedBy: string | null;
+  /** ISO time the reservation was made (same KV value); null exactly when reservedBy is null */
+  reservedAt: string | null;
   pr: { number: number; state: "open" | "merged" | "closed" } | null;
   allowedPaths: string[];
   provides: string[];
