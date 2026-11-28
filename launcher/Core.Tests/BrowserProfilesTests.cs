@@ -14,6 +14,26 @@ public class BrowserProfilesTests
     private static readonly string ChromeState = Path.Combine("Google", "Chrome", "User Data", "Local State");
     private static readonly string EdgeState = Path.Combine("Microsoft", "Edge", "User Data", "Local State");
 
+    [Theory]
+    [InlineData("vivaldi", "Vivaldi/User Data")]
+    [InlineData("chrome-beta", "Google/Chrome Beta/User Data")]
+    [InlineData("chrome-canary", "Google/Chrome SxS/User Data")]
+    [InlineData("edge-beta", "Microsoft/Edge Beta/User Data")]
+    [InlineData("edge-dev", "Microsoft/Edge Dev/User Data")]
+    [InlineData("chromium", "Chromium/User Data")]
+    public void ChromiumEditionListsProfilesFromItsOwnLocalState(string id, string dataRel)
+    {
+        using var t = new TempDir();
+        var rel = Path.Combine(Path.Combine(dataRel.Split('/')), "Local State");
+        WriteState(t.Dir, rel, "{\"profile\":{\"info_cache\":{\"Default\":{\"name\":\"X\"},\"Profile 2\":{\"name\":\"Y\"}}}}");
+        WriteState(t.Dir, ChromeState, "{\"profile\":{\"info_cache\":{\"Default\":{\"name\":\"Stable\"}}}}");
+        Assert.Equal(Path.Combine(t.Dir, rel), BrowserProfiles.LocalStatePath(t.Dir, id));
+        Assert.Equal(
+            new[] { new Profile(id, "Default", "X"), new Profile(id, "Profile 2", "Y") },
+            BrowserProfiles.ListFor(t.Dir, id));
+        Assert.Equal(new[] { "chrome", id }, BrowserProfiles.List(t.Dir).Select(p => p.Browser).Distinct());
+    }
+
     [Fact]
     public void ReturnsOnlyFolderAndName()
     {

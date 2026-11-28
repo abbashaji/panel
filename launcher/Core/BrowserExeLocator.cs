@@ -51,9 +51,28 @@ public sealed class BrowserExeLocator : IBrowserExeLocator
     /// <summary>Firefox and Firefox Developer Edition share firefox.exe in App Paths, so the registry path must belong to the asked edition.</summary>
     private static bool RegistryPathFits(BrowserInfo info, string path)
     {
+        if (!OriginalSeven.Contains(info.Id)) return PathHasEditionFolder(info, path);
         if (info.Family != BrowserFamily.Firefox) return true;
         var isDevPath = path.Contains("Developer Edition", StringComparison.OrdinalIgnoreCase);
         return isDevPath == (info.Id == "firefox-dev");
+    }
+
+    private static readonly HashSet<string> OriginalSeven = new(StringComparer.Ordinal)
+    {
+        "chrome", "edge", "brave", "yandex", "opera", "firefox", "firefox-dev",
+    };
+
+    /// <summary>Newer editions share chrome.exe and msedge.exe in App Paths, so the registry path must contain the edition's own folder (for example 'Chrome Beta') as a path segment.</summary>
+    private static bool PathHasEditionFolder(BrowserInfo info, string path)
+    {
+        var rel = info.ExeRelativePaths[0];
+        var folder = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(rel)));
+        if (string.IsNullOrEmpty(folder)) return false;
+        foreach (var seg in path.Split('\\', '/'))
+        {
+            if (string.Equals(seg, folder, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     private string? SafeRegistry(string exe)
