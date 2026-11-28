@@ -1,0 +1,45 @@
+id: C-103
+title: Auto-send engine and coordinator send the Steward and edited prompts
+type: normal
+priority: 15
+lease_minutes: 30
+goal: |
+  Make the built-in auto-send work for the Steward and for prompts the person edited. Safety stays: only an allowed repo, only the new window this launch created, visible 3 second countdown with Cancel, one press, rate cap 12 per 10 minutes, no prompt text in any log.
+  - launcher/Core/AutoSendResult.cs: AutoSendRequest(string Repo, string Cell, string ExpectedPrompt, PromptKind Kind = PromptKind.Cell). For the Steward Cell is the empty string.
+  - launcher/Core/AutoSendEngine.cs: the self check calls PromptPolicy.IsSendable(request.Kind, request.Repo, request.Cell, expected, out _) instead of TryMatchCellPrompt; TextMismatch when it fails. Everything after (allowed repo, rate cap, wait for composer text equal to expected and Send enabled for 800 ms, countdown, re-check, one press, confirm) is unchanged.
+  - launcher/App/SendCoordinator.cs: SendJob(Repo, Cell, Browser, ProfileFolder, Exe, PromptKind Kind = PromptKind.Cell, string? PromptText = null). The URL is PromptBuilder.BuildUrlFromText(PromptText) when PromptText is set, else the default cell prompt URL as today. The AutoSendRequest carries Kind and the same text. The status label for a Steward job is 'Steward'. A SendJob with a PromptText that fails IsSendable is returned as NotSent/TextMismatch before any browser starts.
+  - Tests in launcher/Core.Tests/AutoSendEngineTests.cs: a Steward prompt is sent for an allowed repo; refused (RepoNotAllowed) for another repo; an edited cell prompt that still has cell_id=<cell> is sent; an edited prompt without the cell id is refused as TextMismatch before the page is read; the composer text must equal the approved text (a different page text is NotSent); the press happens once; the rate cap still applies.
+  - docs/autosend.md and docs/autosend-native.md: rewrite 'The Steward prompt is never sent' and safety rule 1 to: only text the person approved in the launcher window (equal to this launch's prompt, passing the prompt policy) is sent; the Steward is sent only for a repo allowed on this PC; the log never holds prompt text or the one-time code.
+inputs:
+  - from: C-102
+    kind: implementation
+    contract: |
+      PromptKind {Cell, Steward} and PromptPolicy.IsSendable(kind, repo, cell, text, out reason) in launcher/Core/PromptPolicy.cs; PromptBuilder.BuildUrlFromText(text) (BaseUrl + escaped, sanitized text, max 6000 escaped characters, throws ArgumentException above).
+after: [C-009, C-016, C-067, C-089, C-092, C-094, C-098]
+provides:
+  - "AutoSendRequest(Repo, Cell, ExpectedPrompt, Kind) and SendJob(Repo, Cell, Browser, ProfileFolder, Exe, Kind, PromptText) accepted by the engine and SendCoordinator.RunAsync"
+read:
+  - docs/autosend-native.md
+  - launcher/Core/AutoSendEngine.cs
+  - launcher/App/SendCoordinator.cs
+allowed_paths:
+  - launcher/Core/AutoSendResult.cs
+  - launcher/Core/AutoSendEngine.cs
+  - launcher/App/SendCoordinator.cs
+  - launcher/Core.Tests/AutoSendEngineTests.cs
+  - launcher/Core.Tests/AutoSendResultTests.cs
+  - docs/autosend.md
+  - docs/autosend-native.md
+outputs:
+  - launcher/Core/AutoSendResult.cs
+  - launcher/Core/AutoSendEngine.cs
+  - launcher/App/SendCoordinator.cs
+  - launcher/Core.Tests/AutoSendEngineTests.cs
+  - docs/autosend.md
+  - docs/autosend-native.md
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+notes: |
+  Not verified on a real Windows desktop with a Steward chat, say so in the PR text. docs/decisions.md is protected: the owner must change the decision 'the launcher never clicks / never sends the Steward' by hand (listed in C-116).
+  The one-time Steward code lasts 10 minutes; the wait for the page (60 s) plus the countdown (3 s) fits.

@@ -1,0 +1,43 @@
+id: C-101
+title: One-click cancel of your reservations, with a countdown
+type: normal
+priority: 18
+lease_minutes: 30
+goal: |
+  Remove the admin key from cancelling a reservation and make leftovers visible.
+  - web/src/core/types.ts: PanelCell gets optional reservedAt?: string | null.
+  - web/src/inspector/CellDetails.tsx: for a ready cell that only has a reservation, show 'Reserved by <name> · m:ss left' (one second tick, from reservedAt + 180 s; 'expiring' at 0). The 'Cancel reservation' button no longer opens the admin-key dialog: it calls unreserve(repo, id), then refreshAfterAction(id, {status:'ready', clearOwner:true}) and toasts 'Reservation cancelled'. An error toasts the message. 'Release cell' for a real running or expired cell still goes through the admin dialog exactly as today.
+  - web/src/shell/Header.tsx: when at least one ready cell has reservedBy equal to my display name, show a chip 'Reserved by you: C-008, C-012 (m:ss) · Cancel'. Cancel calls unreserve for each of those cells, then refresh(). The chip disappears by itself when the polled state no longer has the reservations. No chip when I have none.
+  - Tests: web/src/inspector/unreserve.test.tsx (no admin dialog opens for a reservation; unreserve called once; Release cell on a running cell still opens the dialog), web/src/shell/header.test.tsx (chip shows and hides; Cancel calls unreserve per cell).
+inputs:
+  - from: C-100
+    kind: implementation
+    contract: |
+      web/src/core/api.ts exports unreserve(repo, cellId): Promise<{ok:boolean; result:string; cell?: ActionCell}>.
+  - from: C-099
+    kind: implementation
+    contract: |
+      Every PanelCell in GET /panel/api/state has reservedBy (string or null) and reservedAt (ISO string or null). The reservation lasts 180 s from reservedAt.
+after: [C-006, C-015, C-019, C-054, C-072]
+provides:
+  - "Inspector and header cancel a reservation with one click and no admin key"
+read:
+  - web/src/inspector/CellDetails.tsx
+  - web/src/shell/Header.tsx
+allowed_paths:
+  - web/src/core/types.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/shell/Header.tsx
+  - web/src/inspector/unreserve.test.tsx
+  - web/src/shell/header.test.tsx
+outputs:
+  - web/src/core/types.ts
+  - web/src/inspector/CellDetails.tsx
+  - web/src/shell/Header.tsx
+  - web/src/inspector/unreserve.test.tsx
+  - web/src/shell/header.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Name matching uses the exact stored display name (readStore of bp_who), the same value the reservation was made with.

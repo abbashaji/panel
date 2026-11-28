@@ -1,0 +1,44 @@
+id: C-100
+title: Panel reserves only after you confirm, and the texts say 3 minutes
+type: normal
+priority: 19
+lease_minutes: 30
+goal: |
+  Today the panel reserves the cell BEFORE the confirm dialog, so Cancel (or a launcher that never opens) leaves a reservation behind. Change the order and the texts.
+  - web/src/core/api.ts: export unreserve(repo, cellId): Promise<{ok:boolean; result:string; cell?: ActionCell}> calling POST /unreserve {repo, cell_id}; mock mode uses mockUnreserve.
+  - web/src/core/mock.ts: mockUnreserve(cellId) removes the mock reservation and returns {ok:true, result:'UNRESERVED <id>'}; mockReserve detail says 3 minutes.
+  - web/src/launch/index.tsx, single start: start(id) opens the confirm dialog WITHOUT any network call (name first if missing). The dialog text: '<id> will be reserved for <who> for 3 minutes so idle chats do not take it. Your browser opens claude.ai with a pre-filled prompt; the launcher window lets you pick the profile and edit the prompt.' Buttons Cancel (does nothing on the Worker) and 'Open launcher'. Only 'Open launcher' calls reserve; on reserved: rememberOwn, fire(url) and refresh; on taken or not_ready: toast and no link.
+  - web/src/launch/index.tsx, start many: unchanged order (reserve the batch, drop the ones that fail, fire one startmany link) because the Run ready dialog already is the confirm step; only the texts change.
+  - web/src/shell/Settings.tsx: every '10 minutes' becomes '3 minutes'; step 2 adds 'You can cancel a reservation in the panel without the admin key.'
+  - Tests: web/src/launch/launch.test.tsx (cancel in the confirm dialog makes no reserve call; Open launcher reserves once then fires one link; taken shows a toast and no link).
+inputs:
+  - from: C-099
+    kind: implementation
+    contract: |
+      POST /panel/api/unreserve {repo, cell_id} with the panel cookie only -> {ok:true, result:'UNRESERVED <cell>', cell?} or {ok:true, result:'NOT_RESERVED <cell>'}. Reservation TTL is 180 s.
+after: [C-004, C-007, C-010, C-012, C-013, C-023, C-029, C-031, C-032, C-036, C-039, C-040, C-042, C-043, C-044, C-045, C-074, C-079, C-080]
+provides:
+  - "web/src/core/api.ts: unreserve(repo, cellId)"
+read:
+  - web/src/launch/index.tsx
+  - web/src/core/api.ts
+  - web/src/shell/Settings.tsx
+allowed_paths:
+  - web/src/core/api.ts
+  - web/src/core/mock.ts
+  - web/src/launch/index.tsx
+  - web/src/shell/Settings.tsx
+  - web/src/launch/launch.test.tsx
+  - web/src/core/api.test.ts
+outputs:
+  - web/src/core/api.ts
+  - web/src/core/mock.ts
+  - web/src/launch/index.tsx
+  - web/src/shell/Settings.tsx
+  - web/src/launch/launch.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  Do not auto-cancel when transport.watch reports that nothing opened: Chrome shows an external-app prompt that the person may still be answering after 2 s, so that signal is unreliable. Cancelling is a one-click action in C-101 instead.
+  The launcher windows say '3 minutes' too (C-104 and C-105).

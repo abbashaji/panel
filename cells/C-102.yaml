@@ -1,0 +1,40 @@
+id: C-102
+title: Launcher core - editable prompts and one policy for what may be auto-sent
+type: normal
+priority: 15
+lease_minutes: 30
+goal: |
+  Core library only (launcher/Core, no Windows types, no network). Today the prompt is read-only and auto-send only accepts the exact cell template, so a Steward or an edited prompt can never be sent. Introduce one policy that both the windows and the engine use.
+  - New launcher/Core/PromptPolicy.cs. enum PromptKind { Cell, Steward }. static bool IsSendable(PromptKind kind, string repo, string? cell, string? text, out string reason). Rules: text not empty after trim; at most 1500 characters; no control characters other than \n, \r, \t; repo valid (ProtocolParser.IsValidRepo); Cell kind: cell valid and the text contains next_cell and the exact token cell_id=<cell>; Steward kind: the text contains steward_next. reason is a short plain sentence for the window ('The prompt must still mention cell_id=C-123.'), empty when ok. Also static string Sanitize(string text): removes < and >, normalises line ends to \n, trims the ends (same stripping as the fixed templates).
+  - launcher/Core/PromptBuilder.cs: static string BuildUrlFromText(string text) = BaseUrl + Uri.EscapeDataString(Sanitize(text)); throws ArgumentException when the escaped text is longer than 6000 characters. static string UnmaskCode(string text, string code): replaces the exact MaskCode(code) text with the real code (so the Steward prompt can be shown masked and edited, then sent with the real code); static bool HasCode(string text, string code) true when the text contains the real code. static string ExpandTemplate(PromptKind kind, string template, string repo, string? cell, string? code) replaces {repo}, {cell}, {code}. BuildPrompt, BuildStewardPrompt, TryMatchCellPrompt and WithAutoSend keep their behaviour exactly (the legacy userscript path still uses them).
+  - launcher/Core/LauncherSettings.cs: two optional keys promptTemplateCell and promptTemplateSteward (string, at most 1500 characters, null when unset), loaded and saved with the other keys (Save keeps every key). Properties PromptTemplateCell and PromptTemplateSteward. static bool ValidTemplate(PromptKind kind, string t, out string reason): Cell needs {cell} and next_cell; Steward needs {code} and steward_next; both need no other { } placeholder than {repo}, {cell}, {code}.
+  - Tests: new launcher/Core.Tests/PromptPolicyTests.cs (accepted and rejected texts for both kinds, 1500 limit, control characters, < and > removed, URL length limit, UnmaskCode, ExpandTemplate, ValidTemplate), launcher/Core.Tests/PromptMatchTests.cs unchanged cases still pass, launcher/Core.Tests/AutoSendSettingsTests.cs (templates round trip, Save keeps allowedRepos and engine), launcher/Core.Tests/StewardTests.cs (the test that says auto-send rejects the Steward URL stays true for WithAutoSend, the legacy marker path).
+inputs: []
+after: [C-008, C-037, C-063, C-078, C-090, C-091]
+provides:
+  - "launcher/Core/PromptPolicy.cs: PromptKind {Cell, Steward}; PromptPolicy.IsSendable(kind, repo, cell, text, out reason); PromptPolicy.Sanitize(text)"
+  - "launcher/Core/PromptBuilder.cs: BuildUrlFromText(text), UnmaskCode(text, code), HasCode(text, code), ExpandTemplate(kind, template, repo, cell, code)"
+  - "launcher/Core/LauncherSettings.cs: PromptTemplateCell, PromptTemplateSteward, ValidTemplate(kind, t, out reason)"
+read:
+  - docs/autosend-native.md
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LauncherSettings.cs
+allowed_paths:
+  - launcher/Core/PromptPolicy.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core.Tests/PromptPolicyTests.cs
+  - launcher/Core.Tests/PromptMatchTests.cs
+  - launcher/Core.Tests/AutoSendSettingsTests.cs
+  - launcher/Core.Tests/StewardTests.cs
+outputs:
+  - launcher/Core/PromptPolicy.cs
+  - launcher/Core/PromptBuilder.cs
+  - launcher/Core/LauncherSettings.cs
+  - launcher/Core.Tests/PromptPolicyTests.cs
+  - launcher/Core.Tests/AutoSendSettingsTests.cs
+acceptance:
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Why the template rule can relax: a link never carries prompt text (the launcher builds it), so the only new text source is the person editing it in the launcher window, right before pressing Open. The engine still sends only text equal to what that window approved, after a visible countdown with Cancel.
+  The log never records prompt text. The Steward prompt contains a one-time code: nothing in this cell may log, persist or echo it (the saved Steward template holds the placeholder {code}, never a real code).

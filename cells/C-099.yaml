@@ -1,0 +1,45 @@
+id: C-099
+title: Short reservation that can be cancelled without the admin key
+type: normal
+priority: 20
+lease_minutes: 30
+goal: |
+  Make the panel reservation harmless. It stays, because it shields a cell you just clicked from idle chats that call next_cell without a cell id, and it shows who is starting the cell. But it becomes short and cancellable by anyone using the panel.
+  - src/claim.ts: RESERVE_TTL_SECONDS 600 -> 180. Every text that says 10 minutes is built from the constant.
+  - src/panel/actions.ts: new route POST /panel/api/unreserve {repo, cell_id}. Panel cookie only, NO admin_key (a reservation is an advisory KV key and writes nothing to git). It deletes reserve:<repo>:<cell> whoever holds it and answers {ok:true, result:"UNRESERVED <cell>", cell} when a reservation existed, or {ok:true, result:"NOT_RESERVED <cell>"} (no cell field) when none. release and clear-feedback keep their admin gate unchanged. The reserve detail text becomes '<cell> reserved for <who> for 3 minutes'. A second reserve by the same who refreshes the 180 s.
+  - src/panel/state.ts and src/panel/types.ts: PanelCell gets reservedAt (ISO string, or null exactly when reservedBy is null), read from the same KV value as reservedBy. Both fields are still never served from the state cache.
+  - Tests: test/pinned_claim.test.ts (TTL is 180, the NONE_READY text says 3 min), test/panel_actions.test.ts (unreserve works without a key; with no reservation it answers NOT_RESERVED; release without a key is still 403; a repo outside the allow-list is 400), test/panel_state.test.ts (reservedAt present and matches the KV time).
+  - docs/panel-contracts.md sections 3.3 and 3.4: TTL 180 s, the unreserve route, reservedAt in the state JSON.
+inputs: []
+after: [C-000, C-001, C-002, C-003, C-024, C-026, C-030, C-035, C-041, C-047, C-050, C-053, C-067, C-069, C-077, C-083, C-086, C-098]
+provides:
+  - "POST /panel/api/unreserve {repo, cell_id} -> {ok, result: 'UNRESERVED <cell>' | 'NOT_RESERVED <cell>', cell?}; no admin key"
+  - "PanelCell.reservedAt: string | null (ISO time the reservation was made); reservation TTL is 180 s"
+read:
+  - src/claim.ts
+  - src/panel/actions.ts
+  - docs/panel-contracts.md
+allowed_paths:
+  - src/claim.ts
+  - src/panel/actions.ts
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - test/pinned_claim.test.ts
+  - test/panel_actions.test.ts
+  - test/panel_state.test.ts
+  - docs/panel-contracts.md
+outputs:
+  - src/claim.ts
+  - src/panel/actions.ts
+  - src/panel/state.ts
+  - src/panel/types.ts
+  - test/pinned_claim.test.ts
+  - test/panel_actions.test.ts
+  - test/panel_state.test.ts
+  - docs/panel-contracts.md
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/pinned_claim.test.ts test/panel_actions.test.ts test/panel_state.test.ts"
+notes: |
+  Why short: the launcher is offline and cannot tell the Worker that you cancelled, so a long reservation can only be cleaned up by expiry. 180 s covers the launcher window, the browser start and the first next_cell call. The git branch lock stays the real arbiter; nothing here changes claiming.
+  The reservation is still skipped by a plain next_cell and ignored by a pinned next_cell without who.

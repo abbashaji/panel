@@ -1,0 +1,38 @@
+id: C-104
+title: Start window - editable prompt box, and auto-send for the Steward
+type: normal
+priority: 15
+lease_minutes: 30
+goal: |
+  Windows Forms only (launcher/App). The single start window and the Steward window show an editable prompt and the Steward gets the Auto-send options.
+  - launcher/App/Controls.cs: MonoTextBox can be editable (ReadOnly false keeps the dark colours, a visible caret and a thin accent border while focused). New small control PromptEditor: a MonoTextBox plus, below it, a character counter ('412 / 1500'), a warning label (shows the PromptPolicy reason in the warning colour, hidden when fine), a 'Reset to default' link button, and a checkbox 'Use this text as my default'. AutoSendOption footers: Steward, on and allowed: 'The launcher presses Send after 3 seconds unless you cancel. The prompt holds your one-time code, valid 10 minutes.'; Steward, on but repo not allowed: 'Auto-send stays off for this repo until you tick the box above.'
+  - launcher/App/StartForm.cs, cell mode: the prompt box is PromptEditor, filled with the saved default template (settings.PromptTemplateCell expanded) or the standard prompt. The Open button is disabled while PromptPolicy.IsSendable fails (reason shown). Ticking 'Use this text as my default' saves the text as a template with {repo} and {cell} put back (LauncherSettings.ValidTemplate must pass, otherwise the checkbox shows the reason and nothing is saved); unticking clears the saved default. Subline: 'reserved for you for 3 minutes'.
+  - launcher/App/StartForm.cs, Steward mode: same editor. The code is shown masked (MaskCode); before launching the text goes through PromptBuilder.UnmaskCode, and if the person deleted the masked code the Open button is disabled with 'The prompt must keep the one-time code.' The Steward window now shows the Auto-send checkbox and, when the repo is not allowed, the 'Allow auto-send for <repo> on this PC' checkbox, exactly like the cell window (same settings, same rules). When native auto-send applies it runs one SendJob(Kind=Steward, PromptText=the unmasked text) through SendCoordinator, with the window hidden while it runs. Without auto-send the chat is opened pre-filled with BuildUrlFromText.
+  - Cell mode with the legacy userscript engine: an edited prompt cannot carry the &autosend=1 marker (WithAutoSend accepts only the standard prompt); open it pre-filled without the marker and show 'Edited prompts are not auto-sent by the helper script; press Send yourself.' The Steward with the userscript engine is opened pre-filled, never marked.
+  - Footer for the Steward without a code stays as today. The window height grows to fit the taller editor (about 150 px for the text).
+inputs:
+  - from: C-103
+    kind: implementation
+    contract: |
+      SendJob(Repo, Cell, Browser, ProfileFolder, Exe, PromptKind Kind = Cell, string? PromptText = null); SendCoordinator.RunAsync(jobs, settings, dataDirectory, stopAll) sends Steward and edited prompts for allowed repos.
+  - from: C-102
+    kind: implementation
+    contract: |
+      PromptPolicy.IsSendable(kind, repo, cell, text, out reason); PromptBuilder.BuildUrlFromText, UnmaskCode, HasCode, ExpandTemplate; LauncherSettings.PromptTemplateCell / PromptTemplateSteward and ValidTemplate(kind, t, out reason).
+after: [C-027, C-028, C-038, C-064, C-095]
+provides:
+  - "Single start and Steward windows: editable prompt, Auto-send for the Steward"
+read:
+  - launcher/App/StartForm.cs
+  - launcher/App/Controls.cs
+allowed_paths:
+  - launcher/App/StartForm.cs
+  - launcher/App/Controls.cs
+outputs:
+  - launcher/App/StartForm.cs
+  - launcher/App/Controls.cs
+acceptance:
+  - cmd: "dotnet build launcher/App/App.csproj -c Release"
+  - cmd: "dotnet test launcher/Core.Tests"
+notes: |
+  Windows Forms only, no network. Not verified on a real Windows desktop, say so in the PR text. The admin key must never be typed into this box: add one muted hint line under the editor 'Never paste the admin key here.' Keep the allowance rule: only the person ticking the allow box in this window allows a repo, never a link.
