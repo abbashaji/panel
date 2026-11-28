@@ -30,9 +30,27 @@ public static class BrowserCatalog
         new("firefox-dev", "Firefox Developer Edition", BrowserFamily.Firefox, "firefox.exe",
             new[] { Path.Combine("Firefox Developer Edition", "firefox.exe") },
             Path.Combine("Mozilla", "Firefox")),
+        new("vivaldi", "Vivaldi", BrowserFamily.Chromium, "vivaldi.exe",
+            new[] { Path.Combine("Vivaldi", "Application", "vivaldi.exe") },
+            Path.Combine("Vivaldi", "User Data")),
+        new("chrome-beta", "Chrome Beta", BrowserFamily.Chromium, "chrome.exe",
+            new[] { Path.Combine("Google", "Chrome Beta", "Application", "chrome.exe") },
+            Path.Combine("Google", "Chrome Beta", "User Data")),
+        new("chrome-canary", "Chrome Canary", BrowserFamily.Chromium, "chrome.exe",
+            new[] { Path.Combine("Google", "Chrome SxS", "Application", "chrome.exe") },
+            Path.Combine("Google", "Chrome SxS", "User Data")),
+        new("edge-beta", "Edge Beta", BrowserFamily.Chromium, "msedge.exe",
+            new[] { Path.Combine("Microsoft", "Edge Beta", "Application", "msedge.exe") },
+            Path.Combine("Microsoft", "Edge Beta", "User Data")),
+        new("edge-dev", "Edge Dev", BrowserFamily.Chromium, "msedge.exe",
+            new[] { Path.Combine("Microsoft", "Edge Dev", "Application", "msedge.exe") },
+            Path.Combine("Microsoft", "Edge Dev", "User Data")),
+        new("chromium", "Chromium", BrowserFamily.Chromium, "chrome.exe",
+            new[] { Path.Combine("Chromium", "Application", "chrome.exe") },
+            Path.Combine("Chromium", "User Data")),
     };
 
-    /// <summary>Fixed order: chrome, edge, brave, yandex, opera, firefox, firefox-dev.</summary>
+    /// <summary>Fixed order: chrome, edge, brave, yandex, opera, firefox, firefox-dev, then vivaldi, chrome-beta, chrome-canary, edge-beta, edge-dev, chromium. New editions are only ever appended.</summary>
     public static IReadOnlyList<BrowserInfo> All { get; } = Array.AsReadOnly(Items);
 
     public static bool IsKnown(string? id) => TryGet(id) is not null;
