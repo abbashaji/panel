@@ -1,0 +1,14 @@
+id: "C-117"
+title: "Fix the type errors in steward.ts and panel_steward test"
+type: "normal"
+priority: 21
+lease_minutes: 15
+goal: "main fails `npx tsc --noEmit`, so C-099 (which has it in acceptance) cannot merge. Fix only these type errors, with no behaviour change.\n- src/steward.ts line 47: 'crypto' does not exist on typeof globalThis. Use crypto.randomUUID() as src/panel/state.ts does.\n- test/panel_steward.test.ts: 'possibly undefined' on steward and the results of json() typed unknown. Use non-null assertions or `as any`; assertions stay as they are.\n"
+inputs: []
+after: ["C-033","C-076","C-082","C-115"]
+provides: ["npx tsc --noEmit reports nothing in src/steward.ts and test/panel_steward.test.ts"]
+read: ["src/steward.ts","test/panel_steward.test.ts"]
+allowed_paths: ["src/steward.ts","test/panel_steward.test.ts"]
+outputs: ["src/steward.ts","test/panel_steward.test.ts"]
+acceptance: [{"cmd":"bash -c 'out=$(npx tsc --noEmit); code=$?; [ $code -eq 0 ] && exit 0; echo \"$out\" | grep -q \"error TS\" || exit 1; ! echo \"$out\" | grep -E \"^(src/steward[.]ts|test/panel_steward[.]test[.]ts)\"'"},{"cmd":"node --test test/panel_steward.test.ts"}]
+notes: "The first check passes while src/panel/actions.ts(131) is still reported: C-099 owns that file and fixes that line on its own branch. Errors seen: steward.ts(47,40) TS2339; panel_steward.test.ts lines 93, 95, 107, 108, 139, 147-149, 158.\n"
