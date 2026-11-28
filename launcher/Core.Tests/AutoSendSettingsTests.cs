@@ -159,4 +159,70 @@ public sealed class AutoSendSettingsTests : IDisposable
         Assert.Empty(Directory.GetFiles(_dir, "*.tmp"));
         Assert.Single(Directory.GetFiles(_dir));
     }
+
+    [Fact]
+    public void TemplatesDefaultToNullAndAreNotSavedWhenUnset()
+    {
+        var s = new LauncherSettings();
+        Assert.Null(s.PromptTemplateCell);
+        Assert.Null(s.PromptTemplateSteward);
+        var loaded = LauncherSettings.Load(PathFor("missing.json"));
+        Assert.Null(loaded.PromptTemplateCell);
+        Assert.Null(loaded.PromptTemplateSteward);
+        s.Save(PathFor());
+        using var doc = JsonDocument.Parse(File.ReadAllText(PathFor()));
+        Assert.False(doc.RootElement.TryGetProperty("promptTemplateCell", out _));
+        Assert.False(doc.RootElement.TryGetProperty("promptTemplateSteward", out _));
+    }
+
+    [Fact]
+    public void TemplatesRoundTripAndSaveKeepsTheOtherKeys()
+    {
+        const string cell = "Repo: {repo}\nCall next_cell with cell_id={cell}. \u00fc";
+        const string steward = "You are the Steward of {repo}. Call steward_next with code={code}.";
+        var s = new LauncherSettings { AutoSend = true, Engine = "userscript", PromptTemplateCell = cell, PromptTemplateSteward = steward };
+        Assert.True(s.AllowRepo("Owner/Name"));
+        s.Save(PathFor());
+
+        var loaded = LauncherSettings.Load(PathFor());
+        Assert.Equal(cell, loaded.PromptTemplateCell);
+        Assert.Equal(steward, loaded.PromptTemplateSteward);
+        Assert.True(loaded.AutoSend);
+        Assert.Equal("userscript", loaded.Engine);
+        Assert.Equal(new[] { "owner/name" }, loaded.AllowedRepos);
+
+        loaded.AutoSend = false;
+        loaded.Save(PathFor());
+        var again = LauncherSettings.Load(PathFor());
+        Assert.False(again.AutoSend);
+        Assert.Equal("userscript", again.Engine);
+        Assert.Equal(new[] { "owner/name" }, again.AllowedRepos);
+        Assert.Equal(cell, again.PromptTemplateCell);
+        Assert.Equal(steward, again.PromptTemplateSteward);
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(PathFor()));
+        Assert.Equal(cell, doc.RootElement.GetProperty("promptTemplateCell").GetString());
+        Assert.Equal(steward, doc.RootElement.GetProperty("promptTemplateSteward").GetString());
+        Assert.Equal(1, doc.RootElement.GetProperty("allowedRepos").GetArrayLength());
+    }
+
+    [Fact]
+    public void OverlongBlankOrWrongTypeTemplatesAreIgnored()
+    {
+        var a = LoadJson("{\"autoSend\":true,\"promptTemplateCell\":\"" + new string('x', 1501) + "\",\"promptTemplateSteward\":5}");
+        Assert.True(a.AutoSend);
+        Assert.Null(a.PromptTemplateCell);
+        Assert.Null(a.PromptTemplateSteward);
+
+        var exact = LoadJson("{\"promptTemplateCell\":\"" + new string('x', 1500) + "\"}");
+        Assert.Equal(1500, exact.PromptTemplateCell!.Length);
+
+        var s = new LauncherSettings { PromptTemplateCell = "   ", PromptTemplateSteward = new string('y', 1501) };
+        Assert.Null(s.PromptTemplateCell);
+        Assert.Null(s.PromptTemplateSteward);
+        s.PromptTemplateCell = "keep";
+        Assert.Equal("keep", s.PromptTemplateCell);
+        s.PromptTemplateCell = null;
+        Assert.Null(s.PromptTemplateCell);
+    }
 }
