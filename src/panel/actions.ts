@@ -128,7 +128,7 @@ async function releaseStewardAsOwner(env: PanelEnv, repo: string, deps: ActionDe
 async function stewardAfter(env: PanelEnv, repo: string, deps: ActionDeps, api: GitHubApi): Promise<PanelSteward> {
   clearPanelCache();
   try {
-    return (await buildPanelState(env, repo, { api, opts: deps.opts })).steward;
+    return (await buildPanelState(env, repo, { api, opts: deps.opts })).steward ?? toPanelSteward({ state: "none" }, 0);
   } catch {
     try {
       const opts = deps.opts ?? engineOptions(env);
