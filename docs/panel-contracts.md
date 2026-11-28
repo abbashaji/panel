@@ -65,7 +65,7 @@ All types are in `src/panel/types.ts` and must match the JSON below exactly.
     "sha":{"lock":"7d3e1b0","tip":"9b20c4e","merged":null},
     "lease":{"minutesLeft":0,"expiredMinutesAgo":22,"ci":false},
     "attempts":2,"maxAttempts":3,"lastCommit":{"subject":"...","next":"...","at":"ISO"},
-    "reservedBy":null,"pr":{"number":12,"state":"open"},
+    "reservedBy":null,"reservedAt":null,"pr":{"number":12,"state":"open"},
     "allowedPaths":[],"provides":[],"inputs":[]}],
   "bottleneck":{"id":"C-004","blocks":8} }
 ```
@@ -77,13 +77,15 @@ All types are in `src/panel/types.ts` and must match the JSON below exactly.
 ### 3.3 Pinned claim and reservation
 
 - `next_cell` gains optional `cell_id` (and optional `who`, see Open points). Behavior: if that cell is ready (or reclaimable) and not reserved for someone else, claim/resume exactly it (same `CLAIMED`/`RESUME` reply format, so the C1 echo line still works). Otherwise reply `NOT_READY <id> <reason>` or `RESERVED <id> by <name>`. Never fall back to another cell.
-- Reservation: KV key `reserve:<repo>:<cell>` = `{who, at}`, TTL 600 s. `next_cell` without `cell_id` skips reserved cells (except for `who`'s own pinned call). The key is deleted on CLAIMED/RESUME of that cell and by an admin release or clear-feedback from the panel (including when the cell has no branch: the answer is then `{ok: true, result: "UNRESERVED <cell>", cell}`).
-- `POST /panel/api/reserve` `{repo, cell_id, who}` -> `{status: "reserved"|"not_ready"|"taken", detail}`.
+- Reservation: KV key `reserve:<repo>:<cell>` = `{who, at}`, TTL 180 s. `next_cell` without `cell_id` skips reserved cells (except for `who`'s own pinned call). The key is deleted on CLAIMED/RESUME of that cell, by `POST /panel/api/unreserve`, and by an admin release or clear-feedback from the panel (including when the cell has no branch: the answer is then `{ok: true, result: "UNRESERVED <cell>", cell}`).
+- `POST /panel/api/reserve` `{repo, cell_id, who}` -> `{status: "reserved"|"not_ready"|"taken", detail}`. On success `detail` is `<cell> reserved for <who> for 3 minutes`; a second reserve by the same `who` refreshes the 180 s.
+- The state JSON (3.2) carries both halves of the KV value: `reservedBy` (name) and `reservedAt` (ISO time the reservation was made). `reservedAt` is null exactly when `reservedBy` is null. Neither field is served from the state cache.
 
 ### 3.4 Actions
 
 - `POST /panel/api/release` `{repo, cell_id, admin_key}` -> `takeover(... handoff:true)`. Result text passed through (<= 200 chars).
 - `POST /panel/api/clear-feedback` `{repo, cell_id, admin_key}` -> takeover with `clear_feedback`.
+- `POST /panel/api/unreserve` `{repo, cell_id}`: panel cookie only, no `admin_key` (a reservation is an advisory KV key; nothing is written to git). Deletes the reservation whoever holds it -> `{ok: true, result: "UNRESERVED <cell>", cell}`; with no reservation -> `{ok: true, result: "NOT_RESERVED <cell>"}` (no `cell`). A repo outside the allow-list or a bad cell id is `400`; a KV error is `503`.
 - The confirm step in the UI states exactly the git write (one empty commit, or branch state change) before sending.
 
 ## 4. Launcher protocol

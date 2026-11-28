@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import * as engine from "../src/engine.ts";
-import { getReservation, reserveKey, setReservation, type ClaimContext, type ClaimOptions, type ReserveKv } from "../src/claim.ts";
+import { RESERVE_TTL_SECONDS, getReservation, reserveKey, setReservation, type ClaimContext, type ClaimOptions, type ReserveKv } from "../src/claim.ts";
 import { toolHandlers, type Env } from "../src/tools.ts";
 import { FakeGitHub } from "./fakegh.ts";
 
@@ -108,7 +108,8 @@ test("a cell reserved for someone else answers RESERVED; the reserver and a call
   const fx = await afterSkeleton();
   const kv = new FakeKv(() => fx.clock);
   await setReservation(kv, REPO, "C-002", "Ann");
-  assert.equal(kv.ttl[reserveKey(REPO, "C-002")], 600);
+  assert.equal(RESERVE_TTL_SECONDS, 180);
+  assert.equal(kv.ttl[reserveKey(REPO, "C-002")], 180);
   assert.equal(reserveKey(REPO, "C-002"), "reserve:o/r:C-002");
   const stored = await getReservation(kv, REPO, "C-002");
   assert.equal(stored!.who, "Ann");
@@ -124,11 +125,11 @@ test("a cell reserved for someone else answers RESERVED; the reserver and a call
   assert.equal(await getReservation(kv, REPO, "C-001"), null);
 });
 
-test("a reservation expires after 600 s", async () => {
+test("a reservation expires after 180 s", async () => {
   const fx = await afterSkeleton();
   const kv = new FakeKv(() => fx.clock);
   await setReservation(kv, REPO, "C-002", "Ann");
-  fx.tick(599_000);
+  fx.tick(179_000);
   assert.equal(await pinned(fx, kv, "C-002", "Bob"), "RESERVED C-002 by Ann");
   fx.tick(2_000);
   assert.equal(await getReservation(kv, REPO, "C-002"), null);
@@ -142,6 +143,7 @@ test("a plain next_cell skips reserved cells and says so when nothing else is le
   assert.match(await plain(fx, kv), /^CLAIMED C-002 /); // C-001 is first in line but reserved
   const none = await plain(fx, kv, "Bob");
   assert.match(none, /^NONE_READY: ready cells are reserved for other chats: C-001/);
+  assert.match(none, /a reservation lasts at most 3 min\)/);
   assert.deepEqual(branches(fx), ["cell/C-002"]);
   assert.match(await pinned(fx, kv, "C-001", "Ann"), /^CLAIMED C-001 /); // the reserver still gets it
 });

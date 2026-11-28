@@ -55,7 +55,7 @@ function fakeApi(snap: Snapshot): GitHubApi {
   } as unknown as GitHubApi;
 }
 
-const kv = { get: async (k: string) => (k === "reserve:o/r:C-001" ? JSON.stringify({ who: "Ann", at: NOW }) : null) };
+const kv = { get: async (k: string) => (k === "reserve:o/r:C-001" ? JSON.stringify({ who: "Ann", at: iso(2) }) : null) };
 const env = { OAUTH_KV: kv, GITHUB_TOKEN: "t" } as any;
 
 beforeEach(() => {
@@ -124,7 +124,10 @@ test("lease, shas, last commit, pr and reservation", async () => {
   assert.equal(by["C-001"].lastCommit, null);
   assert.equal(by["C-001"].pr, null);
   assert.equal(by["C-001"].reservedBy, "Ann");
+  assert.equal(by["C-001"].reservedAt, iso(2));
   assert.equal(by["C-000"].reservedBy, null);
+  assert.equal(by["C-000"].reservedAt, null);
+  for (const c of s.cells) assert.equal(c.reservedAt === null, c.reservedBy === null);
 });
 
 function liveKv() {
@@ -132,13 +135,32 @@ function liveKv() {
   return { m, get: async (k: string) => m.get(k) ?? null, put: async (k: string, v: string) => void m.set(k, v), delete: async (k: string) => void m.delete(k) };
 }
 const reservedOf = (s: any, id: string) => s.cells.find((c: any) => c.id === id).reservedBy;
+const reservedAtOf = (s: any, id: string) => s.cells.find((c: any) => c.id === id).reservedAt;
+
+test("reservedAt follows the KV value outside the cache and is null for an unreadable time", async () => {
+  const k = liveKv();
+  const e = { OAUTH_KV: k, GITHUB_TOKEN: "t" } as any;
+  const api = fakeApi(snapshot());
+  const read = () => buildPanelState(e, "o/r", { api, opts });
+  assert.equal(reservedAtOf(await read(), "C-001"), null);
+  for (const at of [iso(3), iso(1)]) {
+    k.m.set("reserve:o/r:C-001", JSON.stringify({ who: "Bob", at }));
+    assert.equal(reservedAtOf(await read(), "C-001"), at);
+  }
+  k.m.set("reserve:o/r:C-001", JSON.stringify({ who: "Bob", at: "x" }));
+  const bad = await read();
+  assert.equal(reservedOf(bad, "C-001"), null);
+  assert.equal(reservedAtOf(bad, "C-001"), null);
+  k.m.delete("reserve:o/r:C-001");
+  assert.equal(reservedAtOf(await read(), "C-001"), null);
+});
 
 test("reservedBy is read outside the cache: reserve and release show at once", async () => {
   const k = liveKv();
   const e = { OAUTH_KV: k, GITHUB_TOKEN: "t" } as any;
   const api = fakeApi(snapshot());
   assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), null);
-  k.m.set("reserve:o/r:C-001", JSON.stringify({ who: "Bob", at: NOW }));
+  k.m.set("reserve:o/r:C-001", JSON.stringify({ who: "Bob", at: iso(0) }));
   assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), "Bob");
   k.m.delete("reserve:o/r:C-001");
   assert.equal(reservedOf(await buildPanelState(e, "o/r", { api, opts }), "C-001"), null);

@@ -57,6 +57,53 @@ test("reserve: ready cell is reserved, same who refreshes, other who is taken", 
   assert.match(j.detail, /Ann/);
 });
 
+test("reserve: detail says 3 minutes and a second reserve by the same who refreshes the 180 s", async () => {
+  const kv = fakeKv();
+  const ttls: (number | undefined)[] = [];
+  const spy = { ...kv, put: async (k: string, v: string, o?: { expirationTtl?: number }) => (ttls.push(o?.expirationTtl), kv.put(k, v)) };
+  const env = mkEnv(spy as any);
+  for (let i = 0; i < 2; i++) {
+    const j = await (await post(env, "/panel/api/reserve", { repo: REPO, cell_id: "C-003", who: "Ann" }, ready))!.json();
+    assert.equal(j.status, "reserved");
+    assert.equal(j.detail, "C-003 reserved for Ann for 3 minutes");
+  }
+  assert.deepEqual(ttls, [180, 180]);
+});
+
+const unreserveBody = { repo: REPO, cell_id: "C-003" };
+
+test("unreserve: works without an admin key, whoever holds the reservation", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: new Date().toISOString() }));
+  let calls = 0;
+  const deps: ActionDeps = { ...ready, takeover: async () => (calls++, "RELEASED C-003") };
+  const res = await post(mkEnv(kv), "/panel/api/unreserve", unreserveBody, deps);
+  assert.equal(res!.status, 200);
+  assert.deepEqual(await res!.json(), { ok: true, result: "UNRESERVED C-003", cell: { id: "C-003", status: "ready", resumable: false } });
+  assert.equal(kv.m.size, 0);
+  assert.equal(calls, 0);
+});
+
+test("unreserve: without a reservation it answers NOT_RESERVED and no cell", async () => {
+  const res = await post(mkEnv(), "/panel/api/unreserve", unreserveBody, ready);
+  assert.equal(res!.status, 200);
+  assert.deepEqual(await res!.json(), { ok: true, result: "NOT_RESERVED C-003" });
+});
+
+test("unreserve: cookie, repo allow-list, cell id and KV failures; release still needs the key", async () => {
+  const kv = fakeKv();
+  kv.m.set(`reserve:${REPO}:C-003`, JSON.stringify({ who: "Ann", at: new Date().toISOString() }));
+  const env = mkEnv(kv);
+  assert.equal((await post(env, "/panel/api/unreserve", unreserveBody, ready, false))!.status, 401);
+  assert.equal((await post(env, "/panel/api/unreserve", { ...unreserveBody, repo: "evil/repo" }, ready))!.status, 400);
+  assert.equal((await post(env, "/panel/api/unreserve", { ...unreserveBody, cell_id: "nope" }, ready))!.status, 400);
+  assert.equal((await post(env, "/panel/api/release", unreserveBody, ready))!.status, 403);
+  assert.equal((await post(env, "/panel/api/clear-feedback", unreserveBody, ready))!.status, 403);
+  assert.equal(kv.m.size, 1);
+  const broken = { ...kv, get: async () => { throw new Error("kv down"); } };
+  assert.equal((await post(mkEnv(broken as any), "/panel/api/unreserve", unreserveBody, ready))!.status, 503);
+});
+
 test("reserve: not ready cell is not_ready and nothing is stored", async () => {
   const kv = fakeKv();
   const deps: ActionDeps = { readiness: async () => ({ ready: false, detail: "waiting for C-001" }) };
