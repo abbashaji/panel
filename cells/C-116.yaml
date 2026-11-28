@@ -1,0 +1,49 @@
+id: C-116
+title: Docs, changelog, panel texts and the Windows and live test checklists for all changes
+type: normal
+priority: 5
+lease_minutes: 30
+goal: |
+  Bring every document in line with C-099 to C-115. Text only, no logic.
+  - CHANGELOG.md (Unreleased): one entry per change: reservation 180 s and key-free cancel, reservation after confirm; Steward and edited prompts auto-sent; editable prompts; panel hub, version route and optional webhook; fewer GitHub calls and a stale state instead of silence; Live / Slow / Not updating chip; browser and profile list editor; sidebar counts; read_files outline, read ledger, know: note, token hotspots. Include the deploy steps: wrangler deploy (applies the hub migration), optional wrangler secret put GITHUB_WEBHOOK_SECRET and the repository webhook.
+  - README.md: the launcher section mentions the Start menu shortcut 'Blueprint launcher - browsers and profiles' (--profiles); the deploy section mentions the optional hub and webhook secret.
+  - docs/panel-contracts.md: section 4.2 (the prompt may be edited in the launcher window; the link still never carries prompt text), section 4.6 (auto-send also applies to the Steward for an allowed repo; the saved default templates), section 5 (live updates: version watcher, 5 s safety poll, freshness chip).
+  - docs/panel-design.md: the sidebar rule (a status with count 0 is hidden, filtered or not), the header chip states (Live, Slow, Not updating, Reserved by you), the launcher windows (editable prompt box, Edit list link, '3 minutes').
+  - docs/panel-integration.md: add to the NOT verified list: the Durable Object hub and its migration on Cloudflare; the webhook signature with a real GitHub delivery; Steward auto-send on Windows; edited prompt auto-send; the new browsers (Vivaldi, Chrome Beta, Canary, Edge Beta, Edge Dev, Chromium); the ManageProfilesForm and the Start menu shortcut; the outline and know: flow with a real chat.
+  - docs/e2e-runbook.md: new checklist sections, each with expected results: reservation (cancel in the dialog leaves nothing; Cancel reservation without the admin key; expiry after 3 minutes), Steward auto-send (allowed repo, countdown, Cancel, one press), edited prompt (edit, Reset, saved default), profile list (untick, New tag, Not found, last choice), freshness (covered window, hidden tab, a change shows within about 3 s with the hub, with the hub off), sidebar (row vanishes at 0), token reuse (outline on a 400+ line file, know: after a release, READ BEFORE line, hotspot in the Steward briefing).
+  - web/src/launch/AutoSendHelp.tsx and web/src/launch/autosendHelp.test.tsx: replace 'Steward chats never auto-send.' with text that says the Steward follows the same opt-in and per-repo allowance.
+inputs: []
+after: [C-011, C-058, C-062, C-066, C-071, C-085, C-088, C-097, C-099, C-100, C-101, C-102, C-103, C-104, C-105, C-106, C-107, C-108, C-109, C-110, C-111, C-112, C-113, C-114, C-115]
+provides:
+  - "Documentation and test checklists for the seven changes"
+read:
+  - CHANGELOG.md
+  - docs/panel-integration.md
+  - docs/e2e-runbook.md
+allowed_paths:
+  - CHANGELOG.md
+  - README.md
+  - docs/panel-contracts.md
+  - docs/panel-design.md
+  - docs/panel-integration.md
+  - docs/e2e-runbook.md
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+outputs:
+  - CHANGELOG.md
+  - README.md
+  - docs/panel-contracts.md
+  - docs/panel-design.md
+  - docs/panel-integration.md
+  - docs/e2e-runbook.md
+  - web/src/launch/AutoSendHelp.tsx
+  - web/src/launch/autosendHelp.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "grep -q 'GITHUB_WEBHOOK_SECRET' CHANGELOG.md"
+  - cmd: "grep -q 'profiles' README.md"
+notes: |
+  OWNER STEPS THAT NO CELL MAY DO (protected paths), put them in the PR text:
+  1. docs/decisions.md: change 'the launcher never clicks / never sends the Steward' to 'the launcher presses Send only through the opt-in auto-send, for cell chats and the Steward, only for a repo the person allowed on this PC'.
+  2. blueprint-kit repo: mirror the one new RULES line from src/protocol.ts into BLUEPRINT.md, run scripts/embed_kit.py, then call init_blueprint with upgrade:true on every repo.
+  3. wrangler deploy once after C-108 (hub migration); optionally add the GitHub webhook.

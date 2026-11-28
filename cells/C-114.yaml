@@ -1,0 +1,52 @@
+id: C-114
+title: A chat that hands a cell over leaves a short 'know' note, and the next chat sees what was read
+type: normal
+priority: 10
+lease_minutes: 30
+goal: |
+  The costly waste is a chat that reads 15 files, runs out of room, releases the cell, and a fresh chat reads the same 15 files again. Fix exactly that case, only when it pays.
+  - src/trailers.ts: new trailer know: (one line, at most 800 characters). parseTrailers reads it, formatMessage and carry write it; carry keeps the previous know: unless a new one is passed. Old branches without it stay valid.
+  - src/signal.ts and the cell_signal schema in src/tools.ts: optional know (string, at most 800 characters, one line) accepted for kind release and feedback, ignored for heartbeat. It is stored in the commit trailer. Nothing else about release changes (next: is still required).
+  - src/resume.ts (and src/claim.ts passing the KV through its two resumeText calls): the RESUME reply prints 'know: <text>' right under the 'next:' line when present, and, when the cell's read ledger (C-113) is 8 KB or more, one more line 'READ BEFORE by earlier chats of this cell: <path> <KB> KB, ... (largest 8, then +n more); files you already changed are marked (changed). Do not re-read these in full: use know: and read only the ranges your next step needs.' No ledger or under 8 KB: no line.
+  - src/protocol.ts RULES: add ONE short line (about 35 tokens, it is paid by every chat once): 'read_files shows an outline for files over 400 lines (use start/end; full:true if you must). If you release after reading over 8 KB, add know: (max 600 chars, path:lines = fact).' src/ext.ts LIMIT_WARNING_TEXT gets 'If you read over 8 KB in this cell, add know: to the release.' at the end.
+  - Tests: test/trailers.test.ts (parse, format, carry, 800 limit), test/signal.test.ts (know stored on release and feedback, ignored on heartbeat, release without know still fine), new test/resume_know.test.ts (RESUME shows know:; READ BEFORE appears only at 8 KB or more and marks changed files; no ledger gives no line), test/ext.test.ts and test/protocol_warning.test.ts (texts still pass their regexes).
+inputs:
+  - from: C-113
+    kind: implementation
+    contract: |
+      src/readledger.ts exports loadLedger(kv, repo, cell) -> Ledger | null, summaryLine(ledger), biggest(ledger, n) -> {path, b}[]; ledger.bytes is the total bytes sent by read_files for the cell. KV key readlog:<repo>:<cell>.
+after: [C-033, C-050, C-099]
+provides:
+  - "cell_signal release/feedback accept know; RESUME prints know: and READ BEFORE"
+read:
+  - src/signal.ts
+  - src/resume.ts
+  - src/trailers.ts
+allowed_paths:
+  - src/trailers.ts
+  - src/signal.ts
+  - src/resume.ts
+  - src/claim.ts
+  - src/protocol.ts
+  - src/tools.ts
+  - src/ext.ts
+  - test/trailers.test.ts
+  - test/signal.test.ts
+  - test/resume_know.test.ts
+  - test/ext.test.ts
+  - test/protocol_warning.test.ts
+outputs:
+  - src/trailers.ts
+  - src/signal.ts
+  - src/resume.ts
+  - src/claim.ts
+  - src/protocol.ts
+  - src/tools.ts
+  - src/ext.ts
+  - test/resume_know.test.ts
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/trailers.test.ts test/signal.test.ts test/resume_know.test.ts test/ext.test.ts test/protocol_warning.test.ts test/claim_trailers.test.ts"
+notes: |
+  Why it cannot raise usage: know: is written only by a chat that is already writing next: for a release, only when the ledger says it read over 8 KB, and capped at 600 to 800 characters (about 200 tokens) against the several thousand tokens the next chat would spend re-reading. A cell that finishes (submit_cell) or a chat that read little pays nothing. The one rule line costs about 35 tokens per chat start; C-113's ledger lets the owner check the real numbers.
+  BLUEPRINT.md is protected and lives in the blueprint-kit repo: the owner mirrors the RULES line there by hand (listed in C-116). test/protocol_warning.test.ts is skipped when the sibling folder is absent.

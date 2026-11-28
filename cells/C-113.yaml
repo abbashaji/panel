@@ -1,0 +1,44 @@
+id: C-113
+title: read_files shows an outline of big files and keeps a free read ledger per cell
+type: normal
+priority: 10
+lease_minutes: 30
+goal: |
+  Token saving that costs the model nothing to produce. Two mechanisms, both built by the Worker with plain code (no model writes anything).
+  1. Outline instead of a whole big file. src/outline.ts: outlineOf(path, lines): string[] | null returns '<line>: <trimmed text up to 100 chars>' entries for declarations: .ts .tsx .js .mjs (export, function, class, interface, type, enum, const at column 0), .cs (type declarations and members that start with an access modifier), .py (class and def, indent up to 4), .md (# to #### headings), .yaml and .yml (top-level keys), .ps1 (function). At most 120 entries. null for any other extension or fewer than 5 entries. In src/engine.ts readFiles: when a spec has no start and no end, the file has more than 400 lines, args.full is not true and outlineOf is not null, the answer for that file is '--- <path> (<n> lines) OUTLINE ONLY' plus the entries plus one line '[big file: ask read_files again with start/end for the part you need, or full:true]'. Every other case is byte for byte as today (files up to 400 lines, any range request, directories).
+  2. A read ledger. src/readledger.ts: after each read_files call that has a cell_id, record in KV key readlog:<repo>:<cell> (JSON {v:1, bytes, files:{path:{b, r:[[start,end]...], at}}}; at most 40 files, smallest dropped first; ranges merged; TTL 7 days) what the call actually returned (path, bytes sent, lines). Exports: recordRead(kv, repo, cell, reads), loadLedger(kv, repo, cell), summaryLine(ledger) = 'read so far in this cell: 9 files, 34 KB', biggest(ledger, n). Never throws; a KV error means no ledger (advisory). engine.readFiles gets an optional kv parameter; src/tools.ts passes env.OAUTH_KV and adds the schema field full: boolean (optional, 'send the whole file even if it is large').
+  - Footer: when the ledger total for the cell is 8 KB or more, the read_files answer ends with '[' + summaryLine + ']'. Below 8 KB nothing is added (no extra tokens for small reads).
+  - docs/token-reuse.md (new): what is recorded (paths, byte counts, line ranges; never file contents), why the model is never asked to write anything here, how the outline threshold (400 lines) was chosen (a 400 line file is about 5000 tokens; its outline about 500), how to ask for the full file.
+  - Tests: test/outline.test.ts (each language, the 5 entry minimum, the 120 cap), test/readledger.test.ts (record, merge ranges, 40 file cap, KV failure ignored, 8 KB footer rule), test/engine.test.ts (400 line file gives an outline; 399 lines unchanged; start/end unchanged; full:true unchanged; directory listing unchanged).
+inputs: []
+after: [C-001, C-034, C-052, C-061, C-073, C-076, C-109]
+provides:
+  - "src/readledger.ts: recordRead, loadLedger, summaryLine, biggest; ledger KV key readlog:<repo>:<cell>"
+  - "read_files: outline for files over 400 lines unless start/end or full:true"
+read:
+  - src/engine.ts
+  - src/tools.ts
+allowed_paths:
+  - src/outline.ts
+  - src/readledger.ts
+  - src/engine.ts
+  - src/tools.ts
+  - test/outline.test.ts
+  - test/readledger.test.ts
+  - test/engine.test.ts
+  - test/tools.test.ts
+  - docs/token-reuse.md
+outputs:
+  - src/outline.ts
+  - src/readledger.ts
+  - src/engine.ts
+  - src/tools.ts
+  - test/outline.test.ts
+  - test/readledger.test.ts
+  - test/engine.test.ts
+  - docs/token-reuse.md
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/outline.test.ts test/readledger.test.ts test/engine.test.ts test/tools.test.ts"
+notes: |
+  Why this is token-negative by design: nothing here asks the model to produce text. The outline replaces roughly 90 percent of a big file the chat only needs part of. The only added tokens are the footer (only above 8 KB) and one rule line in C-114. The tool list asserted by test/tools.test.ts must not change (read_files only gets one optional field).

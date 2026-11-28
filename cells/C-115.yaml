@@ -1,0 +1,39 @@
+id: C-115
+title: Steward briefing names the files that many cells keep re-reading
+type: normal
+priority: 9
+lease_minutes: 30
+goal: |
+  Reuse across DIFFERENT cells needs a human or the Steward to write a short digest once; do that only where the numbers say it pays. Measure first, from the ledger of C-113.
+  - New src/hotfiles.ts: hotFiles(kv, repo): Promise<string[]>. Lists KV keys with prefix readlog:<repo>: (at most 100, the KV list API; any error gives []), aggregates per path how many cells read it and the total bytes sent, and returns up to 5 lines for paths read by 3 or more cells with 6 KB or more in total, in the form 'TOKEN HOTSPOT: <path> was read in <n> cells, about <KB> KB in total. A short digest doc (for example docs/digest/<name>.md, 40 lines) that those cells read instead would save most of it.' Nothing else.
+  - src/steward.ts: the Steward briefing appends the hotspot lines after the problems, under the heading 'TOKEN HOTSPOTS (optional, only if you have spare capacity)'; no heading and no lines when the list is empty. The Steward is never required to act; publishing a digest cell with publish_plan stays its own decision.
+  - docs/token-reuse.md: add the section 'Hotspots' (what is measured, the thresholds, that the Steward is told, how a digest cell should be written: facts and signatures only, with line numbers, kept under 60 lines).
+  - Tests: test/hotfiles.test.ts (thresholds, top 5, KV failure gives [], contents never read), test/steward.test.ts (briefing has the section only when there are hotspots; the existing briefing tests unchanged).
+inputs:
+  - from: C-113
+    kind: implementation
+    contract: |
+      Ledger JSON at KV key readlog:<repo>:<cell>: {v:1, bytes:number, files:{[path]:{b:number, r:[number,number][], at:string}}}. src/readledger.ts exports loadLedger and the Ledger type.
+after: [C-033, C-082]
+provides:
+  - "Steward briefing section TOKEN HOTSPOTS"
+read:
+  - src/steward.ts
+  - src/readledger.ts
+allowed_paths:
+  - src/hotfiles.ts
+  - src/steward.ts
+  - docs/token-reuse.md
+  - test/hotfiles.test.ts
+  - test/steward.test.ts
+  - test/steward_tools.test.ts
+outputs:
+  - src/hotfiles.ts
+  - src/steward.ts
+  - docs/token-reuse.md
+  - test/hotfiles.test.ts
+acceptance:
+  - cmd: "npx tsc --noEmit"
+  - cmd: "node --test test/hotfiles.test.ts test/steward.test.ts test/steward_tools.test.ts"
+notes: |
+  The briefing grows only when a real hotspot exists. No file contents are stored or read here, only paths and byte counts.

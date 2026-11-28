@@ -1,0 +1,40 @@
+id: C-112
+title: Status counts in the sidebar come from the cells and vanish at zero
+type: normal
+priority: 16
+lease_minutes: 20
+goal: |
+  The sidebar lists a status while its count is above 0 OR the status is in the active filter, and the counts come from the Worker's counts object, which does not follow optimistic updates after Release or Start or the 'show replaced cells' switch. So a status can sit at 0, and it stays visible while you filter on it.
+  - web/src/core/status.ts: export countsOf(cells: readonly {status: PanelStatus; supersededBy?: string[]}[]): PanelCounts counting every cell that is not superseded (replaced cells are not live). The same function is what a hidden-replaced or optimistically patched state must use.
+  - web/src/shell/Sidebar.tsx: counts come from countsOf(state.cells). A status row is shown only when its count is above 0, whether or not it is filtered. When every count is 0 the list shows 'No cells'. The 'Clear filters' button logic is unchanged.
+  - web/src/core/store.tsx: after every state change, drop from statusFilter every status whose count is now 0 (so the graph never stays empty because of a filter on something that vanished). Keep the other filters. Nothing is dropped while state is null (loading).
+  - Tests: web/src/core/status.test.ts (countsOf ignores superseded cells, matches the Worker counts for the mock state), web/src/shell/shell.test.tsx (a row disappears when its count reaches 0 even while selected as filter; the other filters remain; optimistic patch changes the counts), web/src/core/store.test.tsx (filter pruned at 0, kept above 0).
+inputs:
+  - from: C-111
+    kind: implementation
+    contract: |
+      web/src/core/store.tsx exposes freshness and refreshNow and runs the version watcher; keep them unchanged.
+after: [C-020, C-084, C-087]
+provides:
+  - "countsOf(cells) in web/src/core/status.ts; sidebar rows vanish at zero; empty status filters are dropped automatically"
+read:
+  - web/src/shell/Sidebar.tsx
+  - web/src/core/status.ts
+allowed_paths:
+  - web/src/core/status.ts
+  - web/src/shell/Sidebar.tsx
+  - web/src/core/store.tsx
+  - web/src/core/status.test.ts
+  - web/src/shell/shell.test.tsx
+  - web/src/core/store.test.tsx
+outputs:
+  - web/src/core/status.ts
+  - web/src/shell/Sidebar.tsx
+  - web/src/core/store.tsx
+  - web/src/core/status.test.ts
+  - web/src/shell/shell.test.tsx
+acceptance:
+  - cmd: "npm --prefix web test"
+  - cmd: "npm --prefix web run build"
+notes: |
+  docs/panel-design.md says 'hide a status with count 0 only if it is not filtered'. The owner chose the opposite (hide at 0 always), so the new rule wins; C-116 updates the design note.
