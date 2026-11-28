@@ -120,5 +120,56 @@ public static class PromptBuilder
     public static string BuildStewardUrl(string repo)
         => BaseUrl + Uri.EscapeDataString(BuildStewardPrompt(repo));
 
+    /// <summary>Longest escaped prompt text BuildUrlFromText accepts.</summary>
+    public const int MaxEscapedLength = 6000;
+
+    /// <summary>
+    /// URL for text the person approved in the launcher window: fixed host, sanitized and escaped text.
+    /// Throws ArgumentException when the escaped text is longer than 6000 characters.
+    /// </summary>
+    public static string BuildUrlFromText(string text)
+    {
+        if (text is null) throw new ArgumentNullException(nameof(text));
+        var escaped = Uri.EscapeDataString(PromptPolicy.Sanitize(text));
+        if (escaped.Length > MaxEscapedLength) throw new ArgumentException("prompt too long", nameof(text));
+        return BaseUrl + escaped;
+    }
+
+    /// <summary>Replaces the exact MaskCode(code) text with the real code. Throws ArgumentException for an invalid code.</summary>
+    public static string UnmaskCode(string text, string code)
+    {
+        if (text is null) throw new ArgumentNullException(nameof(text));
+        return text.Replace(MaskCode(code), code, StringComparison.Ordinal);
+    }
+
+    /// <summary>True when the text contains the real (valid) code.</summary>
+    public static bool HasCode(string text, string code)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(code)) return false;
+        return ProtocolParser.IsValidCode(code) && text.Contains(code, StringComparison.Ordinal);
+    }
+
+    private static readonly Regex PlaceholderRx = new(@"\{(repo|cell|code)\}", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Replaces {repo}, {cell} and {code} in one pass (inserted values are never expanded again).
+    /// The repo must be valid; a Cell template needs a valid cell; a Steward template needs a code (real or masked).
+    /// A missing cell or code elsewhere becomes empty text. Other braces stay as they are.
+    /// </summary>
+    public static string ExpandTemplate(PromptKind kind, string template, string repo, string? cell, string? code)
+    {
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        if (!ProtocolParser.IsValidRepo(repo)) throw new ArgumentException("invalid repo", nameof(repo));
+        if (kind == PromptKind.Cell && cell is null) throw new ArgumentException("invalid cell", nameof(cell));
+        if (cell is not null && !ProtocolParser.IsValidCell(cell)) throw new ArgumentException("invalid cell", nameof(cell));
+        if (kind == PromptKind.Steward && string.IsNullOrEmpty(code)) throw new ArgumentException("missing code", nameof(code));
+        return PlaceholderRx.Replace(template, m => m.Groups[1].Value switch
+        {
+            "repo" => repo,
+            "cell" => cell ?? string.Empty,
+            _ => code ?? string.Empty,
+        });
+    }
+
     private static string Strip(string s) => s.Replace("<", "").Replace(">", "");
 }
