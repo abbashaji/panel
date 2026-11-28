@@ -130,3 +130,97 @@ public class PromptPolicyTests
         Assert.Throws<ArgumentException>(() => PromptBuilder.WithAutoSend(PromptBuilder.BuildStewardUrl(Repo, Code)));
         Assert.Throws<ArgumentException>(() => PromptBuilder.WithAutoSend(PromptBuilder.BuildUrlFromText(CellText() + "\nExtra.")));
     }
+
+    [Fact]
+    public void UnmaskCodePutsTheRealCodeBack()
+    {
+        var masked = PromptBuilder.MaskCode(Code);
+        var shown = "Call steward_next with code=" + masked + ". Again " + masked + ".";
+        Assert.False(PromptBuilder.HasCode(shown, Code));
+        var real = PromptBuilder.UnmaskCode(shown, Code);
+        Assert.Equal("Call steward_next with code=" + Code + ". Again " + Code + ".", real);
+        Assert.True(PromptBuilder.HasCode(real, Code));
+        Assert.Equal("no mask here", PromptBuilder.UnmaskCode("no mask here", Code));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.UnmaskCode(shown, "short"));
+    }
+
+    [Fact]
+    public void HasCodeIsFalseForEmptyOrInvalidInput()
+    {
+        Assert.False(PromptBuilder.HasCode("", Code));
+        Assert.False(PromptBuilder.HasCode("abc", ""));
+        Assert.False(PromptBuilder.HasCode("short short", "short"));
+        Assert.True(PromptBuilder.HasCode("x " + Code + " y", Code));
+        Assert.False(PromptBuilder.HasCode("x " + Code.ToLowerInvariant() + " y", Code));
+    }
+
+    [Fact]
+    public void MaskedStewardTemplateIsShownEditedAndSentWithTheRealCode()
+    {
+        const string template = "You are the Steward of {repo}. Call steward_next with repo and code={code}.";
+        var shown = PromptBuilder.ExpandTemplate(PromptKind.Steward, template, Repo, null, PromptBuilder.MaskCode(Code));
+        Assert.DoesNotContain(Code, shown);
+        var edited = shown + "\nBe brief.";
+        var real = PromptBuilder.UnmaskCode(edited, Code);
+        Assert.True(PromptBuilder.HasCode(real, Code));
+        Assert.True(PromptPolicy.IsSendable(PromptKind.Steward, Repo, null, real, out _));
+        Assert.StartsWith(PromptBuilder.BaseUrl, PromptBuilder.BuildUrlFromText(real));
+    }
+
+    [Fact]
+    public void ExpandTemplateReplacesThePlaceholders()
+    {
+        Assert.Equal("Repo: abbashaji/panel\ncell_id=C-102 next_cell",
+            PromptBuilder.ExpandTemplate(PromptKind.Cell, "Repo: {repo}\ncell_id={cell} next_cell", Repo, CellId, null));
+        Assert.Equal("steward_next " + Code + " " + Repo,
+            PromptBuilder.ExpandTemplate(PromptKind.Steward, "steward_next {code} {repo}", Repo, null, Code));
+        Assert.Equal("{x}" + Repo, PromptBuilder.ExpandTemplate(PromptKind.Cell, "{x}{repo}", Repo, CellId, null));
+        Assert.Equal("steward_next {repo}", PromptBuilder.ExpandTemplate(PromptKind.Steward, "steward_next {code}", Repo, null, "{repo}"));
+        Assert.Equal("a  b", PromptBuilder.ExpandTemplate(PromptKind.Cell, "a {code} b", Repo, CellId, null));
+    }
+
+    [Fact]
+    public void ExpandTemplateRejectsBadValues()
+    {
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Cell, "t", "bad", CellId, null));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Cell, "t", Repo, null, null));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Cell, "t", Repo, "C-1", null));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Steward, "t", Repo, null, null));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Steward, "t", Repo, null, ""));
+        Assert.ThrowsAny<ArgumentException>(() => PromptBuilder.ExpandTemplate(PromptKind.Cell, null!, Repo, CellId, null));
+    }
+
+    [Theory]
+    [InlineData(PromptKind.Cell, "Repo: {repo}\nCall next_cell with cell_id={cell}.", true)]
+    [InlineData(PromptKind.Cell, "next_cell {cell}", true)]
+    [InlineData(PromptKind.Cell, "Call next_cell with cell_id=C-102.", false)]
+    [InlineData(PromptKind.Cell, "Use {cell} now.", false)]
+    [InlineData(PromptKind.Cell, "next_cell {cell} {other}", false)]
+    [InlineData(PromptKind.Cell, "next_cell {cell} {", false)]
+    [InlineData(PromptKind.Cell, "next_cell {cell} }", false)]
+    [InlineData(PromptKind.Cell, "next_cell {{cell}}", false)]
+    [InlineData(PromptKind.Cell, "next_cell {cell} {Cell}", false)]
+    [InlineData(PromptKind.Cell, "steward_next {code}", false)]
+    [InlineData(PromptKind.Steward, "steward_next code={code} {repo}", true)]
+    [InlineData(PromptKind.Steward, "steward_next code=abc", false)]
+    [InlineData(PromptKind.Steward, "Use {code}.", false)]
+    [InlineData(PromptKind.Steward, "steward_next {code} {x}", false)]
+    [InlineData(PromptKind.Steward, "", false)]
+    [InlineData(PromptKind.Steward, "   ", false)]
+    [InlineData(PromptKind.Cell, null, false)]
+    public void ValidTemplateRules(PromptKind kind, string? template, bool expected)
+    {
+        Assert.Equal(expected, LauncherSettings.ValidTemplate(kind, template, out var reason));
+        Assert.Equal(expected, reason.Length == 0);
+    }
+
+    [Fact]
+    public void ValidTemplateLimitsTheLength()
+    {
+        var head = "next_cell {cell} ";
+        var ok = head + new string('a', 1500 - head.Length);
+        Assert.True(LauncherSettings.ValidTemplate(PromptKind.Cell, ok, out _));
+        Assert.False(LauncherSettings.ValidTemplate(PromptKind.Cell, ok + "a", out var reason));
+        Assert.Equal("The template is longer than 1500 characters.", reason);
+    }
+}
